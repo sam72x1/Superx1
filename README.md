@@ -55,15 +55,20 @@
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # ثم املأ المفاتيح
+cp .env.example .env          # ثم املأ المفاتيح الثلاثة
+
+# افحص أن المفاتيح والاتصالات تشتغل (يرسل رسالة تجريبية لتيليجرام):
+python -m runner_scanner.preflight
+
+# تجربة المسح بلا إرسال:
+DRY_RUN=true python -m runner_scanner.main
+
+# التشغيل الفعلي:
 python -m runner_scanner.main
 ```
 
-تجربة بلا إرسال تيليجرام:
-
-```bash
-DRY_RUN=true python -m runner_scanner.main
-```
+> 📘 للنشر خطوة بخطوة على Render، انظر **[DEPLOY.md](DEPLOY.md)**.
+> تحتاج فقط تضيف 3 مفاتيح؛ الباقي مؤتمت (فحص جاهزية + رسالة إقلاع).
 
 ### الاختبارات (بلا إنترنت)
 

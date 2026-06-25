@@ -109,6 +109,13 @@ class Scanner:
     # ── الحلقة الرئيسية ───────────────────────────────────────────
     def loop(self) -> None:
         self.halts.start()
+        # رسالة إقلاع: تأكيد أن البوت نُشر وموصول بتيليجرام
+        session = classify_session(self.cfg)
+        self.telegram.send(
+            "🚀 <b>ماسح الرَنرات اشتغل</b>\n"
+            f"الجلسة الحالية: {session.value} · "
+            f"المسح كل {self.cfg.poll_interval_sec}ث\n"
+            "<i>صامت عند الصحة، ينبّه فقط عند رَنر مؤهّل أو عطل.</i>")
         while not self._stop.is_set():
             cycle_start = time.monotonic()
             try:

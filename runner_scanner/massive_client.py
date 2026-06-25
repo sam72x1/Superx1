@@ -105,6 +105,13 @@ class MassiveClient:
         except (TypeError, ValueError):
             return None
 
+    def single_snapshot(self, ticker: str) -> Optional[SnapshotEntry]:
+        """سنابشوت رمز واحد (للفحص/التشخيص بدل سحب السوق كامل)."""
+        data = self._get(
+            f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}")
+        t = data.get("ticker")
+        return self._parse_snapshot_entry(t) if isinstance(t, dict) else None
+
     # ── شموع 5د (الزخم اللحظي) ────────────────────────────────────
     def aggregates(self, ticker: str, multiplier: int, timespan: str,
                    start: str, end: str, limit: int = 50000,
