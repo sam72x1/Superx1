@@ -1,0 +1,19 @@
+# أسرار
+.env
+.env.local
+
+# بايثون
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# قواعد بيانات محلية
+*.sqlite3
+*.db
+
+# نظام
+.DS_Store

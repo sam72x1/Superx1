@@ -1,0 +1,31 @@
+# Render Background Worker + قرص دائم (القرار 5).
+# القرص الدائم غير قابل للتفاوض (منع تكرار التنبيه — درس CCXI).
+services:
+  - type: worker
+    name: runner-scanner
+    runtime: python
+    plan: starter            # worker مدفوع يبقى حيًّا (لا يموت بصمت وسط الجلسة)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m runner_scanner.main
+    autoDeploy: false
+    disk:
+      name: runner-data
+      mountPath: /var/data   # لازم يطابق DB_PATH
+      sizeGB: 1
+    envVars:
+      - key: MASSIVE_API_KEY
+        sync: false          # أدخله في لوحة Render (سرّي)
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: DB_PATH
+        value: /var/data/runner_scanner.sqlite3
+      - key: POLL_INTERVAL_SEC
+        value: "45"
+      - key: KEEPALIVE_PORT
+        value: "10000"
+      - key: TECH_READINESS_MIN
+        value: "70"
+      - key: HALTS_ENABLED
+        value: "true"
