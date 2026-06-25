@@ -4,6 +4,7 @@ services:
   - type: worker
     name: runner-scanner
     runtime: python
+    branch: claude/bot-creation-xmjmr1   # الفرع اللي فيه الكود
     plan: starter            # worker مدفوع يبقى حيًّا (لا يموت بصمت وسط الجلسة)
     buildCommand: pip install -r requirements.txt
     startCommand: python -m runner_scanner.main
