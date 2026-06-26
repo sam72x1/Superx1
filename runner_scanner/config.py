@@ -66,7 +66,9 @@ class Config:
     top_n_runners: int = 15
 
     # ── الزناد ─────────────────────────────────────────────────────
-    trigger_change_pct: float = 20.0     # +20% عن إغلاق أمس (شرط ضروري)
+    # حدّ أدنى للحركة؛ «أعلى N» هو الفلتر الحقيقي. منخفض كي لا يفوت قادة
+    # الأيام الهادئة (والبوّابات الأخرى تصفّي الضعيف).
+    trigger_change_pct: float = 10.0
     max_change_pct: float = 400.0        # سقف يسقط تشوّه الانقسام العكسي
     filter_derivatives: bool = True      # استبعاد الوارنتات/اليونتات/الحقوق
     # أنواع الأوراق المقبولة (Polygon type): CS=سهم عادي، ADRC=إيصال إيداع
@@ -177,7 +179,7 @@ class Config:
             db_path=_s("DB_PATH", "/var/data/runner_scanner.sqlite3"),
             poll_interval_sec=_i("POLL_INTERVAL_SEC", 45),
             keepalive_port=_i("KEEPALIVE_PORT", 10000),
-            trigger_change_pct=_f("TRIGGER_CHANGE_PCT", 20.0),
+            trigger_change_pct=_f("TRIGGER_CHANGE_PCT", 10.0),
             max_change_pct=_f("MAX_CHANGE_PCT", 400.0),
             filter_derivatives=_b("FILTER_DERIVATIVES", True),
             allowed_ticker_types=tuple(

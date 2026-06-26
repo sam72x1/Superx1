@@ -27,7 +27,7 @@ class CycleClient(FakeClient):
             make_snapshot(ticker="PENNY", last=0.40, prev=0.30, vol=900_000,
                           change_pct=33.0),      # سعر منخفض → بوّابة ترفض
             make_snapshot(ticker="CHAMP", last=3.0, prev=2.7, vol=1_200_000,
-                          change_pct=12.0),      # تحت +20% (لكنه بطل موروث)
+                          change_pct=8.0),       # تحت العتبة (لكنه بطل موروث)
         ]
 
 
@@ -69,7 +69,7 @@ def test_champion_inherited_is_analyzed_below_threshold():
     sc.run_cycle(et_now=ET_NOW)
     rows = {r["ticker"] for r in sc.store._conn.execute(
         "SELECT ticker FROM tracking").fetchall()}
-    assert "CHAMP" in rows        # حُلّل رغم أنه تحت +20% (موروث بأولوية)
+    assert "CHAMP" in rows        # حُلّل رغم أنه تحت العتبة (موروث بأولوية)
     sc.shutdown()
 
 

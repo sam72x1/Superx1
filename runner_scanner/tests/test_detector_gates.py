@@ -17,7 +17,7 @@ def _cand(**snap_kw) -> Candidate:
 def test_detector_picks_only_above_threshold():
     snaps = [
         make_snapshot("A", change_pct=25.0),
-        make_snapshot("B", change_pct=19.9),   # تحت العتبة
+        make_snapshot("B", change_pct=8.0),    # تحت العتبة (10%)
         make_snapshot("C", change_pct=60.0),
     ]
     out = detector.detect_runners(CFG, snaps)
