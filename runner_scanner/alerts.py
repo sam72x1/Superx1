@@ -196,6 +196,11 @@ def build_followup(cfg: Config, event: dict, now: datetime | None = None) -> str
     if etype == "surge":
         return (f"🚀 <b>${tkr}</b> قفزة قوية!  "
                 f"{_money(price)} (+{gain:.0f}% من الدخول)\n{when}")
+    if etype == "missed":
+        reason = esc(event.get("reason", "") or "غير مسجّل")
+        return (f"👻 <b>${tkr}</b> فرصة فائتة — صعد +{gain:.0f}%!  {_money(price)}\n"
+                f"كان مرفوضًا بسبب: {reason}\n"
+                f"<i>راجِع هذي البوّابة لو تكرّرت.</i>\n{when}")
     return f"ℹ️ <b>${tkr}</b> تحديث: {_money(price)}\n{when}"
 
 

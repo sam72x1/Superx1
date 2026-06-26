@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS tracking (
     notified_targets INTEGER DEFAULT 0,
     notified_stop   INTEGER DEFAULT 0,
     notified_high   REAL,
+    notified_missed INTEGER DEFAULT 0,    -- نبّهنا عن فرصة فائتة (مرفوض صعد)
     result          TEXT DEFAULT '',       -- win / loss / timeout (للتطوير)
     outcome         TEXT DEFAULT 'open',    -- open / closed (دورة حياة التتبّع)
     closed_at       TEXT,
@@ -134,7 +135,8 @@ class Store:
             self._conn.executescript(_SCHEMA)
             # ترقية قواعد قديمة: إضافة أعمدة تشريح الفشل إن غابت
             for col, typ in (("short_pct", "REAL"), ("dilution_risk", "TEXT"),
-                             ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT")):
+                             ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT"),
+                             ("notified_missed", "INTEGER DEFAULT 0")):
                 try:
                     self._conn.execute(
                         f"ALTER TABLE tracking ADD COLUMN {col} {typ}")
@@ -228,10 +230,14 @@ class Store:
     def update_outcomes(self, price_map: dict[str, float],
                         now: datetime | None = None,
                         window_min: float = 90.0,
-                        surge_leg_pct: float = 8.0) -> list[dict]:
-        """يحدّث كل تتبّع مفتوح ويرجّع أحداث المتابعة للمُنبَّه عنها:
-        [{ticker, type:'target'/'stop'/'surge', price, gain_pct, level?}].
+                        surge_leg_pct: float = 8.0,
+                        missed_rise_pct: float = 1e9) -> list[dict]:
+        """يحدّث كل تتبّع مفتوح ويرجّع أحداث المتابعة:
+        [{ticker, type:'target'/'stop'/'surge'/'missed', price, gain_pct, ...}].
+        - target/stop/surge: للمُنبَّه عنه فقط.
+        - missed: سهم **مرفوض** صعد ≥ missed_rise_pct (فرصة فائتة + سببها).
         يحسم result (win/loss/timeout) ويغلق الصفّ عند الوقف/كل الأهداف/النافذة.
+        (missed_rise_pct الافتراضي ضخم = معطّل ما لم يُمرَّر.)
         """
         now = now or datetime.now(timezone.utc)
         day = trade_date_str(now)
@@ -299,6 +305,17 @@ class Store:
                 else:
                     notified_high = max(notified_high, high)
 
+                # 👻 فرصة فائتة: سهم مرفوض (غير مُنبَّه) صعد ≥ العتبة — مرة واحدة
+                notified_missed = r["notified_missed"] or 0
+                if ((r["rejected"] or 0) and not is_alert and not notified_missed
+                        and max_gain >= missed_rise_pct):
+                    notified_missed = 1
+                    events.append({
+                        "ticker": r["ticker"], "type": "missed",
+                        "price": high, "gain_pct": max_gain,
+                        "reason": r["reject_reason"] or "",
+                    })
+
                 # حسم الإغلاق: الوقف، أو كل الأهداف، أو انتهاء النافذة
                 if notified_stop:
                     outcome = "closed"
@@ -319,11 +336,11 @@ class Store:
                 self._conn.execute(
                     "UPDATE tracking SET high_after=?, low_after=?, max_gain_pct=?,"
                     " max_draw_pct=?, hit_target=?, hit_stop=?, notified_targets=?,"
-                    " notified_stop=?, notified_high=?, result=?, outcome=?,"
-                    " closed_at=? WHERE ticker=? AND trade_date=?",
+                    " notified_stop=?, notified_high=?, notified_missed=?,"
+                    " result=?, outcome=?, closed_at=? WHERE ticker=? AND trade_date=?",
                     (high, low, round(max_gain, 2), round(max_draw, 2),
                      hit_target, hit_stop, notified_t, notified_stop,
-                     notified_high, result, outcome, closed_at,
+                     notified_high, notified_missed, result, outcome, closed_at,
                      r["ticker"], r["trade_date"]))
             self._conn.commit()
         return events

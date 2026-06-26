@@ -119,6 +119,7 @@ class Config:
     # ── تتبّع النتائج + أداة التطوير (القسم 12 closed-loop) ────────
     outcome_window_min: float = 90.0     # نافذة متابعة السهم بعد التنبيه (دقائق)
     missed_rise_pct: float = 30.0        # مرفوض صعد ≥ هذا = فرصة فائتة
+    missed_alert_enabled: bool = True     # تنبيه لحظي بالفرص الفائتة + سببها
     surge_leg_pct: float = 8.0           # قفزة جديدة ≥ هذا فوق آخر قمة = تحديث
     dev_min_sample: int = 10             # أقل عدد نتائج محسومة قبل تقرير ذو معنى
     dev_report_on_close: bool = True     # تفعيل تقرير التطوير المجدوَل
@@ -227,6 +228,7 @@ class Config:
             top_n_runners=_i("TOP_N_RUNNERS", 15),
             outcome_window_min=_f("OUTCOME_WINDOW_MIN", 90.0),
             missed_rise_pct=_f("MISSED_RISE_PCT", 30.0),
+            missed_alert_enabled=_b("MISSED_ALERT_ENABLED", True),
             surge_leg_pct=_f("SURGE_LEG_PCT", 8.0),
             dev_min_sample=_i("DEV_MIN_SAMPLE", 10),
             dev_report_on_close=_b("DEV_REPORT_ON_CLOSE", True),

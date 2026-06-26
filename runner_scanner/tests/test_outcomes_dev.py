@@ -97,6 +97,45 @@ def test_surge_event_on_new_leg():
     assert any(e["type"] == "surge" for e in events)
 
 
+# ── تنبيه الفرص الفائتة اللحظي (مرفوض صعد + سببه) ────────────────
+def test_missed_event_for_rejected_runner():
+    st = _store()
+    c = _cand("MISS", 2.0, rejected=True, reason="جاهزية فنية 45 < 60")
+    st.log_candidate(c, T0)
+    # صعد +40% بعد الرفض (≥ عتبة 30%) → حدث «فرصة فائتة» + سببه
+    events = st.update_outcomes(
+        {"MISS": 2.8}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc),
+        missed_rise_pct=30.0)
+    missed = [e for e in events if e["type"] == "missed"]
+    assert missed and missed[0]["ticker"] == "MISS"
+    assert "جاهزية" in missed[0]["reason"]
+    # لا يتكرّر في الدورة التالية
+    again = st.update_outcomes(
+        {"MISS": 2.9}, datetime(2026, 6, 26, 14, 12, tzinfo=timezone.utc),
+        missed_rise_pct=30.0)
+    assert not [e for e in again if e["type"] == "missed"]
+    st.close()
+
+
+def test_missed_disabled_by_default_threshold():
+    st = _store()
+    c = _cand("QUIET", 2.0, rejected=True, reason="فلوت كبير")
+    st.log_candidate(c, T0)
+    # بلا تمرير missed_rise_pct (الافتراضي ضخم = معطّل) → لا حدث
+    events = st.update_outcomes(
+        {"QUIET": 3.0}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    assert not [e for e in events if e["type"] == "missed"]
+    st.close()
+
+
+def test_followup_missed_message():
+    from runner_scanner.alerts import build_followup
+    msg = build_followup(CFG, {"ticker": "MISS", "type": "missed",
+                               "price": 2.8, "gain_pct": 40.0,
+                               "reason": "فلوت كبير"})
+    assert "فرصة فائتة" in msg and "MISS" in msg and "فلوت كبير" in msg
+
+
 def test_events_only_for_alerts_not_rejected():
     st = _store()
     c = _cand("REJ", 2.0, rejected=True, reason="RVol 3x < 5x")
