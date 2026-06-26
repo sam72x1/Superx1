@@ -87,6 +87,7 @@ class Config:
 
     # ── الجاهزية الفنية (قرار المستخدم: ≥ 60/100) ─────────────────
     tech_readiness_min: float = 60.0     # درجة التحليل الكلاسيكي 0–100
+    min_history_bars: int = 50           # أقل تاريخ يومي لتأكيد الجاهزية (وإلا غير مؤكَّدة)
 
     # ── حدود ركيزتي الدرجة ────────────────────────────────────────
     momentum_pillar_max: float = 50.0
@@ -192,6 +193,7 @@ class Config:
             parabolic_vwap_ext_pct=_f("PARABOLIC_VWAP_EXT_PCT", 40.0),
             parabolic_day_change_pct=_f("PARABOLIC_DAY_CHANGE_PCT", 120.0),
             tech_readiness_min=_f("TECH_READINESS_MIN", 60.0),
+            min_history_bars=_i("MIN_HISTORY_BARS", 50),
             momentum_pillar_max=_f("MOMENTUM_PILLAR_MAX", 50.0),
             readiness_pillar_max=_f("READINESS_PILLAR_MAX", 50.0),
             momentum_min_floor=_f("MOMENTUM_MIN_FLOOR", 25.0),

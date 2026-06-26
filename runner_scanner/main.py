@@ -154,9 +154,11 @@ class Scanner:
 
         # حفظ أبطال هذي الفترة (أعلى 15 صعودًا) للتوريث للفترة التالية
         if self.cfg.champions_enabled and top:
+            # أبطال بحجم تداول فعلي فقط (لا طبعة بريماركت رقيقة تُورَّث كأولوية)
             self.store.save_champions(
                 session.value, et_date,
-                [(e.ticker, e.change_pct, e.last_price) for e in top])
+                [(e.ticker, e.change_pct, e.last_price) for e in top
+                 if e.day_volume > 0])
 
         # ترتيب الأولوية ثم الإرسال
         sent = 0

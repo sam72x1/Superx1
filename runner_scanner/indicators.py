@@ -126,28 +126,27 @@ def detect_divergence(closes: Sequence[float], rsis: Sequence[float]) -> str:
         return "لا شيء"
     _, price_lows = pivots(closes)
     price_highs, _ = pivots(closes)
-    # صاعد: سعر قاع أدنى + RSI قاع أعلى
+    # صاعد: سعر قاع أدنى + RSI قاع أعلى (نتجاهل نقاط RSI غير المحسوبة None)
     if len(price_lows) >= 2:
         a, b = price_lows[-2], price_lows[-1]
-        if b < len(rsis) and a < len(rsis):
+        if b < len(rsis) and a < len(rsis) \
+                and rsis[a] is not None and rsis[b] is not None:
             if closes[b] < closes[a] and rsis[b] > rsis[a]:
                 return "صاعد"
     # هابط: سعر قمة أعلى + RSI قمة أدنى
     if len(price_highs) >= 2:
         a, b = price_highs[-2], price_highs[-1]
-        if b < len(rsis) and a < len(rsis):
+        if b < len(rsis) and a < len(rsis) \
+                and rsis[a] is not None and rsis[b] is not None:
             if closes[b] > closes[a] and rsis[b] < rsis[a]:
                 return "هابط"
     return "لا شيء"
 
 
-def rsi_series(closes: Sequence[float], period: int = 14) -> list[float]:
-    """سلسلة RSI (قيمة لكل نقطة؛ 50 حيث التاريخ غير كافٍ)."""
-    out: list[float] = []
-    for i in range(len(closes)):
-        val = rsi(closes[: i + 1], period)
-        out.append(val if val is not None else 50.0)
-    return out
+def rsi_series(closes: Sequence[float], period: int = 14) -> list[float | None]:
+    """سلسلة RSI (قيمة لكل نقطة؛ None حيث التاريخ غير كافٍ — لا حشو 50 مصطنع
+    يصنع دايفرجنس وهميًا)."""
+    return [rsi(closes[: i + 1], period) for i in range(len(closes))]
 
 
 def stoch_rsi(closes: Sequence[float], period: int = 14) -> float | None:
@@ -155,7 +154,9 @@ def stoch_rsi(closes: Sequence[float], period: int = 14) -> float | None:
     ≥0.8 تشبّع شرائي · ≤0.2 تشبّع بيعي."""
     if len(closes) < period * 2:
         return None
-    rs = rsi_series(closes, period)[-period:]
+    rs = [v for v in rsi_series(closes, period)[-period:] if v is not None]
+    if len(rs) < 2:
+        return None
     lo, hi = min(rs), max(rs)
     if hi - lo < 1e-9:
         return 0.5

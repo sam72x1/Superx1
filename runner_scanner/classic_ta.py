@@ -217,6 +217,12 @@ def compute_readiness(cfg: Config, daily: list[Bar],
 
     partial = weighted_sum / weight_total
     classic_score = max(0.0, min(100.0, (partial + 100.0) / 2.0))
+    # تاريخ قصير جدًا: معظم المؤشرات (MA50/200/RSI/MACD/ADX) لا تُحسب فترجع
+    # درجة ~50 «محايدة المظهر» من غياب البيانات لا من حياد فني حقيقي. لا نؤكّد
+    # جاهزية لا نملك بياناتها → نخفض الثقة بوضوح (يُسقطها تحت العتبة عادة).
+    if len(daily) < cfg.min_history_bars:
+        classic_score = round(classic_score * 0.5, 1)
+        notes.append(f"تاريخ قصير (<{cfg.min_history_bars} يوم) — جاهزية غير مؤكَّدة")
     pillar = classic_score / 100.0 * cfg.readiness_pillar_max
 
     candle = daily_detail.get("candle", "")

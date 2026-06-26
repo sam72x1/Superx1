@@ -206,7 +206,21 @@ class Store:
                     dilution_risk=excluded.dilution_risk,
                     analyst_dir=excluded.analyst_dir,
                     catalyst_head=excluded.catalyst_head,
-                    -- لا نمسّ first_price/high/low/notified/outcome/result
+                    -- إعادة تأسيس السعر المرجعي عند الانتقال من جلسة ممتدة إلى
+                    -- الرسمية (لغير المُنبَّه عنه): طبعة البريماركت الرقيقة ليست
+                    -- سعر الدخول الفعلي. لا نمسّ outcome/result.
+                    first_price=CASE WHEN tracking.session <> 'رسمي'
+                        AND excluded.session = 'رسمي' AND tracking.is_alert = 0
+                        THEN excluded.first_price ELSE tracking.first_price END,
+                    high_after=CASE WHEN tracking.session <> 'رسمي'
+                        AND excluded.session = 'رسمي' AND tracking.is_alert = 0
+                        THEN excluded.first_price ELSE tracking.high_after END,
+                    low_after=CASE WHEN tracking.session <> 'رسمي'
+                        AND excluded.session = 'رسمي' AND tracking.is_alert = 0
+                        THEN excluded.first_price ELSE tracking.low_after END,
+                    notified_high=CASE WHEN tracking.session <> 'رسمي'
+                        AND excluded.session = 'رسمي' AND tracking.is_alert = 0
+                        THEN excluded.first_price ELSE tracking.notified_high END,
                     stop_price=COALESCE(tracking.stop_price, excluded.stop_price),
                     target1=COALESCE(tracking.target1, excluded.target1),
                     target2=COALESCE(tracking.target2, excluded.target2),

@@ -5,14 +5,20 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import os
+import tempfile
+
 from runner_scanner import gates
+from runner_scanner.classic_ta import compute_readiness
 from runner_scanner.config import Config
-from runner_scanner.indicators import session_vwap
+from runner_scanner.indicators import detect_divergence, rsi_series, session_vwap
 from runner_scanner.intraday_ta import compute_momentum
 from runner_scanner.models import Bar, Candidate, Session
 from runner_scanner.risk import build_risk_plan, resistance_targets
 from runner_scanner.sessions import session_cumulative_volume
-from runner_scanner.tests.fixtures import make_snapshot, rising_5min_bars
+from runner_scanner.state import Store, trade_date_str
+from runner_scanner.tests.fixtures import (
+    make_snapshot, rising_5min_bars, uptrend_daily_bars)
 
 CFG = Config.from_env()
 ET = ZoneInfo("America/New_York")
@@ -81,3 +87,52 @@ def test_thin_bar_high_excluded_from_targets():
     # وللمقارنة: بلا فلتر السيولة تدخل 3.9
     tg_raw = resistance_targets(3.05, bars, count=3, max_pct=80.0, min_bar_trades=0)
     assert 3.9 in tg_raw
+
+
+# ── #12: RSI لا يُحشى بـ50 → لا دايفرجنس وهمي على تاريخ قصير ──────
+def test_rsi_series_none_in_warmup():
+    s = rsi_series([10, 11, 10.5], period=14)   # كله warmup
+    assert all(v is None for v in s)
+    # دايفرجنس يتجاهل نقاط None بأمان (لا استثناء، لا إشارة وهمية)
+    closes = [10, 9, 11, 8, 12, 7, 13, 6, 14, 5, 15]
+    assert detect_divergence(closes, rsi_series(closes, 14)) == "لا شيء"
+
+
+# ── #4: تاريخ قصير → جاهزية غير مؤكَّدة (تحت العتبة) ──────────────
+def test_short_history_readiness_low_confidence():
+    r = compute_readiness(CFG, uptrend_daily_bars(30))   # < min_history_bars
+    assert r.classic_score < CFG.tech_readiness_min
+    assert any("تاريخ قصير" in n for n in r.notes)
+
+
+# ── #5: first_price يُعاد تأسيسه عند الانتقال بريماركت→رسمي ───────
+def test_first_price_rebaselines_premarket_to_regular():
+    st = Store(os.path.join(tempfile.mkdtemp(), "reb.sqlite3"))
+    from datetime import datetime, timezone
+    t0 = datetime(2026, 6, 26, 14, 0, tzinfo=timezone.utc)
+    day = trade_date_str(t0)
+    pre = Candidate(snapshot=make_snapshot(ticker="REB", last=2.0, change_pct=25.0),
+                    session=Session.PREMARKET)
+    st.log_candidate(pre, t0)
+    assert st.fetch_row("REB", day)["first_price"] == 2.0
+    reg = Candidate(snapshot=make_snapshot(ticker="REB", last=2.5, change_pct=30.0),
+                    session=Session.REGULAR)
+    st.log_candidate(reg, t0)
+    assert st.fetch_row("REB", day)["first_price"] == 2.5   # أُعيد تأسيسه
+    st.close()
+
+
+def test_first_price_kept_when_already_alerted():
+    st = Store(os.path.join(tempfile.mkdtemp(), "reb2.sqlite3"))
+    from datetime import datetime, timezone
+    t0 = datetime(2026, 6, 26, 14, 0, tzinfo=timezone.utc)
+    day = trade_date_str(t0)
+    pre = Candidate(snapshot=make_snapshot(ticker="ALR", last=2.0, change_pct=25.0),
+                    session=Session.PREMARKET)
+    st.log_candidate(pre, t0)
+    st.mark_alerted("ALR", 80, t0)   # نُبِّه في البريماركت
+    reg = Candidate(snapshot=make_snapshot(ticker="ALR", last=2.5, change_pct=30.0),
+                    session=Session.REGULAR)
+    st.log_candidate(reg, t0)
+    assert st.fetch_row("ALR", day)["first_price"] == 2.0   # يُحفظ سعر التنبيه
+    st.close()
