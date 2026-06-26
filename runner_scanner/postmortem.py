@@ -179,9 +179,20 @@ def build_failure_message(cfg: Config, row, client: ClaudeClient | None = None
 
 def build_why_message(cfg: Config, row, client: ClaudeClient | None = None
                       ) -> str:
-    """رد /why TICKER — يشرح نتيجة سهم أيًّا كانت (نجاح/فشل/مفتوح)."""
-    cause, lesson = explain(cfg, row, client)
+    """رد /why TICKER — يشرح: لماذا رُفض (لم يُنبَّه)؟ أو نتيجته إن نُبِّه."""
     tkr = _get(row, "ticker", "?")
+    rejected = _get(row, "rejected", 0)
+    is_alert = _get(row, "is_alert", 0)
+    reason = _get(row, "reject_reason", "")
+    # ── حالة «لم يُنبَّه»: أي بوّابة أسقطته (السبب الدقيق المُسجّل) ──
+    if rejected and not is_alert:
+        chg = _num(_get(row, "change_pct"))
+        extra = f" (+{chg:.0f}%)" if chg else ""
+        return (f"🔍 <b>${esc(tkr)}</b>{extra} — <b>لم يُنبَّه</b> ⛔\n"
+                f"البوّابة التي أسقطته: {esc(reason or 'غير مسجّل')}\n"
+                "<i>— هذا فرز مقصود لا خطأ؛ السهم لم يستوفِ الشرطين معًا "
+                "(زخم + جاهزية فنية). جرّب /why لأي رمز آخر.</i>")
+    cause, lesson = explain(cfg, row, client)
     res = _get(row, "result", "") or "مفتوح"
     label = {"win": "نجاح ✅", "loss": "خسارة 🛑",
              "timeout": "بلا حسم ⏳"}.get(res, "مفتوح ⏳")

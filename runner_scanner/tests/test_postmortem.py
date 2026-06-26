@@ -77,3 +77,13 @@ def test_why_message_handles_win():
     cfg = Config(anthropic_api_key="")
     msg = postmortem.build_why_message(cfg, _row(result="win", had_news=1))
     assert "$TEST" in msg and "نجاح" in msg
+
+
+def test_why_message_explains_rejection():
+    cfg = Config(anthropic_api_key="")
+    rejected = _row(result="", rejected=1, is_alert=0, change_pct=95.0,
+                    reject_reason="جاهزية فنية 45 < 60 (غير جاهز فنيًا)")
+    msg = postmortem.build_why_message(cfg, rejected)
+    # السبب يظهر مهرَّبًا (45 &lt; 60) — هروب HTML مقصود
+    assert "لم يُنبَّه" in msg and "جاهزية فنية 45 &lt; 60" in msg
+    assert "+95%" in msg
