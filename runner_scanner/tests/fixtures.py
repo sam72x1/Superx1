@@ -55,7 +55,8 @@ class FakeClient:
     def __init__(self, *, float_shares=1_890_000,
                  float_source=FloatSource.FLOAT_ENDPOINT,
                  shares=3_000_000, daily=None, bars5=None, bars1=None,
-                 news=True, short=None):
+                 news=True, short=None, ticker_type="CS",
+                 primary_exchange="XNAS"):
         self._float = float_shares
         self._float_source = float_source
         self._shares = shares
@@ -64,15 +65,19 @@ class FakeClient:
         self._bars1 = bars1 if bars1 is not None else flat_1min_bars()
         self._news = news
         self._short = short
+        self._type = ticker_type
+        self._exchange = primary_exchange
 
-    def free_float(self, ticker):
-        return self._float, self._float_source
+    def ticker_overview(self, ticker):
+        ov = {"type": self._type, "primary_exchange": self._exchange}
+        if self._float_source is not FloatSource.UNKNOWN and self._shares:
+            ov["weighted_shares_outstanding"] = self._shares
+        return ov
 
-    def shares_outstanding(self, ticker):
-        return self._shares
-
-    def short_interest(self, ticker):
-        return self._short
+    def float_endpoint(self, ticker):
+        if self._float_source is FloatSource.FLOAT_ENDPOINT:
+            return self._float
+        return None   # يسقط للأسهم القائمة في الخط
 
     def bars_5min(self, ticker, start, end):
         return list(self._bars5)

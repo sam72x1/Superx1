@@ -26,6 +26,8 @@ class CycleClient(FakeClient):
                           change_pct=2.0),       # تحت العتبة → لا يُكشف
             make_snapshot(ticker="PENNY", last=0.40, prev=0.30, vol=900_000,
                           change_pct=33.0),      # سعر منخفض → بوّابة ترفض
+            make_snapshot(ticker="CHAMP", last=3.0, prev=2.7, vol=1_200_000,
+                          change_pct=12.0),      # تحت +20% (لكنه بطل موروث)
         ]
 
 
@@ -54,6 +56,20 @@ def test_dedup_prevents_second_alert_same_day():
     assert sc.run_cycle(et_now=ET_NOW) == 1
     # دورة ثانية بنفس اليوم → منع التكرار يصفّر الإرسال
     assert sc.run_cycle(et_now=ET_NOW) == 0
+    sc.shutdown()
+
+
+def test_champion_inherited_is_analyzed_below_threshold():
+    from runner_scanner.models import Session
+    from runner_scanner.state import trade_date_str
+    sc = _scanner()
+    day = trade_date_str(ET_NOW)
+    # الرسمي يرث أبطال بري اليوم → نحفظ CHAMP كبطل بري
+    sc.store.save_champions(Session.PREMARKET.value, day, [("CHAMP", 40.0, 3.0)])
+    sc.run_cycle(et_now=ET_NOW)
+    rows = {r["ticker"] for r in sc.store._conn.execute(
+        "SELECT ticker FROM tracking").fetchall()}
+    assert "CHAMP" in rows        # حُلّل رغم أنه تحت +20% (موروث بأولوية)
     sc.shutdown()
 
 

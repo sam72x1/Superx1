@@ -67,6 +67,11 @@ class Config:
 
     # ── الزناد ─────────────────────────────────────────────────────
     trigger_change_pct: float = 20.0     # +20% عن إغلاق أمس (شرط ضروري)
+    max_change_pct: float = 400.0        # سقف يسقط تشوّه الانقسام العكسي
+    filter_derivatives: bool = True      # استبعاد الوارنتات/اليونتات/الحقوق
+    # أنواع الأوراق المقبولة (Polygon type): CS=سهم عادي، ADRC=إيصال إيداع
+    allowed_ticker_types: tuple[str, ...] = ("CS", "ADRC")
+    exclude_otc: bool = True             # استبعاد OTC/pink
 
     # ── البوابات الصارمة (القسم 6) ────────────────────────────────
     float_max: float = 20_000_000        # فلوت ≤ 20M
@@ -107,6 +112,9 @@ class Config:
     # ── منع التكرار ───────────────────────────────────────────────
     dedup_per_day: bool = True           # تنبيه واحد/سهم/يوم
 
+    # ── توريث أبطال الفترة ────────────────────────────────────────
+    champions_enabled: bool = True       # متابعة أبطال الفترة السابقة بأولوية
+
     # ── تتبّع النتائج + أداة التطوير (القسم 12 closed-loop) ────────
     outcome_window_min: float = 90.0     # نافذة متابعة الرَنر بعد التنبيه (دقائق)
     missed_rise_pct: float = 30.0        # مرفوض صعد ≥ هذا = فرصة فائتة
@@ -137,6 +145,12 @@ class Config:
             poll_interval_sec=_i("POLL_INTERVAL_SEC", 45),
             keepalive_port=_i("KEEPALIVE_PORT", 10000),
             trigger_change_pct=_f("TRIGGER_CHANGE_PCT", 20.0),
+            max_change_pct=_f("MAX_CHANGE_PCT", 400.0),
+            filter_derivatives=_b("FILTER_DERIVATIVES", True),
+            allowed_ticker_types=tuple(
+                t.strip() for t in _s("ALLOWED_TICKER_TYPES", "CS,ADRC").split(",")
+                if t.strip()),
+            exclude_otc=_b("EXCLUDE_OTC", True),
             float_max=_f("FLOAT_MAX", 20_000_000),
             rvol_min=_f("RVOL_MIN", 5.0),
             volume_min=_f("VOLUME_MIN", 300_000),
@@ -158,6 +172,7 @@ class Config:
             regular_end_hour=_f("REGULAR_END_HOUR", 16.0),
             afterhours_end_hour=_f("AFTERHOURS_END_HOUR", 20.0),
             dedup_per_day=_b("DEDUP_PER_DAY", True),
+            champions_enabled=_b("CHAMPIONS_ENABLED", True),
             display_tz=_s("DISPLAY_TZ", "Asia/Riyadh"),
             code_version=_s("CODE_VERSION", _s("RENDER_GIT_COMMIT", ""))[:7],
             buy_zone_pct=_f("BUY_ZONE_PCT", 1.3),

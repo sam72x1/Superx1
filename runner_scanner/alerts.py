@@ -85,6 +85,10 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
     # كل مؤشر في سطر مستقل (مثل أعمدة الـ scanner)
     lines = [
         f"🟢 <b>${c.ticker}</b>  +{s.change_pct:.1f}%",
+    ]
+    if c.is_champion:
+        lines.append("🏆 بطل الفترة السابقة (متابعة بأولوية)")
+    lines += [
         f"💪 القوة: {c.final_score:.0f}/100  {bar}  {strength}",
         f"💰 السعر: {_money(s.last_price)}",
         f"🏷 الماركت كاب: {_human(c.market_cap)}",

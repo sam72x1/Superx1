@@ -19,7 +19,7 @@ from typing import Any, Optional
 import requests
 
 from .config import Config
-from .models import Bar, Catalyst, FloatSource, SnapshotEntry
+from .models import Bar, Catalyst, SnapshotEntry
 
 logger = logging.getLogger(__name__)
 
@@ -147,46 +147,28 @@ class MassiveClient:
             n=int(b.get("n") or 0),
         )
 
-    # ── الفلوت (تجريبي vX) + fallback ─────────────────────────────
-    def free_float(self, ticker: str) -> tuple[Optional[float], FloatSource]:
-        """يحاول endpoint الفلوت التجريبي، وإلا fallback لأسهم متداولة.
-
-        best-effort: لا يرفع استثناء عند الفشل، يرجّع (None, UNKNOWN).
-        """
-        # 1) endpoint الفلوت التجريبي
-        try:
-            data = self._get(f"/stocks/vX/float", params={"ticker": ticker})
-            results = data.get("results")
-            row = results[0] if isinstance(results, list) and results else results
-            if isinstance(row, dict):
-                val = row.get("free_float")
-                if val:
-                    return float(val), FloatSource.FLOAT_ENDPOINT
-        except MassiveError as exc:
-            logger.debug("float endpoint فشل لـ %s: %s", ticker, exc)
-
-        # 2) fallback: الأسهم المتداولة من Ticker Overview (ليس فلوت حقيقي)
+    # ── تفاصيل الورقة + الفلوت ────────────────────────────────────
+    def ticker_overview(self, ticker: str) -> dict:
+        """تفاصيل الورقة في نداء واحد: type · primary_exchange · الأسهم
+        القائمة. يرجّع {} عند الفشل (best-effort)."""
         try:
             data = self._get(f"/v3/reference/tickers/{ticker}")
-            res = data.get("results") or {}
-            so = res.get("share_class_shares_outstanding") or \
-                res.get("weighted_shares_outstanding")
-            if so:
-                return float(so), FloatSource.SHARES_OUTSTANDING
+            return data.get("results") or {}
         except MassiveError as exc:
             logger.debug("ticker overview فشل لـ %s: %s", ticker, exc)
+            return {}
 
-        return None, FloatSource.UNKNOWN
-
-    def shares_outstanding(self, ticker: str) -> Optional[float]:
-        """الأسهم القائمة (لحساب الماركت كاب)."""
+    def float_endpoint(self, ticker: str) -> Optional[float]:
+        """الفلوت الحر من endpoint vX التجريبي (None عند أي فشل)."""
         try:
-            data = self._get(f"/v3/reference/tickers/{ticker}")
-            res = data.get("results") or {}
-            return res.get("weighted_shares_outstanding") or \
-                res.get("share_class_shares_outstanding")
-        except MassiveError:
-            return None
+            data = self._get("/stocks/vX/float", params={"ticker": ticker})
+            results = data.get("results")
+            row = results[0] if isinstance(results, list) and results else results
+            if isinstance(row, dict) and row.get("free_float"):
+                return float(row["free_float"])
+        except (MassiveError, TypeError, ValueError) as exc:
+            logger.debug("float endpoint فشل لـ %s: %s", ticker, exc)
+        return None
 
     # ── الخبر/المحفّز (إشارة تقوية) ───────────────────────────────
     def latest_news(self, ticker: str, published_gte_utc: str,

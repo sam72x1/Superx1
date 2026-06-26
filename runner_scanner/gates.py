@@ -59,6 +59,25 @@ def check_rvol(cfg: Config, c: Candidate) -> GateResult:
     return GateResult(True)
 
 
+# بورصات OTC/pink تُستبعد (نراهن على ناسداك/نيويورك)
+_OTC_EXCHANGES = {"OTC", "OTCM", "PSGM", "OTCB", "OTCQ", "OTCQX", "OTCQB",
+                  "PINX", "GREY", "XOTC", "EXPM"}
+
+
+def check_listing(cfg: Config, c: Candidate) -> GateResult:
+    """يستبعد غير الأسهم العادية (وارنت/يونت/رايت/ممتاز/ETF) و OTC.
+
+    مجهول النوع/البورصة → يعدّي (فائدة الشك، لا رفض صامت على بيانات ناقصة).
+    """
+    t = (c.ticker_type or "").upper()
+    if t and t not in cfg.allowed_ticker_types:
+        return GateResult(False, f"نوع الورقة {t} (ليس سهمًا عاديًا)")
+    exch = (c.primary_exchange or "").upper()
+    if cfg.exclude_otc and exch and (exch in _OTC_EXCHANGES or "OTC" in exch):
+        return GateResult(False, f"بورصة {exch} (OTC)")
+    return GateResult(True)
+
+
 def check_parabolic(cfg: Config, c: Candidate) -> GateResult:
     """رفض البارابولِك المنهك (خطر blow-off)."""
     # ابتعاد كبير عن إغلاق أمس
@@ -80,7 +99,8 @@ def check_parabolic(cfg: Config, c: Candidate) -> GateResult:
 
 
 # بوابات لا تحتاج تحليلًا لحظيًا (تُطبّق مبكرًا قبل جلب الشموع).
-PRE_TA_GATES = (check_price, check_volume, check_float, check_parabolic)
+PRE_TA_GATES = (check_listing, check_price, check_volume, check_float,
+                check_parabolic)
 # بوابات تحتاج نتيجة الزخم (تُطبّق بعد intraday_ta).
 POST_TA_GATES = (check_rvol, check_parabolic)
 

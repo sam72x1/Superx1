@@ -20,16 +20,24 @@ import logging
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .models import Candidate
+from .models import Candidate, Session
 
 logger = logging.getLogger(__name__)
 
 # يوم التداول يُحسب بتوقيت نيويورك (السوق ET) لتجنّب اختلاف التاريخ قرب
 # منتصف الليل UTC بين تسجيل المرشّح وتحديث نتيجته.
 _ET = ZoneInfo("America/New_York")
+
+# توريث أبطال الفترة: أي فترة ترث أبطال (الفترة السابقة، إزاحة الأيام).
+#   بري ← افتر أمس · رسمي ← بري اليوم · افتر ← رسمي اليوم
+_CHAMP_INHERIT = {
+    Session.PREMARKET.value: (Session.AFTERHOURS.value, -1),
+    Session.REGULAR.value: (Session.PREMARKET.value, 0),
+    Session.AFTERHOURS.value: (Session.REGULAR.value, 0),
+}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS alerts (
@@ -42,6 +50,15 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE TABLE IF NOT EXISTS bot_meta (
     key   TEXT PRIMARY KEY,
     value TEXT
+);
+CREATE TABLE IF NOT EXISTS session_champions (
+    session     TEXT NOT NULL,
+    trade_date  TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
+    change_pct  REAL,
+    price       REAL,
+    rank        INTEGER,
+    PRIMARY KEY (session, trade_date, symbol)
 );
 CREATE TABLE IF NOT EXISTS tracking (
     ticker          TEXT NOT NULL,
@@ -301,6 +318,62 @@ class Store:
             return self._conn.execute(
                 "SELECT * FROM tracking WHERE rejected=1 AND max_gain_pct >= ?"
                 " ORDER BY max_gain_pct DESC", (min_rise_pct,)).fetchall()
+
+    # ── أبطال الفترة (توريث بين الجلسات) ──────────────────────────
+    def save_champions(self, session: str, day: str,
+                       rows: list[tuple[str, float, float]],
+                       limit: int = 15) -> None:
+        """يحفظ أبطال فترة (يستبدل لقطة نفس الفترة/اليوم). rows مرتّبة تنازليًا."""
+        if not session or not day:
+            return
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM session_champions WHERE session=? AND trade_date=?",
+                (session, day))
+            for i, (sym, chg, price) in enumerate(rows[:limit]):
+                if not sym:
+                    continue
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO session_champions(session, trade_date,"
+                    " symbol, change_pct, price, rank) VALUES(?,?,?,?,?,?)",
+                    (session, day, sym, chg, price, i))
+            self._conn.commit()
+
+    def get_session_champions(self, session: str,
+                              on_or_before_day: str | None = None,
+                              limit: int = 15) -> list[dict]:
+        """أبطال آخر لقطة محفوظة لفترة (في/قبل يوم)، مرتّبة حسب rank."""
+        with self._lock:
+            if on_or_before_day:
+                row = self._conn.execute(
+                    "SELECT trade_date FROM session_champions WHERE session=?"
+                    " AND trade_date<=? ORDER BY trade_date DESC LIMIT 1",
+                    (session, on_or_before_day)).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT trade_date FROM session_champions WHERE session=?"
+                    " ORDER BY trade_date DESC LIMIT 1", (session,)).fetchone()
+            if not row:
+                return []
+            rows = self._conn.execute(
+                "SELECT symbol, change_pct, price, rank FROM session_champions"
+                " WHERE session=? AND trade_date=? ORDER BY rank ASC LIMIT ?",
+                (session, row["trade_date"], limit)).fetchall()
+            return [dict(r) for r in rows]
+
+    def inherited_champions(self, session: str, today: str) -> list[str]:
+        """رموز أبطال الفترة السابقة (أولوية متابعة الفترة الحالية)."""
+        if session not in _CHAMP_INHERIT:
+            return []
+        prev_sess, day_offset = _CHAMP_INHERIT[session]
+        try:
+            ref_day = (datetime.fromisoformat(today).date()
+                       + timedelta(days=day_offset)).isoformat()
+        except ValueError:
+            return []
+        return [c["symbol"] for c in
+                self.get_session_champions(prev_sess, ref_day, 15)
+                if c.get("symbol")]
 
     # ── bot_meta ──────────────────────────────────────────────────
     def set_meta(self, key: str, value: str) -> None:

@@ -17,7 +17,7 @@ from . import classic_ta, gates, intraday_ta, scoring
 from .config import Config
 from .halts import HaltTracker
 from .massive_client import MassiveClient, MassiveError
-from .models import Candidate, HaltState, Session, SnapshotEntry
+from .models import Candidate, FloatSource, HaltState, Session, SnapshotEntry
 from .sessions import classify_session, now_et, session_elapsed_fraction
 
 logger = logging.getLogger(__name__)
@@ -50,14 +50,22 @@ def process_candidate(
         if st in (HaltState.HALTED, HaltState.RESUMED):
             return c.reject(f"توقّف ({st.value}) — لا بطاقة، انتظر استئنافًا نظيفًا")
 
-    # ── 2) الفلوت + الماركت كاب ──────────────────────────────────
-    try:
-        c.float_shares, c.float_source = client.free_float(snap.ticker)
-        shares = client.shares_outstanding(snap.ticker)
-        if shares:
-            c.market_cap = shares * snap.last_price
-    except MassiveError as exc:
-        logger.debug("فلوت/أسهم فشل لـ %s: %s", snap.ticker, exc)
+    # ── 2) تفاصيل الورقة (نوع/بورصة/أسهم) + الفلوت + الماركت كاب ──
+    overview = client.ticker_overview(snap.ticker)   # {} عند الفشل
+    c.ticker_type = (overview.get("type") or "").upper()
+    c.primary_exchange = (overview.get("primary_exchange") or "").upper()
+    shares = overview.get("weighted_shares_outstanding") or \
+        overview.get("share_class_shares_outstanding")
+    if shares:
+        c.market_cap = float(shares) * snap.last_price
+    # الفلوت: endpoint vX، وإلا الأسهم القائمة (ليس فلوت حقيقي)، وإلا مجهول
+    fv = client.float_endpoint(snap.ticker)
+    if fv:
+        c.float_shares, c.float_source = fv, FloatSource.FLOAT_ENDPOINT
+    elif shares:
+        c.float_shares, c.float_source = float(shares), FloatSource.SHARES_OUTSTANDING
+    else:
+        c.float_shares, c.float_source = None, FloatSource.UNKNOWN
 
     # ── 3) بوابات ما-قبل-التحليل (رخيصة، قبل جلب الشموع) ─────────
     pre = gates.apply_gates(cfg, c, gates.PRE_TA_GATES)

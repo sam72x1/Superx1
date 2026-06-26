@@ -140,6 +140,11 @@ class Candidate:
     session: Session = Session.CLOSED
     halt_state: HaltState = HaltState.NORMAL
 
+    # تصنيف الورقة (للبوّابة)
+    ticker_type: str = ""           # CS/ADRC/WARRANT/UNIT/...
+    primary_exchange: str = ""      # XNAS/XNYS/OTC...
+    is_champion: bool = False       # بطل فترة موروث (أولوية متابعة)
+
     # الفلوت
     float_shares: Optional[float] = None
     float_source: FloatSource = FloatSource.UNKNOWN

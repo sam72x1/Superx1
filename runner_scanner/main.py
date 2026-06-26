@@ -24,7 +24,7 @@ from .monitor import HealthMonitor
 from .pipeline import process_candidate
 from .sessions import classify_session, is_scanning_window, now_et
 from .short_interest import ShortInterestProvider
-from .state import Store
+from .state import Store, trade_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +72,20 @@ class Scanner:
         # أعلى N سهم صعودًا فقط (قرار المستخدم: 15) — detect_runners مرتّب تنازليًا
         top = (runners[:self.cfg.top_n_runners]
                if self.cfg.top_n_runners > 0 else runners)
-        logger.info("الجلسة %s — فوق العتبة: %d · نحلّل أعلى %d صعودًا",
-                    session.value, len(runners), len(top))
+        et_date = trade_date_str(et_now)
+
+        # أبطال الفترة السابقة الموروثون (أولوية متابعة، حتى لو خرجوا من الـ15)
+        champ_syms: set[str] = set()
+        champ_entries: list = []
+        if self.cfg.champions_enabled:
+            top_tickers = {e.ticker for e in top}
+            by_ticker = {e.ticker: e for e in snapshot if e.is_valid}
+            for sym in self.store.inherited_champions(session.value, et_date):
+                if sym in by_ticker and sym not in top_tickers:
+                    champ_entries.append(by_ticker[sym])
+                    champ_syms.add(sym)
+        logger.info("الجلسة %s — فوق العتبة: %d · أعلى %d + %d بطل موروث",
+                    session.value, len(runners), len(top), len(champ_entries))
 
         # تحديث نتائج التنبيهات المفتوحة من نفس السنابشوت (بلا نداء إضافي)
         # ويصدّر أحداث متابعة (🎯 هدف · ⛔ وقف · 🚀 قفزة) نرسلها فورًا.
@@ -87,7 +99,8 @@ class Scanner:
             logger.info("أُرسل %d تحديث متابعة", len(events))
 
         accepted: list[Candidate] = []
-        for snap in top:
+        # الأبطال الموروثون أولًا (أولوية متابعة)، ثم أعلى 15 صعودًا
+        for snap in champ_entries + top:
             # منع التكرار (تنبيه/سهم/يوم) — يُعاد تحميله من DB عند الإقلاع
             if self.cfg.dedup_per_day and \
                     self.store.already_alerted(snap.ticker):
@@ -99,9 +112,16 @@ class Scanner:
             except MassiveError as exc:
                 logger.warning("معالجة %s فشلت: %s", snap.ticker, exc)
                 continue
+            cand.is_champion = snap.ticker in champ_syms
             self.store.log_candidate(cand)   # closed-loop لكل مرشّح
             if not cand.is_rejected:
                 accepted.append(cand)
+
+        # حفظ أبطال هذي الفترة (أعلى 15 صعودًا) للتوريث للفترة التالية
+        if self.cfg.champions_enabled and top:
+            self.store.save_champions(
+                session.value, et_date,
+                [(e.ticker, e.change_pct, e.last_price) for e in top])
 
         # ترتيب الأولوية ثم الإرسال
         sent = 0
