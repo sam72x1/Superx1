@@ -62,6 +62,8 @@ class Config:
     # ── حلقة المسح ─────────────────────────────────────────────────
     poll_interval_sec: int = 45          # بين 30 و60ث (القرار 7)
     keepalive_port: int = 10000          # منفذ keep-alive لـ Render
+    # أعلى N سهم صعودًا فقط نحلّلها كل دورة (قرار المستخدم: 15)
+    top_n_runners: int = 15
 
     # ── الزناد ─────────────────────────────────────────────────────
     trigger_change_pct: float = 20.0     # +20% عن إغلاق أمس (شرط ضروري)
@@ -105,6 +107,12 @@ class Config:
     # ── منع التكرار ───────────────────────────────────────────────
     dedup_per_day: bool = True           # تنبيه واحد/سهم/يوم
 
+    # ── تتبّع النتائج + أداة التطوير (القسم 12 closed-loop) ────────
+    outcome_window_min: float = 90.0     # نافذة متابعة الرَنر بعد التنبيه (دقائق)
+    missed_rise_pct: float = 30.0        # مرفوض صعد ≥ هذا = فرصة فائتة
+    dev_min_sample: int = 10             # أقل عدد نتائج محسومة قبل تقرير ذو معنى
+    dev_report_on_close: bool = True     # إرسال تقرير تطوير تلقائي عند إغلاق السوق
+
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
     dry_run: bool = False                # لا يرسل تيليجرام، يطبع فقط
@@ -143,6 +151,11 @@ class Config:
             regular_end_hour=_f("REGULAR_END_HOUR", 16.0),
             afterhours_end_hour=_f("AFTERHOURS_END_HOUR", 20.0),
             dedup_per_day=_b("DEDUP_PER_DAY", True),
+            top_n_runners=_i("TOP_N_RUNNERS", 15),
+            outcome_window_min=_f("OUTCOME_WINDOW_MIN", 90.0),
+            missed_rise_pct=_f("MISSED_RISE_PCT", 30.0),
+            dev_min_sample=_i("DEV_MIN_SAMPLE", 10),
+            dev_report_on_close=_b("DEV_REPORT_ON_CLOSE", True),
             halts_enabled=_b("HALTS_ENABLED", True),
             dry_run=_b("DRY_RUN", False),
             log_level=_s("LOG_LEVEL", "INFO"),

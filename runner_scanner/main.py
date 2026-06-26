@@ -16,19 +16,16 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from . import detector
 from .alerts import TelegramSender, build_card, prioritize
 from .config import Config
+from .dev_assistant import build_dev_report
 from .halts import HaltTracker
 from .massive_client import MassiveClient, MassiveError
-from .models import Candidate
+from .models import Candidate, Session
 from .monitor import HealthMonitor
 from .pipeline import process_candidate
 from .sessions import classify_session, is_scanning_window, now_et
 from .state import Store
 
 logger = logging.getLogger(__name__)
-
-# أقصى عدد مرشّحين نحلّلهم بعمق لكل دورة (الأعلى تغيّرًا أولًا) — حماية من
-# اليوم الحار. البقية تُحلَّل في الدورات التالية.
-MAX_DEEP_PER_CYCLE = 40
 
 
 class _KeepAliveHandler(BaseHTTPRequestHandler):
@@ -70,21 +67,23 @@ class Scanner:
         session = classify_session(self.cfg, et_now)
         snapshot = self.client.full_snapshot()
         runners = detector.detect_runners(self.cfg, snapshot)
-        logger.info("الجلسة %s — مرشّحون فوق العتبة: %d", session.value,
-                    len(runners))
+        # أعلى N سهم صعودًا فقط (قرار المستخدم: 15) — detect_runners مرتّب تنازليًا
+        top = (runners[:self.cfg.top_n_runners]
+               if self.cfg.top_n_runners > 0 else runners)
+        logger.info("الجلسة %s — فوق العتبة: %d · نحلّل أعلى %d صعودًا",
+                    session.value, len(runners), len(top))
+
+        # تحديث نتائج التنبيهات المفتوحة من نفس السنابشوت (بلا نداء إضافي)
+        price_map = {e.ticker: e.last_price for e in snapshot if e.is_valid}
+        self.store.update_outcomes(price_map, et_now,
+                                   window_min=self.cfg.outcome_window_min)
 
         accepted: list[Candidate] = []
-        deep = 0
-        for snap in runners:
-            if deep >= MAX_DEEP_PER_CYCLE:
-                logger.info("بلغنا حد التحليل العميق (%d)، البقية للدورة القادمة",
-                            MAX_DEEP_PER_CYCLE)
-                break
+        for snap in top:
             # منع التكرار (تنبيه/سهم/يوم) — يُعاد تحميله من DB عند الإقلاع
             if self.cfg.dedup_per_day and \
                     self.store.already_alerted(snap.ticker):
                 continue
-            deep += 1
             try:
                 cand = process_candidate(
                     self.cfg, self.client, snap, halts=self.halts,
@@ -131,10 +130,31 @@ class Scanner:
             except Exception as exc:  # noqa: BLE001
                 logger.exception("خطأ غير متوقّع في الدورة")
                 self.monitor.raise_fault("cycle", str(exc))
+            self._maybe_daily_report()
             self.monitor.check_stall()
             # نوم حتى الدورة التالية (يحترم وقت الدورة المنقضي)
             elapsed = time.monotonic() - cycle_start
             self._stop.wait(max(1.0, self.cfg.poll_interval_sec - elapsed))
+
+    def _maybe_daily_report(self, et_now=None) -> None:
+        """يرسل تقرير التطوير مرة واحدة عند إغلاق السوق (لو فيه نشاط اليوم)."""
+        if not self.cfg.dev_report_on_close:
+            return
+        et_now = et_now or now_et()
+        if classify_session(self.cfg, et_now) is not Session.CLOSED:
+            return
+        today = et_now.strftime("%Y-%m-%d")
+        if self.store.get_meta("last_dev_report") == today:
+            return
+        # لا ترسل تقريرًا فاضيًا (عطلة/يوم بلا نشاط)
+        has_activity = (self.store.fetch_resolved() or
+                        self.store.fetch_missed(self.cfg.missed_rise_pct))
+        if not has_activity:
+            return
+        report = build_dev_report(self.store, self.cfg)
+        if self.telegram.send(report):
+            self.store.set_meta("last_dev_report", today)
+            logger.info("أُرسل تقرير التطوير اليومي")
 
     def shutdown(self) -> None:
         logger.info("إيقاف الماسح...")
