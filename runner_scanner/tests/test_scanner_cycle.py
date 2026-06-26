@@ -35,6 +35,7 @@ def _scanner():
                  telegram_chat_id="x", massive_api_key="x", halts_enabled=False)
     sc = Scanner(cfg)
     sc.client = CycleClient()    # حقن عميل وهمي
+    sc.short = None              # لا جلب شورت شبكي في الاختبارات
     return sc
 
 
@@ -75,6 +76,7 @@ def test_top_n_caps_to_highest_gainers():
                  halts_enabled=False, top_n_runners=1)
     sc = Scanner(cfg)
     sc.client = CycleClient()    # PENNY +33% أعلى من STRONG +25%
+    sc.short = None
     sc.run_cycle(et_now=ET_NOW)
     tickers = {r["ticker"] for r in
                sc.store._conn.execute("SELECT ticker FROM tracking").fetchall()}

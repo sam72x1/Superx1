@@ -14,7 +14,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from . import detector
-from .alerts import TelegramSender, build_card, prioritize
+from .alerts import TelegramSender, build_card, build_followup, prioritize
 from .config import Config
 from .dev_assistant import build_dev_report
 from .halts import HaltTracker
@@ -23,6 +23,7 @@ from .models import Candidate, Session
 from .monitor import HealthMonitor
 from .pipeline import process_candidate
 from .sessions import classify_session, is_scanning_window, now_et
+from .short_interest import ShortInterestProvider
 from .state import Store
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class Scanner:
         self.store = Store(cfg.db_path)
         self.telegram = TelegramSender(cfg)
         self.halts = HaltTracker(cfg)
+        self.short = ShortInterestProvider()
         self.monitor = HealthMonitor(
             notify=self.telegram.send,
             stall_seconds=max(300.0, cfg.poll_interval_sec * 8),
@@ -74,9 +76,15 @@ class Scanner:
                     session.value, len(runners), len(top))
 
         # تحديث نتائج التنبيهات المفتوحة من نفس السنابشوت (بلا نداء إضافي)
+        # ويصدّر أحداث متابعة (🎯 هدف · ⛔ وقف · 🚀 قفزة) نرسلها فورًا.
         price_map = {e.ticker: e.last_price for e in snapshot if e.is_valid}
-        self.store.update_outcomes(price_map, et_now,
-                                   window_min=self.cfg.outcome_window_min)
+        events = self.store.update_outcomes(
+            price_map, et_now, window_min=self.cfg.outcome_window_min,
+            surge_leg_pct=self.cfg.surge_leg_pct)
+        for ev in events:
+            self.telegram.send(build_followup(self.cfg, ev))
+        if events:
+            logger.info("أُرسل %d تحديث متابعة", len(events))
 
         accepted: list[Candidate] = []
         for snap in top:
@@ -87,7 +95,7 @@ class Scanner:
             try:
                 cand = process_candidate(
                     self.cfg, self.client, snap, halts=self.halts,
-                    session=session, et_now=et_now)
+                    session=session, et_now=et_now, short_provider=self.short)
             except MassiveError as exc:
                 logger.warning("معالجة %s فشلت: %s", snap.ticker, exc)
                 continue

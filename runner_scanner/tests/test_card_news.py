@@ -23,6 +23,7 @@ def _card_candidate(news=True, headline="Acme Inc Announces Strategic Partnershi
     c.final_score = 100
     c.float_shares = 16_400_000
     c.float_source = FloatSource.FLOAT_ENDPOINT
+    c.market_cap = 25_000_000
     c.short_pct = short
     c.momentum = MomentumResult(score=48, rvol=14, rvol_5min=22,
                                 change_5min_pct=4, vwap_distance_pct=3,
@@ -49,14 +50,21 @@ def test_card_matches_template_lines():
                       now=datetime(2026, 6, 26, 15, 31, tzinfo=timezone.utc))
     assert "🟢 <b>$LICN</b>  +22.2%" in card
     assert "💪 القوة: 100/100" in card and "🔥 قوي جدًا" in card
-    assert "💎 فلوت 16.4M · شورت 1%" in card
+    # كل مؤشر في سطر مستقل (مثل أعمدة الـ scanner)
+    assert "🏷 الماركت كاب: 25.0M" in card
+    assert "💎 الفلوت: 16.4M" in card
+    assert "🩳 الشورت (فلوت): 1%" in card
+    assert "📦 الحجم: 3.0M" in card
+    assert "📊 RVol: 14.0x" in card
+    assert "⚡ 5min Δ%: +4.0%" in card
+    assert "🔥 5min RVol: 22.0x" in card
     assert "📉 الدعم الثاني (الدخول): $1.38" in card
     assert "📉 الدعم الأول: $1.31" in card
     assert "🛒 الشراء: من $1.54 إلى $1.56" in card
     assert "🎯 الهدف 1: $1.69 (+10%)" in card
     assert "🎯 الهدف 3: $2.00 (+30%)" in card
     assert "⛔ الوقف: $1.43 (-7%)" in card
-    assert "↑ الأهداف = مقاومات حقيقية على الشارت" in card
+    assert "من الشارت" in card    # الوقف والأهداف من الشارت لا عشوائية
     assert "(الرياض)" in card and "18:31" in card    # توقيت الرياض
     assert "🧾 إصدار الكود: abc1234" in card
 
@@ -72,10 +80,16 @@ def test_card_without_news_shows_placeholder():
     assert "لا يوجد محفّز خبري حديث" in card
 
 
-def test_card_omits_short_when_unknown():
+def test_card_short_unknown_shows_dash():
+    # تعذّر الجلب ≠ صفر → «—» لا رقم
     card = build_card(CFG, _card_candidate(short=None))
-    assert "شورت" not in card
-    assert "فلوت 16.4M" in card
+    assert "🩳 الشورت: — (تعذّر الجلب)" in card
+
+
+def test_card_high_short_warns():
+    card = build_card(CFG, _card_candidate(short=35.0))
+    assert "🩳 الشورت (فلوت): 35%" in card
+    assert "ضغط بيعي" in card          # الشورت يضرّ → تحذير لا مكافأة
 
 
 def test_card_extended_hours_warning():

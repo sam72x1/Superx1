@@ -74,27 +74,38 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
     entry = rp.entry_ref if rp else s.last_price
     bar, strength = _strength_bar(c.final_score)
 
-    # 💎 فلوت · شورت
+    # 💎 الفلوت
     if c.float_source is FloatSource.UNKNOWN or c.float_shares is None:
-        float_part = "فلوت غير معروف ⚠️"
+        float_line = "💎 الفلوت: غير معروف ⚠️"
     else:
-        float_part = f"فلوت {_human(c.float_shares)}"
-        if c.float_source is FloatSource.SHARES_OUTSTANDING:
-            float_part += " (أسهم قائمة)"
-    short_part = f" · شورت {c.short_pct:.0f}%" if c.short_pct is not None else ""
+        suffix = " (أسهم قائمة)" \
+            if c.float_source is FloatSource.SHARES_OUTSTANDING else ""
+        float_line = f"💎 الفلوت: {_human(c.float_shares)}{suffix}"
 
+    # كل مؤشر في سطر مستقل (مثل أعمدة الـ scanner)
     lines = [
         f"🟢 <b>${c.ticker}</b>  +{s.change_pct:.1f}%",
         f"💪 القوة: {c.final_score:.0f}/100  {bar}  {strength}",
         f"💰 السعر: {_money(s.last_price)}",
-        f"💎 {float_part}{short_part}",
+        f"🏷 الماركت كاب: {_human(c.market_cap)}",
+        float_line,
     ]
-
-    # إشارات الزخم (تميّز ماسح الرَنرات)
+    # 🩳 الشورت (يضرّ السهم) — نسبة الفلوت + حجم الشورت اليومي.
+    # تعذّر = «—» لا صفر؛ نحذّر عند الارتفاع ولا نكافئه بالدرجة.
+    if c.short_pct is not None:
+        warn = " ⚠️ ضغط بيعي" if c.short_pct >= cfg.short_warn_pct else ""
+        lines.append(f"🩳 الشورت (فلوت): {c.short_pct:.0f}%{warn}")
+    if c.short_vol_pct is not None:
+        lines.append(f"🩳 شورت الحجم اليومي: {c.short_vol_pct:.0f}%")
+    if c.short_pct is None and c.short_vol_pct is None:
+        lines.append("🩳 الشورت: — (تعذّر الجلب)")
+    lines.append(f"📦 الحجم: {_human(s.day_volume)}")
     if m is not None:
-        ready = f" · جاهزية {rk.classic_score:.0f}/100" if rk else ""
-        lines.append(
-            f"📊 RVol {m.rvol:.1f}x · 5min RVol {m.rvol_5min:.1f}x{ready}")
+        lines.append(f"📊 RVol: {m.rvol:.1f}x")
+        lines.append(f"⚡ 5min Δ%: {m.change_5min_pct:+.1f}%")
+        lines.append(f"🔥 5min RVol: {m.rvol_5min:.1f}x")
+    if rk is not None:
+        lines.append(f"🎓 الجاهزية الفنية: {rk.classic_score:.0f}/100")
 
     # 📉 الدعم الثاني (الدخول) + الدعم الأول
     if rp is not None:
@@ -113,7 +124,7 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
         # ⛔ الوقف
         lines.append(
             f"⛔ الوقف: {_money(rp.stop_price)} (-{rp.stop_pct:.0f}%)")
-        lines.append("↑ الأهداف = مقاومات حقيقية على الشارت")
+        lines.append("↑ الوقف والأهداف من الشارت (دعوم/مقاومات حقيقية)")
 
     # 📰 ملخص الخبر (مطلب المستخدم)
     if c.catalyst is not None and c.catalyst.has_news:
@@ -138,6 +149,26 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
 def prioritize(candidates: list[Candidate]) -> list[Candidate]:
     """ترتيب أولوية: الأعلى درجة أولًا (لا يُغرق اليوم الحار)."""
     return sorted(candidates, key=lambda c: c.final_score, reverse=True)
+
+
+def build_followup(cfg: Config, event: dict, now: datetime | None = None) -> str:
+    """يبني رسالة تحديث متابعة لحدث (🎯 هدف · ⛔ وقف · 🚀 قفزة)."""
+    tkr = event.get("ticker", "")
+    price = event.get("price")
+    gain = event.get("gain_pct", 0.0)
+    etype = event.get("type")
+    when = f"⏰ {_local_time(cfg, now)} (الرياض)"
+    if etype == "target":
+        lvl = event.get("level", 1)
+        return (f"🎯 <b>${tkr}</b> وصل الهدف {lvl}!  "
+                f"{_money(price)} (+{gain:.0f}%)\n{when}")
+    if etype == "stop":
+        return (f"⛔ <b>${tkr}</b> كسر الوقف  "
+                f"{_money(price)} ({gain:.0f}%)\n{when}")
+    if etype == "surge":
+        return (f"🚀 <b>${tkr}</b> قفزة قوية!  "
+                f"{_money(price)} (+{gain:.0f}% من الدخول)\n{when}")
+    return f"ℹ️ <b>${tkr}</b> تحديث: {_money(price)}\n{when}"
 
 
 class TelegramSender:

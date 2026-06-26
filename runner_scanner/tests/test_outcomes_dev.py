@@ -53,10 +53,12 @@ def test_outcome_win_on_target_hit():
     c = _cand("WIN", 3.0, stop=2.7, t1=3.6)
     st.log_candidate(c, T0)
     st.mark_alerted("WIN", 80, T0)
-    st.update_outcomes({"WIN": 3.7},
-                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    events = st.update_outcomes(
+        {"WIN": 3.7}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
     row = st.fetch_resolved(only_alerts=True)[0]
-    assert row["outcome"] == "win" and row["hit_target"] == 1
+    assert row["result"] == "win" and row["hit_target"] == 1
+    # حدث متابعة: تحقيق الهدف الأول
+    assert any(e["type"] == "target" and e["level"] == 1 for e in events)
 
 
 def test_outcome_loss_on_stop_hit():
@@ -64,10 +66,11 @@ def test_outcome_loss_on_stop_hit():
     c = _cand("LOSE", 5.0, stop=4.5, t1=6.0)
     st.log_candidate(c, T0)
     st.mark_alerted("LOSE", 75, T0)
-    st.update_outcomes({"LOSE": 4.4},
-                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    events = st.update_outcomes(
+        {"LOSE": 4.4}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
     row = st.fetch_resolved(only_alerts=True)[0]
-    assert row["outcome"] == "loss" and row["hit_stop"] == 1
+    assert row["result"] == "loss" and row["hit_stop"] == 1
+    assert any(e["type"] == "stop" for e in events)
 
 
 def test_outcome_timeout_when_window_passes():
@@ -79,7 +82,28 @@ def test_outcome_timeout_when_window_passes():
                        datetime(2026, 6, 26, 16, 0, tzinfo=timezone.utc),
                        window_min=90)
     row = st.fetch_resolved(only_alerts=True)[0]
-    assert row["outcome"] == "timeout"
+    assert row["result"] == "timeout"
+
+
+def test_surge_event_on_new_leg():
+    st = _store()
+    c = _cand("SURGE", 3.0, stop=2.7, t1=10.0)   # هدف بعيد كي لا يُحسم
+    st.log_candidate(c, T0)
+    st.mark_alerted("SURGE", 80, T0)
+    # قفزة +10% فوق سعر الدخول (≥ surge_leg 8%) → حدث قفزة قوية
+    events = st.update_outcomes(
+        {"SURGE": 3.3}, datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc),
+        surge_leg_pct=8.0)
+    assert any(e["type"] == "surge" for e in events)
+
+
+def test_events_only_for_alerts_not_rejected():
+    st = _store()
+    c = _cand("REJ", 2.0, rejected=True, reason="RVol 3x < 5x")
+    st.log_candidate(c, T0)   # لم يُنبَّه عنه
+    events = st.update_outcomes(
+        {"REJ": 3.0}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    assert events == []       # لا أحداث للمرفوضين
 
 
 def test_first_price_not_overwritten_on_relog():

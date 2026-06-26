@@ -1,11 +1,15 @@
-"""التخزين: منع تكرار + closed-loop + تتبّع نتائج التنبيهات (القسم 12).
+"""التخزين: منع تكرار + closed-loop + تتبّع نتائج وأحداث المتابعة.
 
-SQLite على قرص دائم. ثلاث وظائف:
-1. منع تكرار التنبيه (تنبيه/سهم/يوم) — يُعاد تحميله عند الإقلاع تلقائيًا.
-2. closed-loop: صفّ واحد لكل سهم/يوم يحمل تحليله ونتيجته (للمعايرة لاحقًا).
-3. تتبّع النتائج: نتابع سعر كل مرشّح (مُنبَّه أو مرفوض) من السنابشوت —
-   هل استمر الرَنر صعودًا لهدفه (نجاح) أم انهار للوقف؟ وكم أقصى ربح؟
-   هذا أساس أداة التطوير (dev_assistant).
+SQLite على قرص دائم:
+1. منع تكرار التنبيه (تنبيه/سهم/يوم) — يُعاد تحميله عند الإقلاع.
+2. صفّ واحد لكل سهم/يوم يحمل تحليله + نتيجته (للمعايرة وأداة التطوير).
+3. تتبّع نتائج وأحداث: نتابع سعر كل مرشّح من السنابشوت (بلا API إضافي)،
+   ونصدر **أحداث متابعة** للمُنبَّه عنها: 🎯 تحقيق هدف · ⛔ كسر الوقف ·
+   🚀 قفزة قوية جديدة. مزيلة التكرار (تُحفظ حالة الإشعار في DB).
+
+«النتيجة» (result) لأداة التطوير: win (بلغ هدفًا) · loss (ضرب الوقف) ·
+timeout (انتهت النافذة بلا حسم). «الحالة» (outcome): open/closed (دورة حياة
+التتبّع — تبقى مفتوحة لإصدار أحداث أهداف لاحقة حتى الوقف/النافذة).
 
 ⚠️ يعتمد على القرص الدائم (درس CCXI، القسم 14).
 """
@@ -39,38 +43,43 @@ CREATE TABLE IF NOT EXISTS bot_meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
--- صفّ واحد لكل سهم/يوم: تحليله (closed-loop) + نتيجته (تتبّع)
 CREATE TABLE IF NOT EXISTS tracking (
-    ticker        TEXT NOT NULL,
-    trade_date    TEXT NOT NULL,
-    first_seen_at TEXT,
-    logged_at     TEXT,
-    session       TEXT,
-    change_pct    REAL,
-    score         REAL,
-    momentum      REAL,
-    readiness     REAL,
-    rvol          REAL,
-    rvol_5min     REAL,
-    float_shares  REAL,
-    float_source  TEXT,
-    halt_state    TEXT,
-    had_news      INTEGER,
-    rejected      INTEGER,
-    reject_reason TEXT,
-    -- تتبّع النتيجة
-    is_alert      INTEGER DEFAULT 0,
-    first_price   REAL,
-    stop_price    REAL,
-    target1       REAL,
-    high_after    REAL,
-    low_after     REAL,
-    max_gain_pct  REAL DEFAULT 0,
-    max_draw_pct  REAL DEFAULT 0,
-    hit_target    INTEGER DEFAULT 0,
-    hit_stop      INTEGER DEFAULT 0,
-    outcome       TEXT DEFAULT 'open',   -- open / win / loss / timeout
-    closed_at     TEXT,
+    ticker          TEXT NOT NULL,
+    trade_date      TEXT NOT NULL,
+    first_seen_at   TEXT,
+    logged_at       TEXT,
+    session         TEXT,
+    change_pct      REAL,
+    score           REAL,
+    momentum        REAL,
+    readiness       REAL,
+    rvol            REAL,
+    rvol_5min       REAL,
+    float_shares    REAL,
+    float_source    TEXT,
+    halt_state      TEXT,
+    had_news        INTEGER,
+    rejected        INTEGER,
+    reject_reason   TEXT,
+    -- تتبّع النتيجة + الأحداث
+    is_alert        INTEGER DEFAULT 0,
+    first_price     REAL,
+    stop_price      REAL,
+    target1         REAL,
+    target2         REAL,
+    target3         REAL,
+    high_after      REAL,
+    low_after       REAL,
+    max_gain_pct    REAL DEFAULT 0,
+    max_draw_pct    REAL DEFAULT 0,
+    hit_target      INTEGER DEFAULT 0,
+    hit_stop        INTEGER DEFAULT 0,
+    notified_targets INTEGER DEFAULT 0,
+    notified_stop   INTEGER DEFAULT 0,
+    notified_high   REAL,
+    result          TEXT DEFAULT '',       -- win / loss / timeout (للتطوير)
+    outcome         TEXT DEFAULT 'open',    -- open / closed (دورة حياة التتبّع)
+    closed_at       TEXT,
     PRIMARY KEY (ticker, trade_date)
 );
 """
@@ -124,14 +133,16 @@ class Store:
                 (ticker, day))
             self._conn.commit()
 
-    # ── closed-loop + تهيئة التتبّع (upsert صفّ واحد/سهم/يوم) ──────
+    # ── closed-loop + تهيئة التتبّع (upsert صفّ/سهم/يوم) ───────────
     def log_candidate(self, c: Candidate, now: datetime | None = None) -> None:
-        """يسجّل تحليل المرشّح ويهيّئ تتبّع نتيجته. لا يكرّر first_price."""
         day = trade_date_str(now)
         ts = _iso(now)
         price = c.snapshot.last_price
         stop = c.risk.stop_price if c.risk else None
-        target1 = c.risk.targets[0] if (c.risk and c.risk.targets) else None
+        tg = (c.risk.targets if c.risk else []) or []
+        t1 = tg[0] if len(tg) > 0 else None
+        t2 = tg[1] if len(tg) > 1 else None
+        t3 = tg[2] if len(tg) > 2 else None
         had_news = 1 if (c.catalyst and c.catalyst.has_news) else 0
         with self._lock:
             self._conn.execute(
@@ -140,51 +151,50 @@ class Store:
                     ticker, trade_date, first_seen_at, logged_at, session,
                     change_pct, score, momentum, readiness, rvol, rvol_5min,
                     float_shares, float_source, halt_state, had_news, rejected,
-                    reject_reason, first_price, stop_price, target1,
-                    high_after, low_after, max_gain_pct, outcome)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'open')
+                    reject_reason, first_price, stop_price, target1, target2,
+                    target3, high_after, low_after, max_gain_pct, notified_high,
+                    outcome)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
                 ON CONFLICT(ticker, trade_date) DO UPDATE SET
-                    logged_at=excluded.logged_at,
-                    session=excluded.session,
-                    change_pct=excluded.change_pct,
-                    score=excluded.score,
-                    momentum=excluded.momentum,
-                    readiness=excluded.readiness,
-                    rvol=excluded.rvol,
-                    rvol_5min=excluded.rvol_5min,
+                    logged_at=excluded.logged_at, session=excluded.session,
+                    change_pct=excluded.change_pct, score=excluded.score,
+                    momentum=excluded.momentum, readiness=excluded.readiness,
+                    rvol=excluded.rvol, rvol_5min=excluded.rvol_5min,
                     float_shares=excluded.float_shares,
                     float_source=excluded.float_source,
-                    halt_state=excluded.halt_state,
-                    had_news=excluded.had_news,
-                    rejected=excluded.rejected,
-                    reject_reason=excluded.reject_reason,
-                    -- لا نمسّ first_price/high/low/outcome (تبقى من أول رؤية)
+                    halt_state=excluded.halt_state, had_news=excluded.had_news,
+                    rejected=excluded.rejected, reject_reason=excluded.reject_reason,
+                    -- لا نمسّ first_price/high/low/notified/outcome/result
                     stop_price=COALESCE(tracking.stop_price, excluded.stop_price),
-                    target1=COALESCE(tracking.target1, excluded.target1)
+                    target1=COALESCE(tracking.target1, excluded.target1),
+                    target2=COALESCE(tracking.target2, excluded.target2),
+                    target3=COALESCE(tracking.target3, excluded.target3)
                 """,
                 (
                     c.ticker, day, ts, ts, c.session.value,
-                    c.snapshot.change_pct,
-                    c.final_score,
+                    c.snapshot.change_pct, c.final_score,
                     c.momentum.score if c.momentum else None,
                     c.readiness.classic_score if c.readiness else None,
                     c.momentum.rvol if c.momentum else None,
                     c.momentum.rvol_5min if c.momentum else None,
                     c.float_shares, c.float_source.value, c.halt_state.value,
                     had_news, 1 if c.is_rejected else 0, c.rejected_reason,
-                    price, stop, target1, price, price,
+                    price, stop, t1, t2, t3, price, price, price,
                 ))
             self._conn.commit()
 
-    # ── تتبّع النتائج من السنابشوت (بلا نداء API إضافي) ───────────
+    # ── تتبّع النتائج + إصدار أحداث المتابعة (من السنابشوت) ───────
     def update_outcomes(self, price_map: dict[str, float],
                         now: datetime | None = None,
-                        window_min: float = 90.0) -> int:
-        """يحدّث القمم/القيعان لكل تتبّع مفتوح، ويحسم النتيجة عند بلوغ
-        الهدف/الوقف أو انتهاء النافذة. يرجّع عدد المحسومة هذي الدورة."""
+                        window_min: float = 90.0,
+                        surge_leg_pct: float = 8.0) -> list[dict]:
+        """يحدّث كل تتبّع مفتوح ويرجّع أحداث المتابعة للمُنبَّه عنها:
+        [{ticker, type:'target'/'stop'/'surge', price, gain_pct, level?}].
+        يحسم result (win/loss/timeout) ويغلق الصفّ عند الوقف/كل الأهداف/النافذة.
+        """
         now = now or datetime.now(timezone.utc)
         day = trade_date_str(now)
-        closed = 0
+        events: list[dict] = []
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM tracking WHERE outcome='open' AND trade_date=?",
@@ -198,15 +208,61 @@ class Store:
                 low = min(r["low_after"] or price, price)
                 max_gain = (high - first) / first * 100.0 if first > 0 else 0.0
                 max_draw = (low - first) / first * 100.0 if first > 0 else 0.0
-                hit_target = 1 if (r["target1"] and high >= r["target1"]) else 0
-                hit_stop = 1 if (r["stop_price"] and low <= r["stop_price"]) else 0
 
+                targets = [r["target1"], r["target2"], r["target3"]]
+                targets = [t for t in targets if t]
+                notified_t = r["notified_targets"] or 0
+                notified_stop = r["notified_stop"] or 0
+                notified_high = r["notified_high"] or first
+                result = r["result"] or ""
+                hit_target = r["hit_target"] or 0
+                hit_stop = r["hit_stop"] or 0
                 outcome = "open"
-                # نحسم: الهدف أولًا (نجاح)، ثم الوقف (خسارة)، ثم انتهاء النافذة
-                if hit_target:
-                    outcome = "win"
-                elif hit_stop:
-                    outcome = "loss"
+                is_alert = r["is_alert"] or 0
+
+                # 🎯 أهداف: نبلّغ كل هدف عُبر لأول مرة (نرسل للمُنبَّه فقط)
+                while notified_t < len(targets) and high >= targets[notified_t]:
+                    notified_t += 1
+                    hit_target = 1
+                    if not result:
+                        result = "win"
+                    if is_alert:
+                        events.append({
+                            "ticker": r["ticker"], "type": "target",
+                            "level": notified_t, "price": targets[notified_t - 1],
+                            "gain_pct": (targets[notified_t - 1] - first) / first * 100.0,
+                        })
+
+                # ⛔ الوقف: نبلّغ مرة واحدة (ويغلق التتبّع)
+                if not notified_stop and r["stop_price"] and low <= r["stop_price"]:
+                    notified_stop = 1
+                    hit_stop = 1
+                    if not result:
+                        result = "loss"
+                    if is_alert:
+                        events.append({
+                            "ticker": r["ticker"], "type": "stop",
+                            "price": r["stop_price"],
+                            "gain_pct": (r["stop_price"] - first) / first * 100.0,
+                        })
+
+                # 🚀 قفزة قوية: قمة جديدة ≥ surge فوق آخر قمة مُبلَّغة
+                if high >= notified_high * (1 + surge_leg_pct / 100.0):
+                    notified_high = high
+                    if is_alert:
+                        events.append({
+                            "ticker": r["ticker"], "type": "surge",
+                            "price": high,
+                            "gain_pct": (high - first) / first * 100.0,
+                        })
+                else:
+                    notified_high = max(notified_high, high)
+
+                # حسم الإغلاق: الوقف، أو كل الأهداف، أو انتهاء النافذة
+                if notified_stop:
+                    outcome = "closed"
+                elif targets and notified_t >= len(targets):
+                    outcome = "closed"
                 else:
                     try:
                         seen = datetime.fromisoformat(r["first_seen_at"])
@@ -214,32 +270,33 @@ class Store:
                     except (TypeError, ValueError):
                         elapsed = 0.0
                     if elapsed >= window_min:
-                        outcome = "timeout"
+                        outcome = "closed"
+                        if not result:
+                            result = "timeout"
 
-                closed_at = _iso(now) if outcome != "open" else None
-                if outcome != "open":
-                    closed += 1
+                closed_at = _iso(now) if outcome == "closed" else None
                 self._conn.execute(
                     "UPDATE tracking SET high_after=?, low_after=?, max_gain_pct=?,"
-                    " max_draw_pct=?, hit_target=?, hit_stop=?, outcome=?, closed_at=?"
-                    " WHERE ticker=? AND trade_date=?",
+                    " max_draw_pct=?, hit_target=?, hit_stop=?, notified_targets=?,"
+                    " notified_stop=?, notified_high=?, result=?, outcome=?,"
+                    " closed_at=? WHERE ticker=? AND trade_date=?",
                     (high, low, round(max_gain, 2), round(max_draw, 2),
-                     hit_target, hit_stop, outcome, closed_at,
+                     hit_target, hit_stop, notified_t, notified_stop,
+                     notified_high, result, outcome, closed_at,
                      r["ticker"], r["trade_date"]))
             self._conn.commit()
-        return closed
+        return events
 
     # ── استعلامات أداة التطوير ────────────────────────────────────
     def fetch_resolved(self, only_alerts: bool = False) -> list[sqlite3.Row]:
-        """كل التتبّعات المحسومة (win/loss/timeout). للتحليل التطويري."""
-        q = "SELECT * FROM tracking WHERE outcome != 'open'"
+        """التتبّعات المحسومة نتيجتها (result غير فارغ)."""
+        q = "SELECT * FROM tracking WHERE result != ''"
         if only_alerts:
             q += " AND is_alert=1"
         with self._lock:
             return self._conn.execute(q).fetchall()
 
     def fetch_missed(self, min_rise_pct: float) -> list[sqlite3.Row]:
-        """المرفوضون اللي صعدوا ≥ نسبة بعد الرفض (فرص فائتة)."""
         with self._lock:
             return self._conn.execute(
                 "SELECT * FROM tracking WHERE rejected=1 AND max_gain_pct >= ?"

@@ -45,9 +45,9 @@ def _human(n) -> str:
 def _stats(rows: list) -> dict:
     """يرجّع إحصاء مجموعة: العدد، فائز/خاسر/منتهٍ، نسبة النجاح، متوسط أقصى ربح."""
     n = len(rows)
-    wins = sum(1 for r in rows if r["outcome"] == "win")
-    losses = sum(1 for r in rows if r["outcome"] == "loss")
-    timeouts = sum(1 for r in rows if r["outcome"] == "timeout")
+    wins = sum(1 for r in rows if r["result"] == "win")
+    losses = sum(1 for r in rows if r["result"] == "loss")
+    timeouts = sum(1 for r in rows if r["result"] == "timeout")
     decisive = wins + losses
     win_rate = (wins / decisive * 100.0) if decisive else None
     avg_gain = (sum((r["max_gain_pct"] or 0) for r in rows) / n) if n else 0.0
@@ -153,7 +153,7 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
                          (90, 1e9, "90-100")]))
 
     # ── أنماط الخاسرين ───────────────────────────────────────────
-    losses = [r for r in alerts if r["outcome"] == "loss"]
+    losses = [r for r in alerts if r["result"] == "loss"]
     if losses:
         fails = ["\n🛑 <b>أنماط الخاسرين</b>"]
         sess_cnt: dict = {}

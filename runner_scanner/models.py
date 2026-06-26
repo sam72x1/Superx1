@@ -145,6 +145,8 @@ class Candidate:
     float_source: FloatSource = FloatSource.UNKNOWN
     market_cap: Optional[float] = None
     short_pct: Optional[float] = None      # نسبة الشورت من الفلوت% (best-effort)
+    short_vol_pct: Optional[float] = None  # نسبة حجم الشورت اليومي% (best-effort)
+    short_source: str = ""                  # مصدر بيانات الشورت
 
     # نتائج التحليل
     momentum: Optional[MomentumResult] = None

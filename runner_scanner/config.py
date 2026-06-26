@@ -110,6 +110,7 @@ class Config:
     # ── تتبّع النتائج + أداة التطوير (القسم 12 closed-loop) ────────
     outcome_window_min: float = 90.0     # نافذة متابعة الرَنر بعد التنبيه (دقائق)
     missed_rise_pct: float = 30.0        # مرفوض صعد ≥ هذا = فرصة فائتة
+    surge_leg_pct: float = 8.0           # قفزة جديدة ≥ هذا فوق آخر قمة = تحديث
     dev_min_sample: int = 10             # أقل عدد نتائج محسومة قبل تقرير ذو معنى
     dev_report_on_close: bool = True     # إرسال تقرير تطوير تلقائي عند إغلاق السوق
 
@@ -117,6 +118,7 @@ class Config:
     display_tz: str = "Asia/Riyadh"      # توقيت عرض وقت البطاقة
     code_version: str = ""               # إصدار الكود (commit) — يُعرض بالبطاقة
     buy_zone_pct: float = 1.3            # عرض منطقة الشراء فوق السعر%
+    short_warn_pct: float = 20.0         # شورت ≥ هذا = تحذير ضغط بيعي (يضرّ)
 
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
@@ -159,9 +161,11 @@ class Config:
             display_tz=_s("DISPLAY_TZ", "Asia/Riyadh"),
             code_version=_s("CODE_VERSION", _s("RENDER_GIT_COMMIT", ""))[:7],
             buy_zone_pct=_f("BUY_ZONE_PCT", 1.3),
+            short_warn_pct=_f("SHORT_WARN_PCT", 20.0),
             top_n_runners=_i("TOP_N_RUNNERS", 15),
             outcome_window_min=_f("OUTCOME_WINDOW_MIN", 90.0),
             missed_rise_pct=_f("MISSED_RISE_PCT", 30.0),
+            surge_leg_pct=_f("SURGE_LEG_PCT", 8.0),
             dev_min_sample=_i("DEV_MIN_SAMPLE", 10),
             dev_report_on_close=_b("DEV_REPORT_ON_CLOSE", True),
             halts_enabled=_b("HALTS_ENABLED", True),

@@ -34,6 +34,7 @@ def process_candidate(
     halts: HaltTracker | None = None,
     session: Session | None = None,
     et_now: datetime | None = None,
+    short_provider=None,
 ) -> Candidate:
     """يعالج مرشّحًا واحدًا عبر خط المعالجة الكامل."""
     et_now = et_now or now_et()
@@ -55,10 +56,6 @@ def process_candidate(
         shares = client.shares_outstanding(snap.ticker)
         if shares:
             c.market_cap = shares * snap.last_price
-        # الشورت best-effort → نسبة من الفلوت (للعرض فقط)
-        si = client.short_interest(snap.ticker)
-        if si and c.float_shares:
-            c.short_pct = min(100.0, si / c.float_shares * 100.0)
     except MassiveError as exc:
         logger.debug("فلوت/أسهم فشل لـ %s: %s", snap.ticker, exc)
 
@@ -108,5 +105,17 @@ def process_candidate(
     from . import risk
     closed_5min = bars_5min[:-1] if len(bars_5min) > 1 else bars_5min
     c.risk = risk.build_risk_plan(cfg, snap.last_price, closed_5min)
+
+    # ── 10) الشورت (يضرّ السهم) — للمقبولين فقط (تجنّب تعليق الحلقة) ─
+    # عرض فقط لا يؤثّر على الفرز؛ best-effort، تعذّر ≠ صفر. كاش يومي.
+    if short_provider is not None:
+        try:
+            info = short_provider.get(snap.ticker)
+            if info is not None:
+                c.short_pct = info.short_float_pct
+                c.short_vol_pct = info.short_vol_pct
+                c.short_source = info.source
+        except Exception as exc:  # noqa: BLE001 — مصادر خارجية best-effort
+            logger.debug("شورت فشل لـ %s: %s", snap.ticker, exc)
 
     return c
