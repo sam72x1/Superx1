@@ -120,7 +120,10 @@ class Config:
     missed_rise_pct: float = 30.0        # مرفوض صعد ≥ هذا = فرصة فائتة
     surge_leg_pct: float = 8.0           # قفزة جديدة ≥ هذا فوق آخر قمة = تحديث
     dev_min_sample: int = 10             # أقل عدد نتائج محسومة قبل تقرير ذو معنى
-    dev_report_on_close: bool = True     # إرسال تقرير تطوير تلقائي عند إغلاق السوق
+    dev_report_on_close: bool = True     # تفعيل تقرير التطوير المجدوَل
+    # أيام إرسال التقرير (بتوقيت العرض/الرياض): Mon=0..Sun=6 → الأربعاء+السبت
+    dev_report_weekdays: tuple[int, ...] = (2, 5)
+    dev_report_hour: int = 5             # ساعة الإرسال (فجرًا بالرياض، بعد الإغلاق)
 
     # ── العرض ─────────────────────────────────────────────────────
     display_tz: str = "Asia/Riyadh"      # توقيت عرض وقت البطاقة
@@ -183,6 +186,10 @@ class Config:
             surge_leg_pct=_f("SURGE_LEG_PCT", 8.0),
             dev_min_sample=_i("DEV_MIN_SAMPLE", 10),
             dev_report_on_close=_b("DEV_REPORT_ON_CLOSE", True),
+            dev_report_weekdays=tuple(
+                int(x) for x in _s("DEV_REPORT_WEEKDAYS", "2,5").split(",")
+                if x.strip().lstrip("-").isdigit()),
+            dev_report_hour=_i("DEV_REPORT_HOUR", 5),
             halts_enabled=_b("HALTS_ENABLED", True),
             dry_run=_b("DRY_RUN", False),
             log_level=_s("LOG_LEVEL", "INFO"),

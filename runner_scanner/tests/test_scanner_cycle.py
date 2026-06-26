@@ -73,6 +73,60 @@ def test_champion_inherited_is_analyzed_below_threshold():
     sc.shutdown()
 
 
+def _add_resolved_activity(sc):
+    """يضيف نتيجة محسومة (نشاط) ليُرسَل التقرير."""
+    from runner_scanner.models import (
+        Candidate, Catalyst, FloatSource, MomentumResult, ReadinessResult,
+        RiskPlan, Session, SnapshotEntry)
+    from datetime import timezone
+    t0 = datetime(2026, 6, 30, 18, 0, tzinfo=timezone.utc)
+    c = Candidate(snapshot=SnapshotEntry("WIN", 3.0, 2.4, 2.4, 3.1, 2.3,
+                                         1_000_000, 2.8, 25.0),
+                  session=Session.REGULAR)
+    c.momentum = MomentumResult(score=35, rvol=8, rvol_5min=22,
+                                change_5min_pct=3, vwap_distance_pct=4,
+                                above_vwap=True, volume_rising=True)
+    c.readiness = ReadinessResult(classic_score=80, pillar_score=40,
+                                  trend="صاعد", rsi=60, macd_bull=True,
+                                  divergence="لا شيء", above_ma50=True,
+                                  above_ma200=True, golden_cross=True)
+    c.float_shares = 5_000_000
+    c.float_source = FloatSource.FLOAT_ENDPOINT
+    c.catalyst = Catalyst(has_news=True)
+    c.final_score = 80
+    c.risk = RiskPlan(stop_price=2.7, stop_pct=10, entry_ref=3.0,
+                      targets=[3.6, 3.9, 4.2], stop_basis="دعم 5د")
+    sc.store.log_candidate(c, t0)
+    sc.store.mark_alerted("WIN", 80, t0)
+    sc.store.update_outcomes({"WIN": 3.7}, t0)
+
+
+def test_report_fires_on_scheduled_day():
+    from zoneinfo import ZoneInfo
+    sc = _scanner()
+    _add_resolved_activity(sc)
+    # ثلاثاء 22:00 ET → الرياض الأربعاء 05:00 (يوم مجدوَل، بعد ساعة الفجر)
+    et = datetime(2026, 6, 30, 22, 0, tzinfo=ZoneInfo("America/New_York"))
+    sc._maybe_daily_report(et_now=et)
+    key = et.astimezone(ZoneInfo("Asia/Riyadh")).strftime("%Y-%m-%d")
+    assert sc.store.get_meta("last_dev_report") == key   # أُرسل
+    # استدعاء ثانٍ نفس اليوم → لا تكرار (المفتاح ثابت)
+    sc._maybe_daily_report(et_now=et)
+    assert sc.store.get_meta("last_dev_report") == key
+    sc.shutdown()
+
+
+def test_report_skips_non_scheduled_day():
+    from zoneinfo import ZoneInfo
+    sc = _scanner()
+    _add_resolved_activity(sc)
+    # اثنين 22:00 ET → الرياض الثلاثاء (ليس ضمن الأربعاء/السبت)
+    et = datetime(2026, 6, 29, 22, 0, tzinfo=ZoneInfo("America/New_York"))
+    sc._maybe_daily_report(et_now=et)
+    assert sc.store.get_meta("last_dev_report") is None   # لم يُرسل
+    sc.shutdown()
+
+
 def test_cycle_logs_tracking_for_all_processed():
     sc = _scanner()
     sc.run_cycle(et_now=ET_NOW)

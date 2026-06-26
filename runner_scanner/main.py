@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from zoneinfo import ZoneInfo
 
 from . import detector
 from .alerts import TelegramSender, build_card, build_followup, prioritize
@@ -165,23 +166,31 @@ class Scanner:
             self._stop.wait(max(1.0, self.cfg.poll_interval_sec - elapsed))
 
     def _maybe_daily_report(self, et_now=None) -> None:
-        """يرسل تقرير التطوير مرة واحدة عند إغلاق السوق (لو فيه نشاط اليوم)."""
+        """يرسل تقرير التطوير + ملفات CSV على جدول (افتراضيًا الأربعاء والسبت
+        فجرًا بتوقيت الرياض، بعد إغلاق السوق) لتتراكم النتائج بين تقريرين."""
         if not self.cfg.dev_report_on_close:
             return
         et_now = et_now or now_et()
-        if classify_session(self.cfg, et_now) is not Session.CLOSED:
+        try:
+            tz = ZoneInfo(self.cfg.display_tz)
+        except Exception:  # noqa: BLE001
+            tz = ZoneInfo("Asia/Riyadh")
+        local = et_now.astimezone(tz)
+        if local.weekday() not in self.cfg.dev_report_weekdays:
             return
-        today = et_now.strftime("%Y-%m-%d")
-        if self.store.get_meta("last_dev_report") == today:
+        if local.hour < self.cfg.dev_report_hour:
             return
-        # لا ترسل تقريرًا فاضيًا (عطلة/يوم بلا نشاط)
+        key = local.strftime("%Y-%m-%d")     # تقرير واحد لكل يوم مجدوَل
+        if self.store.get_meta("last_dev_report") == key:
+            return
+        # لا ترسل تقريرًا فاضيًا (لا نشاط متراكم)
         has_activity = (self.store.fetch_resolved() or
                         self.store.fetch_missed(self.cfg.missed_rise_pct))
         if not has_activity:
             return
         send_report_and_files(self.store, self.cfg, self.telegram)
-        self.store.set_meta("last_dev_report", today)
-        logger.info("أُرسل تقرير التطوير اليومي + ملفات CSV")
+        self.store.set_meta("last_dev_report", key)
+        logger.info("أُرسل تقرير التطوير المجدوَل + ملفات CSV (%s)", key)
 
     def shutdown(self) -> None:
         logger.info("إيقاف الماسح...")
