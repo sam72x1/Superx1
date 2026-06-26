@@ -74,7 +74,7 @@ class Config:
     exclude_otc: bool = True             # استبعاد OTC/pink
 
     # ── البوابات الصارمة (القسم 6) ────────────────────────────────
-    float_max: float = 20_000_000        # فلوت ≤ 20M
+    float_max: float = 40_000_000        # فلوت ≤ 40M
     rvol_min: float = 5.0                # RVol ≥ 5x (حسب الجلسة)
     volume_min: float = 300_000          # حجم يومي ≥ 300K (سيولة خروج)
     price_min: float = 1.0               # لا سنتات
@@ -180,7 +180,7 @@ class Config:
                 t.strip() for t in _s("ALLOWED_TICKER_TYPES", "CS,ADRC").split(",")
                 if t.strip()),
             exclude_otc=_b("EXCLUDE_OTC", True),
-            float_max=_f("FLOAT_MAX", 20_000_000),
+            float_max=_f("FLOAT_MAX", 40_000_000),
             rvol_min=_f("RVOL_MIN", 5.0),
             volume_min=_f("VOLUME_MIN", 300_000),
             price_min=_f("PRICE_MIN", 1.0),
