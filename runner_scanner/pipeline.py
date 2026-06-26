@@ -39,6 +39,7 @@ def process_candidate(
     et_now: datetime | None = None,
     short_provider=None,
     cache=None,
+    analyst=None,
 ) -> Candidate:
     """يعالج مرشّحًا واحدًا عبر خط المعالجة الكامل."""
     et_now = et_now or now_et()
@@ -129,6 +130,17 @@ def process_candidate(
     result = scoring.score_candidate(cfg, c)
     if not result.passed:
         return c.reject(result.reason)
+
+    # ── 8.5) المحلّل الذكي (Claude) — للمقبولين فقط ──────────────
+    # يقيّم المحفّز؛ خبر هبوطي (طرح/تخفيف) يخصم الدرجة وقد يُسقط التنبيه.
+    if analyst is not None:
+        c.analyst = analyst.analyze(c)
+        if c.analyst is not None and c.analyst.is_bearish:
+            c.final_score = max(0.0, c.final_score - cfg.analyst_bearish_penalty)
+            if c.final_score < cfg.alert_score_min:
+                return c.reject(
+                    f"محفّز هبوطي ({c.analyst.warning or c.analyst.direction})"
+                    f" → درجة {c.final_score:.0f} تحت العتبة")
 
     # ── 9) الوقف (دعم 5د) والأهداف (مقاومات حقيقية) ─────────────
     from . import risk

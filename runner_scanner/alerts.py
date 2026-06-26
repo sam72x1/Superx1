@@ -141,6 +141,13 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
             f"⛔ الوقف: {_money(rp.stop_price)} (-{rp.stop_pct:.0f}%)")
         lines.append("↑ الوقف والأهداف من الشارت (دعوم/مقاومات حقيقية)")
 
+    # 🧠 رؤية المحلّل الذكي (Claude)
+    if c.analyst is not None and c.analyst.thesis:
+        a = c.analyst
+        lines.append(f"🧠 المحلّل: {a.thesis} (محفّز {a.direction} {a.materiality}/10)")
+        if a.warning:
+            lines.append(f"🔴 تحذير المحلّل: {a.warning}")
+
     # 📰 ملخص الخبر (مطلب المستخدم)
     if c.catalyst is not None and c.catalyst.has_news:
         cat = c.catalyst.category or "📰 خبر"

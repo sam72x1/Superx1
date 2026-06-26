@@ -126,6 +126,19 @@ class Config:
     dev_report_weekdays: tuple[int, ...] = (2, 5)
     dev_report_hour: int = 5             # ساعة الإرسال (فجرًا بالرياض، بعد الإغلاق)
 
+    # ── المستشار الذكي (Claude) — «العين اللي ما تنام» ────────────
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-6"   # نموذج البريفنغ/المساعد
+    analyst_model: str = "claude-haiku-4-5-20251001"  # تحليل كل تنبيه (أسرع)
+    analyst_enabled: bool = True          # محلّل ذكي لكل تنبيه
+    advisor_enabled: bool = True          # بريفنغ نهاية الجلسة
+    assistant_enabled: bool = True        # مساعد تيليجرام تفاعلي
+    analyst_bearish_penalty: float = 12.0 # خصم درجة عند محفّز هبوطي (طرح/تخفيف)
+
+    # ── ريندر (وعي/تحكّم) ─────────────────────────────────────────
+    render_api_key: str = ""
+    render_service_id: str = ""           # srv-xxxx للخدمة
+
     # ── العرض ─────────────────────────────────────────────────────
     display_tz: str = "Asia/Riyadh"      # توقيت عرض وقت البطاقة
     code_version: str = ""               # إصدار الكود (commit) — يُعرض بالبطاقة
@@ -178,6 +191,15 @@ class Config:
             afterhours_end_hour=_f("AFTERHOURS_END_HOUR", 20.0),
             dedup_per_day=_b("DEDUP_PER_DAY", True),
             champions_enabled=_b("CHAMPIONS_ENABLED", True),
+            anthropic_api_key=_s("ANTHROPIC_API_KEY", ""),
+            anthropic_model=_s("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+            analyst_model=_s("ANALYST_MODEL", "claude-haiku-4-5-20251001"),
+            analyst_enabled=_b("ANALYST_ENABLED", True),
+            advisor_enabled=_b("ADVISOR_ENABLED", True),
+            assistant_enabled=_b("ASSISTANT_ENABLED", True),
+            analyst_bearish_penalty=_f("ANALYST_BEARISH_PENALTY", 12.0),
+            render_api_key=_s("RENDER_API_KEY", ""),
+            render_service_id=_s("RENDER_SERVICE_ID", ""),
             display_tz=_s("DISPLAY_TZ", "Asia/Riyadh"),
             code_version=_s("CODE_VERSION", _s("RENDER_GIT_COMMIT", ""))[:7],
             buy_zone_pct=_f("BUY_ZONE_PCT", 1.3),

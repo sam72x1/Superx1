@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from . import detector
 from .alerts import TelegramSender, build_card, build_followup, prioritize
+from .analyst import ClaudeAnalyst
 from .cache import DailyCache
 from .config import Config
 from .dev_assistant import send_report_and_files
@@ -59,6 +60,7 @@ class Scanner:
         self.halts = HaltTracker(cfg)
         self.short = ShortInterestProvider()
         self.cache = DailyCache()   # كاش يومي للبيانات البطيئة
+        self.analyst = ClaudeAnalyst(cfg)   # محلّل ذكي لكل تنبيه
         self.monitor = HealthMonitor(
             notify=self.telegram.send,
             stall_seconds=max(300.0, cfg.poll_interval_sec * 8),
@@ -115,7 +117,7 @@ class Scanner:
                 cand = process_candidate(
                     self.cfg, self.client, snap, halts=self.halts,
                     session=session, et_now=et_now, short_provider=self.short,
-                    cache=self.cache)
+                    cache=self.cache, analyst=self.analyst)
             except MassiveError as exc:
                 logger.warning("معالجة %s فشلت: %s", snap.ticker, exc)
                 continue

@@ -123,6 +123,21 @@ class Catalyst:
 
 
 @dataclass
+class AnalystResult:
+    """ناتج المحلّل الذكي (Claude) — تقييم المحفّز والأطروحة."""
+
+    catalyst_type: str = ""
+    direction: str = ""        # صعودي/هبوطي/محايد
+    materiality: int = 0       # 1..10
+    thesis: str = ""
+    warning: str = ""
+
+    @property
+    def is_bearish(self) -> bool:
+        return self.direction == "هبوطي" or bool(self.warning)
+
+
+@dataclass
 class RiskPlan:
     """الوقف والأهداف ومستويات الدعم ومنطقة الشراء."""
 
@@ -163,6 +178,7 @@ class Candidate:
     readiness: Optional[ReadinessResult] = None
     catalyst: Optional[Catalyst] = None
     risk: Optional[RiskPlan] = None
+    analyst: Optional[AnalystResult] = None   # تقييم Claude الذكي
 
     # الدرجة
     final_score: float = 0.0
