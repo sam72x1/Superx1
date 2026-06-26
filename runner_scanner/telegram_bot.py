@@ -39,6 +39,7 @@ _HELP = (
     "/briefing — بريفنغ المستشار\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
     "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
+    "/diag RMZ — بيانات السهم الخام (تشخيص الفيد)\n"
     "/sha — إصدار الكود المنشور (للتأكّد من آخر تحديث)\n"
     "/restart — إعادة تشغيل الخدمة (يتطلّب تأكيد)"
 )
@@ -143,6 +144,8 @@ class TelegramAssistant:
             self._handle_ask(arg)
         elif cmd == "why":
             self._handle_why(arg)
+        elif cmd == "diag":
+            self._handle_diag(arg)
         elif cmd in ("sha", "version"):
             self._reply(self._version_text())
         elif cmd == "restart":
@@ -208,6 +211,34 @@ class TelegramAssistant:
                     f" ({esc(dep['status'])}) {mark}")
         lines.append("↳ قارن SHA بآخر commit على GitHub للتأكّد أنك على الأحدث.")
         return "\n".join(lines)
+
+    def _handle_diag(self, arg: str) -> None:
+        """يطبع بيانات السنابشوت الخام لتأكيد فرضيات الفيد (خاصة البريماركت):
+        هل day.v جزئي/صفر؟ هل day.vw=0؟ — تحقّق ميداني لإصلاحات تدقيق الواقع."""
+        tkr = arg.strip().upper().lstrip("$").split()[0] if arg.strip() else ""
+        if not tkr:
+            self._reply("اكتب الرمز بعد /diag — مثال: <code>/diag ABCD</code>")
+            return
+        session = classify_session(self.cfg, now_et())
+        try:
+            s = self.sc.client.single_snapshot(tkr)
+        except Exception as exc:  # noqa: BLE001
+            self._reply(f"تعذّر جلب بيانات ${esc(tkr)}: {esc(str(exc))}")
+            return
+        if s is None:
+            self._reply(f"ما فيه بيانات لـ ${esc(tkr)}.")
+            return
+        self._reply(
+            f"🔬 <b>تشخيص ${esc(tkr)}</b> · الجلسة: {session.value}\n"
+            f"السعر: {s.last_price} · إغلاق أمس: {s.prev_close} · "
+            f"التغيّر: {s.change_pct:+.1f}%\n"
+            f"day.open: {s.day_open} · day.high: {s.day_high} · "
+            f"day.low: {s.day_low}\n"
+            f"<b>day.volume: {s.day_volume:,.0f}</b> · "
+            f"<b>day.vwap: {s.day_vwap}</b>\n"
+            f"صالح للتحليل: {'نعم' if s.is_valid else 'لا'}\n"
+            "<i>↳ في البريماركت: إن كان day.volume جزئيًا/صفرًا و day.vwap=0 "
+            "فهذا يؤكّد منطق إصلاحات الجلسات الممتدة.</i>")
 
     def _handle_why(self, arg: str) -> None:
         tkr = arg.strip().upper().lstrip("$").split()[0] if arg.strip() else ""

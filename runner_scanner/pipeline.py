@@ -19,7 +19,7 @@ from .halts import HaltTracker
 from .massive_client import MassiveClient, MassiveError
 from .models import Candidate, FloatSource, HaltState, Session, SnapshotEntry
 from .sessions import (
-    ET, classify_session, now_et, session_elapsed_fraction,
+    classify_session, now_et, session_elapsed_fraction,
     session_volume_baselines,
 )
 
@@ -30,15 +30,23 @@ def _et_date(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
-def _bar_et_date(b) -> str:
-    return datetime.fromtimestamp(b.t_ms / 1000, tz=timezone.utc) \
-        .astimezone(ET).strftime("%Y-%m-%d")
+def _closed_daily(daily: list, et_now: datetime) -> list:
+    """يستبعد شمعة اليوم الجزئية من السلسلة اليومية (حجمها/قمتها جزئية مضلّلة).
 
-
-def _closed_daily(daily: list, today: str) -> list:
-    """يستبعد شمعة اليوم الجزئية (نفس تاريخ اليوم) من السلسلة اليومية —
-    شمعة اليوم في البريماركت حجمها/قمتها جزئية مضلّلة (متوسط الحجم/المقاومات)."""
-    return [b for b in daily if b.t_ms > 0 and _bar_et_date(b) != today]
+    نحدّد «شمعة اليوم» بعُمر طابعها (<~20 ساعة) لا بمقارنة تاريخ — لأن منطقة
+    طابع الشمعة **اليومية** في Polygon غامضة (UTC مقابل ET)، فالعُمر أمتن:
+    شمعة اليوم بدأت قبل أقل من يوم؛ شمعة أمس أقدم من ذلك.
+    """
+    now_utc = et_now.astimezone(timezone.utc)
+    out = []
+    for b in daily:
+        if b.t_ms > 0:
+            age_h = (now_utc - datetime.fromtimestamp(
+                b.t_ms / 1000, tz=timezone.utc)).total_seconds() / 3600.0
+            if age_h < 20.0:
+                continue   # شمعة اليوم الجزئية → استبعاد
+        out.append(b)
+    return out
 
 
 def process_candidate(
@@ -118,7 +126,7 @@ def process_candidate(
     # ── 5) التحليل: الركيزتان ────────────────────────────────────
     # متوسط الحجم اليومي من الأيام **المغلقة** فقط (استبعاد شمعة اليوم الجزئية
     # التي تلوّث المتوسط فتنفخ RVol كذبًا في البريماركت).
-    daily_closed = _closed_daily(daily, today)
+    daily_closed = _closed_daily(daily, et_now)
     avg_daily_vol = (
         sum(b.v for b in daily_closed[-20:]) / min(20, len(daily_closed))
     ) if daily_closed else 0.0
