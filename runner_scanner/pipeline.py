@@ -101,10 +101,17 @@ def process_candidate(
     if not result.passed:
         return c.reject(result.reason)
 
-    # ── 9) الوقف والأهداف من شموع 5د المغلقة ────────────────────
+    # ── 9) الوقف (دعم 5د) والأهداف (مقاومات حقيقية) ─────────────
     from . import risk
     closed_5min = bars_5min[:-1] if len(bars_5min) > 1 else bars_5min
-    c.risk = risk.build_risk_plan(cfg, snap.last_price, closed_5min)
+    # مقاومات يومية كأهداف محتملة: قمة أمس + قمة آخر 10 أيام
+    daily_res: list[float] = []
+    if daily:
+        if len(daily) >= 2:
+            daily_res.append(daily[-2].h)                 # قمة أمس
+        daily_res.append(max(b.h for b in daily[-10:]))   # قمة 10 أيام
+    c.risk = risk.build_risk_plan(cfg, snap.last_price, closed_5min,
+                                  daily_resistances=daily_res)
 
     # ── 10) الشورت (يضرّ السهم) — للمقبولين فقط (تجنّب تعليق الحلقة) ─
     # عرض فقط لا يؤثّر على الفرز؛ best-effort، تعذّر ≠ صفر. كاش يومي.

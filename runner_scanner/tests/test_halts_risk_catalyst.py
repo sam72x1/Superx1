@@ -83,6 +83,26 @@ def test_targets_are_above_entry():
     assert all(t > 2.5 for t in rp.targets)
 
 
+def test_targets_use_real_resistances_not_multiples():
+    # قمم محورية واضحة عند 1.85 + قمم يومية مُمرَّرة → الأهداف منها
+    highs = [1.60, 1.69, 1.62, 1.85, 1.70, 1.66, 1.72, 1.68]
+    bars = [Bar(t_ms=i, o=1.55, h=h, l=1.50, c=1.54, v=10000)
+            for i, h in enumerate(highs)]
+    rp = risk.build_risk_plan(CFG, 1.54, bars, daily_resistances=[2.10, 1.95])
+    assert rp.targets == [1.85, 1.95, 2.10]      # مقاومات حقيقية، مرتّبة
+
+
+def test_targets_fall_back_to_round_numbers():
+    # بلا شموع → أرقام مستديرة (مقاومات نفسية) لا مضاعفات حسابية
+    rp = risk.build_risk_plan(CFG, 1.54, [])
+    assert rp.targets == [2.0, 2.5, 3.0]
+
+
+def test_round_step_scales_with_price():
+    rp = risk.build_risk_plan(CFG, 12.40, [])
+    assert rp.targets == [13.0, 14.0, 15.0]      # خطوة $1 للأسعار 5–20
+
+
 # ── المحفّز ───────────────────────────────────────────────────────
 def test_fresh_news_counts_old_does_not():
     now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
