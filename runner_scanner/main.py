@@ -14,11 +14,13 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from zoneinfo import ZoneInfo
 
-from . import detector
+from . import advisor, detector, market_calendar
 from .alerts import TelegramSender, build_card, build_followup, prioritize
 from .analyst import ClaudeAnalyst
 from .cache import DailyCache
 from .config import Config
+from .llm import ClaudeClient
+from .render_client import RenderClient
 from .dev_assistant import send_report_and_files
 from .halts import HaltTracker
 from .massive_client import MassiveClient, MassiveError
@@ -28,6 +30,7 @@ from .pipeline import process_candidate
 from .sessions import classify_session, is_scanning_window, now_et
 from .short_interest import ShortInterestProvider
 from .state import Store, trade_date_str
+from .telegram_bot import TelegramAssistant
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +64,15 @@ class Scanner:
         self.short = ShortInterestProvider()
         self.cache = DailyCache()   # كاش يومي للبيانات البطيئة
         self.analyst = ClaudeAnalyst(cfg)   # محلّل ذكي لكل تنبيه
+        self.render = RenderClient(cfg)     # وعي/تحكّم ريندر
+        self.claude = ClaudeClient(cfg.anthropic_api_key)   # للبريفنغ/المساعد
         self.monitor = HealthMonitor(
             notify=self.telegram.send,
             stall_seconds=max(300.0, cfg.poll_interval_sec * 8),
         )
+        self.last_runners: list = []       # (رمز، نسبة) لآخر مسح (للمساعد)
+        self.last_scan_et = None
+        self.assistant = TelegramAssistant(self)   # مساعد تيليجرام تفاعلي
         self._stop = threading.Event()
 
     # ── دورة مسح واحدة ────────────────────────────────────────────
@@ -78,6 +86,8 @@ class Scanner:
         top = (runners[:self.cfg.top_n_runners]
                if self.cfg.top_n_runners > 0 else runners)
         et_date = trade_date_str(et_now)
+        self.last_runners = [(e.ticker, e.change_pct) for e in top]
+        self.last_scan_et = et_now
 
         # أبطال الفترة السابقة الموروثون (أولوية متابعة، حتى لو خرجوا من الـ15)
         champ_syms: set[str] = set()
@@ -145,6 +155,7 @@ class Scanner:
     # ── الحلقة الرئيسية ───────────────────────────────────────────
     def loop(self) -> None:
         self.halts.start()
+        self.assistant.start()   # مساعد تيليجرام تفاعلي
         # رسالة إقلاع: تأكيد أن البوت نُشر وموصول بتيليجرام
         session = classify_session(self.cfg)
         self.telegram.send(
@@ -168,6 +179,7 @@ class Scanner:
                 logger.exception("خطأ غير متوقّع في الدورة")
                 self.monitor.raise_fault("cycle", str(exc))
             self._maybe_daily_report()
+            self._maybe_advisor_briefing()
             self.monitor.check_stall()
             # نوم حتى الدورة التالية (يحترم وقت الدورة المنقضي)
             elapsed = time.monotonic() - cycle_start
@@ -200,10 +212,34 @@ class Scanner:
         self.store.set_meta("last_dev_report", key)
         logger.info("أُرسل تقرير التطوير المجدوَل + ملفات CSV (%s)", key)
 
+    def _maybe_advisor_briefing(self, et_now=None) -> None:
+        """بريفنغ المستشار في نهاية يوم التداول (بعد الإغلاق)، مرة/يوم."""
+        if not self.cfg.advisor_enabled:
+            return
+        et_now = et_now or now_et()
+        if classify_session(self.cfg, et_now) is not Session.CLOSED:
+            return
+        end_hour = (market_calendar.EARLY_CLOSE_HOUR
+                    if market_calendar.is_early_close(et_now.date())
+                    else self.cfg.afterhours_end_hour)
+        if et_now.hour + et_now.minute / 60.0 < end_hour:
+            return   # لسه ما انتهى يوم التداول (تجنّب إطلاق بعد منتصف الليل)
+        key = trade_date_str(et_now)
+        if self.store.get_meta("last_advisor") == key:
+            return
+        text = advisor.build_briefing(
+            self.cfg, self.store, render_summary=self.render.summary(),
+            health_faults=self.monitor.active_faults(), now=et_now,
+            client=self.claude)
+        if self.telegram.send(text):
+            self.store.set_meta("last_advisor", key)
+            logger.info("أُرسل بريفنغ المستشار (%s)", key)
+
     def shutdown(self) -> None:
         logger.info("إيقاف الماسح...")
         self._stop.set()
         self.halts.stop()
+        self.assistant.stop()
         self.store.close()
 
 

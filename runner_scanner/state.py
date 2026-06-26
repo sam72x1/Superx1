@@ -334,6 +334,13 @@ class Store:
         with self._lock:
             return self._conn.execute(q).fetchall()
 
+    def fetch_day(self, day: str) -> list[sqlite3.Row]:
+        """كل تتبّعات يوم معيّن (للبريفنغ والمساعد)."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM tracking WHERE trade_date=? ORDER BY score DESC",
+                (day,)).fetchall()
+
     def fetch_missed(self, min_rise_pct: float) -> list[sqlite3.Row]:
         with self._lock:
             return self._conn.execute(

@@ -47,6 +47,10 @@ class HealthMonitor:
     def clear_fault(self, key: str) -> None:
         self._clear_fault(key)
 
+    def active_faults(self) -> list[str]:
+        """أسماء الأعطال النشطة حاليًا (للبريفنغ)."""
+        return sorted(self._active_faults)
+
     def check_stall(self) -> None:
         """يفحص توقّف المسح (يُستدعى دوريًا)."""
         if self._clock() - self._last_ok > self.stall_seconds:

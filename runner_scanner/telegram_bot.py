@@ -1,0 +1,187 @@
+"""مساعد تيليجرام تفاعلي — تكلّمه ويرد ببيانات البوت الحيّة + Claude.
+
+ثريد يستمع لرسائلك (getUpdates) ويردّ على الأوامر:
+  /status   — حالة البوت + ريندر
+  /top      — أقوى الرَنرات في آخر مسح
+  /report   — تقرير التطوير + ملفات CSV الآن
+  /briefing — بريفنغ المستشار الآن
+  /ask ...  — اسأل Claude عن بوتك (يستخدم بياناتك الحيّة)
+  /restart  — إعادة تشغيل الخدمة على ريندر (يتطلّب: /restart confirm)
+
+أمان: يردّ فقط على محادثتك (TELEGRAM_CHAT_ID). لا ينفّذ أي إجراء إلا
+بأمر صريح منك («ما يسوي شي إلا يعلمك»).
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+
+import requests
+
+from . import advisor
+from .dev_assistant import send_report_and_files
+from .sessions import classify_session, now_et
+from .state import trade_date_str
+
+logger = logging.getLogger(__name__)
+
+_HELP = (
+    "🤖 <b>مساعد ماسح الرَنرات</b>\n"
+    "/status — حالة البوت وريندر\n"
+    "/top — أقوى الرَنرات الآن\n"
+    "/report — تقرير التطوير + ملفات CSV\n"
+    "/briefing — بريفنغ المستشار\n"
+    "/ask سؤالك — اسأل المستشار الذكي\n"
+    "/restart — إعادة تشغيل الخدمة (يتطلّب تأكيد)"
+)
+
+_ASK_SYSTEM = (
+    "أنت مساعد ومستشار بوت رَنرات للمستخدم. أجب عن أسئلته حول حالة البوت "
+    "وبياناته بالعربي بإيجاز ودقّة، اعتمادًا على البيانات المعطاة فقط. "
+    "أنت لا تنفّذ أي إجراء — فقط تُبلغ وتقترح."
+)
+
+
+class TelegramAssistant:
+    """مستهلك getUpdates + موجّه أوامر. يعتمد على مكوّنات Scanner."""
+
+    def __init__(self, scanner):
+        self.sc = scanner
+        self.cfg = scanner.cfg
+        self._offset = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._base = f"https://api.telegram.org/bot{self.cfg.telegram_bot_token}"
+
+    # ── دورة الحياة ───────────────────────────────────────────────
+    def start(self) -> None:
+        if not self.cfg.assistant_enabled or self.cfg.dry_run:
+            return
+        if not (self.cfg.telegram_bot_token and self.cfg.telegram_chat_id):
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name="tg-assistant")
+        self._thread.start()
+        logger.info("المساعد التفاعلي يستمع...")
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                resp = requests.get(f"{self._base}/getUpdates", params={
+                    "offset": self._offset, "timeout": 25,
+                    "allowed_updates": '["message"]',
+                }, timeout=35)
+                if resp.status_code != 200:
+                    self._stop.wait(5)
+                    continue
+                for upd in resp.json().get("result", []):
+                    self._offset = upd["update_id"] + 1
+                    self._handle_update(upd)
+            except (requests.RequestException, ValueError) as exc:
+                logger.debug("getUpdates: %s", exc)
+                self._stop.wait(5)
+
+    # ── التوجيه ───────────────────────────────────────────────────
+    def _handle_update(self, upd: dict) -> None:
+        msg = upd.get("message") or {}
+        chat = str((msg.get("chat") or {}).get("id", ""))
+        text = (msg.get("text") or "").strip()
+        if chat != str(self.cfg.telegram_chat_id) or not text:
+            return   # أمان: محادثتك فقط
+        try:
+            self._dispatch(text)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("أمر فشل: %s", exc)
+            self._reply(f"تعذّر تنفيذ الأمر: {exc}")
+
+    def _dispatch(self, text: str) -> None:
+        cmd = text.split()[0].lower().lstrip("/")
+        arg = text[len(text.split()[0]):].strip()
+        if cmd in ("start", "help"):
+            self._reply(_HELP)
+        elif cmd == "status":
+            self._reply(self._status_text())
+        elif cmd == "top":
+            self._reply(self._top_text())
+        elif cmd == "report":
+            self._reply("جاري تجهيز تقرير التطوير...")
+            send_report_and_files(self.sc.store, self.cfg, self.sc.telegram)
+        elif cmd == "briefing":
+            self._reply(advisor.build_briefing(
+                self.cfg, self.sc.store,
+                render_summary=self.sc.render.summary(),
+                health_faults=self.sc.monitor.active_faults(),
+                client=self.sc.claude))
+        elif cmd == "ask":
+            self._handle_ask(arg)
+        elif cmd == "restart":
+            self._handle_restart(arg)
+        else:
+            self._reply("أمر غير معروف. /help للأوامر.")
+
+    # ── الأوامر ───────────────────────────────────────────────────
+    def _status_text(self) -> str:
+        session = classify_session(self.cfg, now_et())
+        faults = self.sc.monitor.active_faults()
+        health = "أعطال: " + ", ".join(faults) if faults else "سليم ✅"
+        last = getattr(self.sc, "last_scan_et", None)
+        return (
+            f"📟 <b>حالة البوت</b>\n"
+            f"الجلسة: {session.value} · المسح كل {self.cfg.poll_interval_sec}ث\n"
+            f"آخر مسح: {last.strftime('%H:%M ET') if last else '—'}\n"
+            f"الصحة: {health}\n"
+            f"{self.sc.render.summary()}"
+        )
+
+    def _top_text(self) -> str:
+        runners = getattr(self.sc, "last_runners", [])
+        if not runners:
+            return "ما فيه رَنرات في آخر مسح (أو ما بدأ بعد)."
+        lines = ["🔝 <b>أقوى الرَنرات (آخر مسح)</b>"]
+        for tkr, chg in runners[:15]:
+            lines.append(f"  • {tkr}: +{chg:.1f}%")
+        return "\n".join(lines)
+
+    def _handle_ask(self, question: str) -> None:
+        if not question:
+            self._reply("اكتب سؤالك بعد /ask")
+            return
+        if not self.sc.claude.available:
+            self._reply("المساعد الذكي غير مفعّل (أضِف ANTHROPIC_API_KEY).")
+            return
+        ctx = self._context_text()
+        prompt = f"بيانات البوت الآن:\n{ctx}\n\nسؤال المستخدم: {question}"
+        ans = self.sc.claude.chat(self.cfg.anthropic_model, _ASK_SYSTEM, prompt)
+        self._reply(ans or "تعذّر الحصول على رد.")
+
+    def _handle_restart(self, arg: str) -> None:
+        if arg.lower() != "confirm":
+            self._reply("⚠️ إعادة تشغيل الخدمة على ريندر. للتأكيد أرسل:\n"
+                        "<code>/restart confirm</code>")
+            return
+        if not self.sc.render.available:
+            self._reply("ريندر غير مربوط (أضِف RENDER_API_KEY و RENDER_SERVICE_ID).")
+            return
+        self._reply("جاري إعادة التشغيل..." if self.sc.render.restart()
+                    else "تعذّرت إعادة التشغيل.")
+
+    def _context_text(self) -> str:
+        s = advisor._summarize_day(self.cfg, self.sc.store, now_et())
+        runners = getattr(self.sc, "last_runners", [])
+        return (
+            f"الجلسة: {classify_session(self.cfg, now_et()).value}\n"
+            f"تنبيهات اليوم: {len(s['alerts'])} "
+            f"({len(s['wins'])}✅/{len(s['losses'])}🛑) · فرص فائتة: {len(s['missed'])}\n"
+            f"أقوى الرَنرات الآن: "
+            f"{', '.join(f'{t}+{c:.0f}%' for t, c in runners[:8]) or '—'}\n"
+            f"العتبات: RVol≥{self.cfg.rvol_min}x · فلوت≤{self.cfg.float_max:,.0f}"
+            f" · جاهزية≥{self.cfg.tech_readiness_min:.0f} · درجة≥{self.cfg.alert_score_min:.0f}\n"
+            f"{self.sc.render.summary()}"
+        )
+
+    def _reply(self, text: str) -> None:
+        self.sc.telegram.send(text)
