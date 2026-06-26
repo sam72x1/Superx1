@@ -78,6 +78,11 @@ CREATE TABLE IF NOT EXISTS tracking (
     had_news        INTEGER,
     rejected        INTEGER,
     reject_reason   TEXT,
+    -- بيانات إضافية لتشريح الفشل (لماذا فشل السهم)
+    short_pct       REAL,
+    dilution_risk   TEXT,
+    analyst_dir     TEXT,
+    catalyst_head   TEXT,
     -- تتبّع النتيجة + الأحداث
     is_alert        INTEGER DEFAULT 0,
     first_price     REAL,
@@ -127,6 +132,14 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            # ترقية قواعد قديمة: إضافة أعمدة تشريح الفشل إن غابت
+            for col, typ in (("short_pct", "REAL"), ("dilution_risk", "TEXT"),
+                             ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT")):
+                try:
+                    self._conn.execute(
+                        f"ALTER TABLE tracking ADD COLUMN {col} {typ}")
+                except sqlite3.OperationalError:
+                    pass   # العمود موجود مسبقًا
             self._conn.commit()
 
     # ── منع التكرار ───────────────────────────────────────────────
@@ -161,6 +174,11 @@ class Store:
         t2 = tg[1] if len(tg) > 1 else None
         t3 = tg[2] if len(tg) > 2 else None
         had_news = 1 if (c.catalyst and c.catalyst.has_news) else 0
+        # بيانات تشريح الفشل
+        dilution_risk = c.dilution.risk if c.dilution else None
+        analyst_dir = c.analyst.direction if c.analyst else None
+        catalyst_head = (c.catalyst.headline
+                         if (c.catalyst and c.catalyst.has_news) else None)
         with self._lock:
             self._conn.execute(
                 """
@@ -168,10 +186,11 @@ class Store:
                     ticker, trade_date, first_seen_at, logged_at, session,
                     change_pct, score, momentum, readiness, rvol, rvol_5min,
                     float_shares, float_source, halt_state, had_news, rejected,
-                    reject_reason, first_price, stop_price, target1, target2,
+                    reject_reason, short_pct, dilution_risk, analyst_dir,
+                    catalyst_head, first_price, stop_price, target1, target2,
                     target3, high_after, low_after, max_gain_pct, notified_high,
                     outcome)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
                 ON CONFLICT(ticker, trade_date) DO UPDATE SET
                     logged_at=excluded.logged_at, session=excluded.session,
                     change_pct=excluded.change_pct, score=excluded.score,
@@ -181,6 +200,10 @@ class Store:
                     float_source=excluded.float_source,
                     halt_state=excluded.halt_state, had_news=excluded.had_news,
                     rejected=excluded.rejected, reject_reason=excluded.reject_reason,
+                    short_pct=excluded.short_pct,
+                    dilution_risk=excluded.dilution_risk,
+                    analyst_dir=excluded.analyst_dir,
+                    catalyst_head=excluded.catalyst_head,
                     -- لا نمسّ first_price/high/low/notified/outcome/result
                     stop_price=COALESCE(tracking.stop_price, excluded.stop_price),
                     target1=COALESCE(tracking.target1, excluded.target1),
@@ -196,6 +219,7 @@ class Store:
                     c.momentum.rvol_5min if c.momentum else None,
                     c.float_shares, c.float_source.value, c.halt_state.value,
                     had_news, 1 if c.is_rejected else 0, c.rejected_reason,
+                    c.short_pct, dilution_risk, analyst_dir, catalyst_head,
                     price, stop, t1, t2, t3, price, price, price,
                 ))
             self._conn.commit()
@@ -339,6 +363,26 @@ class Store:
         with self._lock:
             return self._conn.execute(
                 "SELECT * FROM tracking WHERE trade_date=? ORDER BY score DESC",
+                (day,)).fetchall()
+
+    def fetch_row(self, ticker: str,
+                  day: str | None = None) -> sqlite3.Row | None:
+        """صفّ تتبّع سهم (يوم محدّد أو أحدث يوم له) — لتشريح /why."""
+        with self._lock:
+            if day:
+                return self._conn.execute(
+                    "SELECT * FROM tracking WHERE ticker=? AND trade_date=?",
+                    (ticker, day)).fetchone()
+            return self._conn.execute(
+                "SELECT * FROM tracking WHERE ticker=? "
+                "ORDER BY trade_date DESC LIMIT 1", (ticker,)).fetchone()
+
+    def fetch_failures(self, day: str) -> list[sqlite3.Row]:
+        """تنبيهات اليوم التي فشلت (خسارة/بلا حسم) — لتشريح البريفنغ."""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM tracking WHERE is_alert=1 AND trade_date=? "
+                "AND result IN ('loss','timeout') ORDER BY max_draw_pct ASC",
                 (day,)).fetchall()
 
     def fetch_missed(self, min_rise_pct: float) -> list[sqlite3.Row]:

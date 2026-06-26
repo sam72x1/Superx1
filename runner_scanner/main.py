@@ -14,7 +14,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from zoneinfo import ZoneInfo
 
-from . import advisor, detector, market_calendar
+from . import advisor, detector, market_calendar, postmortem
 from .alerts import TelegramSender, build_card, build_followup, prioritize
 from .analyst import ClaudeAnalyst
 from .cache import DailyCache
@@ -115,6 +115,12 @@ class Scanner:
             surge_leg_pct=self.cfg.surge_leg_pct)
         for ev in events:
             self.telegram.send(build_followup(self.cfg, ev))
+            # 🔍 تشريح لحظي عند كسر الوقف: لماذا فشل السهم؟
+            if ev.get("type") == "stop" and self.cfg.postmortem_on_stop:
+                row = self.store.fetch_row(ev["ticker"], et_date)
+                if row is not None:
+                    self.telegram.send(postmortem.build_failure_message(
+                        self.cfg, row, client=self.claude))
         if events:
             logger.info("أُرسل %d تحديث متابعة", len(events))
 

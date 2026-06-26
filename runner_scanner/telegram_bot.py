@@ -19,7 +19,7 @@ import threading
 
 import requests
 
-from . import advisor
+from . import advisor, postmortem
 from .dev_assistant import send_report_and_files
 from .sessions import classify_session, now_et
 from .state import trade_date_str
@@ -35,6 +35,7 @@ _HELP = (
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
+    "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
     "/restart — إعادة تشغيل الخدمة (يتطلّب تأكيد)"
 )
 
@@ -125,6 +126,8 @@ class TelegramAssistant:
                 client=self.sc.claude))
         elif cmd == "ask":
             self._handle_ask(arg)
+        elif cmd == "why":
+            self._handle_why(arg)
         elif cmd == "restart":
             self._handle_restart(arg)
         else:
@@ -164,6 +167,18 @@ class TelegramAssistant:
         prompt = f"بيانات البوت الآن:\n{ctx}\n\nسؤال المستخدم: {question}"
         ans = self.sc.claude.chat(self.cfg.anthropic_model, _ASK_SYSTEM, prompt)
         self._reply(ans or "تعذّر الحصول على رد.")
+
+    def _handle_why(self, arg: str) -> None:
+        tkr = arg.strip().upper().lstrip("$").split()[0] if arg.strip() else ""
+        if not tkr:
+            self._reply("اكتب الرمز بعد /why — مثال: <code>/why ABCD</code>")
+            return
+        row = self.sc.store.fetch_row(tkr)
+        if row is None:
+            self._reply(f"ما لقيت تتبّعًا لـ ${tkr} (لم يُنبَّه عنه أو لم يُعالَج).")
+            return
+        self._reply(postmortem.build_why_message(
+            self.cfg, row, client=self.sc.claude))
 
     def _handle_restart(self, arg: str) -> None:
         if arg.lower() != "confirm":

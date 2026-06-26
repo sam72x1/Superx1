@@ -134,6 +134,8 @@ class Config:
     advisor_enabled: bool = True          # بريفنغ نهاية الجلسة
     assistant_enabled: bool = True        # مساعد تيليجرام تفاعلي
     analyst_bearish_penalty: float = 12.0 # خصم درجة عند محفّز هبوطي (طرح/تخفيف)
+    postmortem_enabled: bool = True       # تشريح سبب فشل/نجاح السهم (Claude)
+    postmortem_on_stop: bool = True       # تشريح لحظي فور كسر الوقف
 
     # ── رادار التخفيف (SEC EDGAR) — يحذّر من الطرح القادم ──────────
     dilution_radar_enabled: bool = True   # رصد ملفات SEC التخفيفية
@@ -208,6 +210,8 @@ class Config:
             advisor_enabled=_b("ADVISOR_ENABLED", True),
             assistant_enabled=_b("ASSISTANT_ENABLED", True),
             analyst_bearish_penalty=_f("ANALYST_BEARISH_PENALTY", 12.0),
+            postmortem_enabled=_b("POSTMORTEM_ENABLED", True),
+            postmortem_on_stop=_b("POSTMORTEM_ON_STOP", True),
             dilution_radar_enabled=_b("DILUTION_RADAR_ENABLED", True),
             dilution_active_days=_i("DILUTION_ACTIVE_DAYS", 45),
             dilution_shelf_days=_i("DILUTION_SHELF_DAYS", 180),
