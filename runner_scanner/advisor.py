@@ -90,7 +90,8 @@ def build_briefing(cfg: Config, store, render_summary: str = "",
     if cfg.advisor_enabled and client.available:
         prompt = (f"بيانات جلسة اليوم:\n{data}\n\n"
                   "اكتب بريفنغ نهاية الجلسة كمستشار.")
-        text = client.chat(cfg.anthropic_model, _SYSTEM, prompt, max_tokens=900)
+        # سقف أوسع: البريفنغ يشمل تشريح كل فاشلي اليوم، 900 يقطعه في يوم نشِط
+        text = client.chat(cfg.anthropic_model, _SYSTEM, prompt, max_tokens=2000)
         if text:
             # نص Claude حرّ → يُهرَّب قبل لفّه بوسوم HTML الثابتة
             return (f"🌙 <b>بريفنغ نهاية الجلسة — {summary['day']}</b>\n\n"

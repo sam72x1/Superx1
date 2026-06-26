@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from runner_scanner.alerts import build_card
+from runner_scanner.alerts import _TG_LIMIT, _split_message, build_card
 from runner_scanner.catalyst import catalyst_bonus
 from runner_scanner.config import Config
 from runner_scanner.models import AnalystResult, Candidate, Catalyst, Session
@@ -80,6 +80,20 @@ class _FlakySession:
         if _CIK10 in url:
             return _Resp(200, self._subs)
         return _Resp(404, None)
+
+
+# ── رسالة طويلة تُقسَّم بدل أن تُرفَض (4096) ──────────────────────
+def test_short_message_not_split():
+    assert _split_message("سطر قصير") == ["سطر قصير"]
+
+
+def test_long_message_split_under_limit():
+    text = "\n".join(f"سطر رقم {i} بمحتوى كافٍ للحشو" * 6 for i in range(400))
+    chunks = _split_message(text)
+    assert len(chunks) > 1
+    assert all(len(c) <= _TG_LIMIT for c in chunks)
+    # لا يضيع محتوى (تجميع الأجزاء يعيد النص بفواصل أسطر)
+    assert "\n".join(chunks).replace("\n", "") == text.replace("\n", "")
 
 
 def test_cik_map_retries_after_transient_failure():

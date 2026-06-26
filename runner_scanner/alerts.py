@@ -204,6 +204,33 @@ def build_followup(cfg: Config, event: dict, now: datetime | None = None) -> str
     return f"ℹ️ <b>${tkr}</b> تحديث: {_money(price)}\n{when}"
 
 
+_TG_LIMIT = 4096   # أقصى طول رسالة في Telegram (محارف)
+
+
+def _split_message(text: str, limit: int = _TG_LIMIT) -> list[str]:
+    """يقسّم رسالة طويلة إلى أجزاء ≤ الحد، على حدود الأسطر (يحافظ على الوسوم
+    لأن كل سطر مكتفٍ بوسومه). سطر أطول من الحد (نادر) يُقصّ قسرًا."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    cur = ""
+    for line in text.split("\n"):
+        while len(line) > limit:                 # سطر ضخم → قصّ قسري
+            if cur:
+                chunks.append(cur)
+                cur = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if cur and len(cur) + 1 + len(line) > limit:
+            chunks.append(cur)
+            cur = line
+        else:
+            cur = f"{cur}\n{line}" if cur else line
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
 class TelegramSender:
     """يرسل البطاقات عبر Telegram Bot API (sendMessage)."""
 
@@ -232,6 +259,13 @@ class TelegramSender:
             logger.info("[DRY_RUN] بطاقة:\n%s", text)
             print(text)
             return True
+        # تقسيم الرسائل الطويلة (تيليجرام يرفض ما يتجاوز 4096 → ضياع كامل)
+        ok = True
+        for chunk in _split_message(text):
+            ok = self._send_chunk(chunk, _retries) and ok
+        return ok
+
+    def _send_chunk(self, text: str, _retries: int = 2) -> bool:
         payload = {
             "chat_id": self.cfg.telegram_chat_id, "text": text,
             "parse_mode": "HTML", "disable_web_page_preview": True,
