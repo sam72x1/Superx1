@@ -90,7 +90,7 @@ class MomentumResult:
 class ReadinessResult:
     """ناتج ركيزة الجاهزية الفنية الكلاسيكية."""
 
-    classic_score: float              # 0..100 (مقياس المستخدم؛ البوّابة ≥70)
+    classic_score: float              # 0..100 (مقياس المستخدم؛ البوّابة ≥60)
     pillar_score: float               # 0..readiness_pillar_max (للدمج)
     trend: str                        # صاعد/هابط/عرضي (يومي)
     rsi: float

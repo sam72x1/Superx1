@@ -132,7 +132,7 @@ def process_candidate(
     c.catalyst = catalyst_mod.evaluate_catalyst(
         cfg, raw_news, et_now.astimezone(timezone.utc))
 
-    # ── 8) الدرجة (جاهزية ≥70 + زخم فوق الحد) ───────────────────
+    # ── 8) الدرجة (جاهزية ≥60 + زخم فوق الحد) ───────────────────
     result = scoring.score_candidate(cfg, c)
     if not result.passed:
         return c.reject(result.reason)

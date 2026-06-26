@@ -60,7 +60,7 @@ def _ready_cand(classic=80.0, momentum=35.0, news=False, float_known=True):
 
 
 def test_scoring_rejects_below_readiness_gate():
-    c = _ready_cand(classic=60.0)   # < 70
+    c = _ready_cand(classic=50.0)   # < 60
     res = scoring.score_candidate(CFG, c)
     assert res.passed is False and "جاهزية" in res.reason
 
