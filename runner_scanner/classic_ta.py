@@ -3,11 +3,12 @@
 درجة جزئية [-100,+100] لكل فريم (يومي/أسبوعي/شهري)، ميزانية موزّعة على
 مكوّنات المدرسة الكلاسيكية:
 
-  الاتجاه (داو) ±25 · موقع MA50 ±12 · موقع MA200 ±12 · التقاطع ±8 ·
+  الاتجاه (داو) ±22 · موقع MA50 ±12 · موقع MA200 ±12 · التقاطع ±8 ·
   RSI ±6 · MACD ±6 · Stochastic RSI ±4 · دايفرجنس ±8 · ADX/DMI ±5 ·
-  بولينجر %B ±4 · نماذج الشموع ±6 · الحجم ±4   = ±100.
+  بولينجر %B ±4 · نماذج الشموع ±5 · البنية الموجية ±4 · الحجم ±4 = ±100.
 
-ثم ترجيح (يومي 0.45 · أسبوعي 0.35 · شهري 0.20) → 0..100.
+ترجيح متعدّد الأطر (Top-Down): شهري 0.15 · أسبوعي 0.30 · يومي 0.40 ·
+ساعة 0.15 → 0..100. (الأكبر يحكم، والساعة جسر للتنفيذ اللحظي.)
 بوّابة المستخدم: classic_score ≥ 70 وإلا رفض.
 
 رَنرات حديثة الإدراج (تاريخ محدود): نتدرّج بأمان على المتاح ونوسم.
@@ -16,6 +17,7 @@
 from __future__ import annotations
 
 from .candles import candle_signal
+from .waves import wave_structure
 from .config import Config
 from .indicators import (
     adx_dmi,
@@ -67,10 +69,10 @@ def score_timeframe(bars: list[Bar]) -> tuple[float, dict]:
     price = closes[-1]
     score = 0.0
 
-    # ── الاتجاه (داو) ±25 ────────────────────────────────────────
+    # ── الاتجاه (داو) ±22 ────────────────────────────────────────
     slope = linreg_slope_pct(closes)
     detail["trend"] = trend_label(slope)
-    score += max(-25.0, min(25.0, slope * 2.5))
+    score += max(-22.0, min(22.0, slope * 2.2))
 
     # ── المتوسطات والتقاطع ±32 ───────────────────────────────────
     ma50 = sma(closes, 50)
@@ -144,10 +146,15 @@ def score_timeframe(bars: list[Bar]) -> tuple[float, dict]:
         else:
             score += max(-4.0, min(4.0, (pb - 0.5) * 8.0))
 
-    # ── نماذج الشموع ±6 (بسياق الاتجاه) ─────────────────────────
+    # ── نماذج الشموع ±5 (بسياق الاتجاه) ─────────────────────────
     csig, cname = candle_signal(bars)
     detail["candle"] = cname
-    score += csig * 6.0
+    score += csig * 5.0
+
+    # ── البنية الموجية ±4 (بديل إليوت: دافعة/تصحيحية عبر HH/HL) ──
+    wsig, wname = wave_structure(bars)
+    detail["wave"] = wname
+    score += wsig * 4.0
 
     # ── الحجم كمؤكّد ±4 ──────────────────────────────────────────
     if len(volumes) >= 20:
@@ -165,15 +172,21 @@ def score_timeframe(bars: list[Bar]) -> tuple[float, dict]:
 
 def compute_readiness(cfg: Config, daily: list[Bar],
                       weekly: list[Bar] | None = None,
-                      monthly: list[Bar] | None = None) -> ReadinessResult:
-    """يجمع درجات الفريمات إلى classic_score 0..100 + pillar_score."""
+                      monthly: list[Bar] | None = None,
+                      hourly: list[Bar] | None = None) -> ReadinessResult:
+    """يجمع درجات الأطر إلى classic_score 0..100 + pillar_score.
+
+    Top-Down: شهري/أسبوعي = سياق، يومي = الإعداد، ساعة = جسر للتنفيذ.
+    الساعة اختيارية؛ عند غيابها يُعاد تطبيع الأوزان تلقائيًا.
+    """
     weekly = weekly if weekly else resample(daily, 5)
     monthly = monthly if monthly else resample(daily, 21)
 
     frames = {
-        "daily": (daily, 0.45),
-        "weekly": (weekly, 0.35),
-        "monthly": (monthly, 0.20),
+        "monthly": (monthly, 0.15),
+        "weekly": (weekly, 0.30),
+        "daily": (daily, 0.40),
+        "hourly": (hourly or [], 0.15),
     }
 
     weighted_sum = 0.0
@@ -183,6 +196,8 @@ def compute_readiness(cfg: Config, daily: list[Bar],
 
     daily_detail: dict = {}
     for name, (bars, w) in frames.items():
+        if not bars:
+            continue   # إطار غير مُمرَّر (مثلًا الساعة) — تطبيع تلقائي
         if len(bars) < 5:
             notes.append(f"{name}: تاريخ غير كافٍ")
             continue
@@ -222,6 +237,7 @@ def compute_readiness(cfg: Config, daily: list[Bar],
         stoch_rsi=float(daily_detail.get("stoch_rsi") or 0.0),
         bb_pct_b=float(daily_detail.get("bb_pct_b") or 0.5),
         candle=candle,
+        wave=daily_detail.get("wave", ""),
         limited_history=limited,
         notes=notes,
     )

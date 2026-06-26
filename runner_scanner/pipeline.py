@@ -75,10 +75,13 @@ def process_candidate(
     # ── 4) جلب الشموع ────────────────────────────────────────────
     today = _et_date(et_now)
     year_ago = _et_date(et_now - timedelta(days=400))
+    two_months = _et_date(et_now - timedelta(days=60))
     try:
         bars_5min = client.bars_5min(snap.ticker, today, today)
         bars_1min = client.bars_1min(snap.ticker, today, today)
         daily = client.bars_daily(snap.ticker, year_ago, today)
+        # إطار الساعة (الدرجة الوسطى Top-Down: جسر بين اليومي واللحظي)
+        hourly = client.aggregates(snap.ticker, 1, "hour", two_months, today)
     except MassiveError as exc:
         return c.reject(f"تعذّر جلب الشموع: {exc}")
 
@@ -91,7 +94,7 @@ def process_candidate(
     c.momentum = intraday_ta.compute_momentum(
         cfg, snap, session, bars_5min, bars_1min,
         avg_daily_volume=avg_daily_vol, elapsed_fraction=elapsed)
-    c.readiness = classic_ta.compute_readiness(cfg, daily)
+    c.readiness = classic_ta.compute_readiness(cfg, daily, hourly=hourly)
 
     # ── 6) بوابات ما-بعد-التحليل (RVol + بارابولِك بعد VWAP) ─────
     post = gates.apply_gates(cfg, c, gates.POST_TA_GATES)

@@ -93,3 +93,31 @@ def test_three_white_soldiers_bullish():
 
 def test_candle_signal_empty_on_short():
     assert candle_signal([]) == (0.0, "")
+
+
+# ── البنية الموجية (بديل إليوت الخفيف) + إطار الساعة ─────────────
+def test_wave_structure_impulse_up_down():
+    from runner_scanner.waves import wave_structure
+    sig_up, name_up = wave_structure(uptrend_daily_bars())
+    sig_dn, name_dn = wave_structure(downtrend_daily_bars())
+    assert sig_up > 0 and name_up == "دافعة صاعدة"
+    assert sig_dn < 0 and name_dn == "دافعة هابطة"
+
+
+def test_wave_structure_short_history():
+    from runner_scanner.waves import wave_structure
+    assert wave_structure([]) == (0.0, "")
+
+
+def test_hourly_frame_keeps_calibration():
+    # تمرير إطار الساعة لا يكسر بوّابة ≥70 للصاعد
+    up = classic_ta.compute_readiness(
+        CFG, uptrend_daily_bars(), hourly=uptrend_daily_bars())
+    assert up.classic_score >= 70
+    assert up.wave == "دافعة صاعدة"
+
+
+def test_readiness_without_hourly_still_works():
+    # غياب الساعة → تطبيع تلقائي بلا أخطاء
+    up = classic_ta.compute_readiness(CFG, uptrend_daily_bars())
+    assert up.classic_score >= 70

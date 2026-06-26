@@ -88,6 +88,10 @@ class FakeClient:
     def bars_daily(self, ticker, start, end):
         return list(self._daily)
 
+    def aggregates(self, ticker, multiplier, timespan, start, end, **kw):
+        # شموع الساعة للجاهزية (نعيد سلسلة صاعدة مشابهة لليومي)
+        return list(self._daily)
+
     def latest_news(self, ticker, published_gte_utc, limit=5):
         if not self._news:
             return None

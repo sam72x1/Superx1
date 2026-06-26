@@ -103,6 +103,7 @@ class ReadinessResult:
     stoch_rsi: float = 0.0            # ستوكاستك RSI (0..1)
     bb_pct_b: float = 0.5             # بولينجر %B
     candle: str = ""                  # أبرز نموذج شمعي يومي
+    wave: str = ""                    # بنية الموجة (دافعة/تصحيحية)
     limited_history: bool = False     # رَنر حديث الإدراج → تاريخ محدود
     notes: list[str] = field(default_factory=list)
 
