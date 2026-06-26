@@ -41,6 +41,17 @@ def test_volume_gate():
     assert gates.check_volume(CFG, _cand(vol=600_000)).passed is True
 
 
+def test_volume_gate_zero_relies_on_rvol():
+    # حجم صفر (artifact بريماركت لسهم صاعد) لا يرفض — يعتمد على RVol
+    res = gates.check_volume(CFG, _cand(vol=0))
+    assert res.passed is True and "RVol" in res.reason
+
+
+def test_volume_gate_can_be_fully_disabled():
+    cfg = Config(volume_gate_enabled=False)
+    assert gates.check_volume(cfg, _cand(vol=50_000)).passed is True
+
+
 def test_float_gate_unknown_passes_but_flagged():
     c = _cand()
     c.float_shares = None

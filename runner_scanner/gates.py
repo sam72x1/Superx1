@@ -34,7 +34,17 @@ def check_price(cfg: Config, c: Candidate) -> GateResult:
 
 
 def check_volume(cfg: Config, c: Candidate) -> GateResult:
+    """شبكة أمان لسيولة الخروج. **RVol هو مقياس النشاط الأساس** (نسبي/لحظي).
+
+    - معطّلة (VOLUME_GATE_ENABLED=false) → الاعتماد كليًا على RVol.
+    - حجم ≤ 0 (artifact بريماركت: سهم صاعد +X% بحجم «صفر» مستحيل منطقيًا)
+      → لا رفض، نعتمد على RVol لاحقًا (طلب المستخدم: «لو تروح السيولة → RVol»).
+    """
+    if not cfg.volume_gate_enabled:
+        return GateResult(True, "بوّابة الحجم معطّلة (RVol وحده)")
     v = c.snapshot.day_volume
+    if v <= 0:
+        return GateResult(True, "حجم غير موثوق → نعتمد على RVol")
     if v < cfg.volume_min:
         return GateResult(False, f"حجم {v:,.0f} < {cfg.volume_min:,.0f} (سيولة ضعيفة)")
     return GateResult(True)
