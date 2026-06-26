@@ -84,7 +84,7 @@ class MassiveClient:
             last_price = float(last_price or 0.0)
             prev_close = float(prev.get("c") or 0.0)
             # نسبة التغيّر: نفضّل حقل الـ API، وإلا نحسبها احتياطيًا من
-            # السعر/إغلاق أمس (حماية لو غاب الحقل = نتجنّب فقدان رَنر).
+            # السعر/إغلاق أمس (حماية لو غاب الحقل = نتجنّب فقدان سهم).
             raw_change = t.get("todaysChangePerc")
             if raw_change is None and prev_close > 0 and last_price > 0:
                 change_pct = (last_price - prev_close) / prev_close * 100.0

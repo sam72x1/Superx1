@@ -2,7 +2,7 @@
 
 ثريد يستمع لرسائلك (getUpdates) ويردّ على الأوامر:
   /status   — حالة البوت + ريندر
-  /top      — أقوى الرَنرات في آخر مسح
+  /top      — أقوى الأسهم في آخر مسح
   /report   — تقرير التطوير + ملفات CSV الآن
   /briefing — بريفنغ المستشار الآن
   /ask ...  — اسأل Claude عن بوتك (يستخدم بياناتك الحيّة)
@@ -27,9 +27,9 @@ from .state import trade_date_str
 logger = logging.getLogger(__name__)
 
 _HELP = (
-    "🤖 <b>مساعد ماسح الرَنرات</b>\n"
+    "🤖 <b>مساعدك الشخصي</b>\n"
     "/status — حالة البوت وريندر\n"
-    "/top — أقوى الرَنرات الآن\n"
+    "/top — أقوى الأسهم الآن\n"
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
@@ -37,7 +37,7 @@ _HELP = (
 )
 
 _ASK_SYSTEM = (
-    "أنت مساعد ومستشار بوت رَنرات للمستخدم. أجب عن أسئلته حول حالة البوت "
+    "أنت مساعد ومستشار الماسح الشامل للمستخدم. أجب عن أسئلته حول حالة البوت "
     "وبياناته بالعربي بإيجاز ودقّة، اعتمادًا على البيانات المعطاة فقط. "
     "أنت لا تنفّذ أي إجراء — فقط تُبلغ وتقترح."
 )
@@ -140,8 +140,8 @@ class TelegramAssistant:
     def _top_text(self) -> str:
         runners = getattr(self.sc, "last_runners", [])
         if not runners:
-            return "ما فيه رَنرات في آخر مسح (أو ما بدأ بعد)."
-        lines = ["🔝 <b>أقوى الرَنرات (آخر مسح)</b>"]
+            return "ما فيه أسهم في آخر مسح (أو ما بدأ بعد)."
+        lines = ["🔝 <b>أقوى الأسهم (آخر مسح)</b>"]
         for tkr, chg in runners[:15]:
             lines.append(f"  • {tkr}: +{chg:.1f}%")
         return "\n".join(lines)
@@ -176,7 +176,7 @@ class TelegramAssistant:
             f"الجلسة: {classify_session(self.cfg, now_et()).value}\n"
             f"تنبيهات اليوم: {len(s['alerts'])} "
             f"({len(s['wins'])}✅/{len(s['losses'])}🛑) · فرص فائتة: {len(s['missed'])}\n"
-            f"أقوى الرَنرات الآن: "
+            f"أقوى الأسهم الآن: "
             f"{', '.join(f'{t}+{c:.0f}%' for t, c in runners[:8]) or '—'}\n"
             f"العتبات: RVol≥{self.cfg.rvol_min}x · فلوت≤{self.cfg.float_max:,.0f}"
             f" · جاهزية≥{self.cfg.tech_readiness_min:.0f} · درجة≥{self.cfg.alert_score_min:.0f}\n"

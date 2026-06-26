@@ -60,7 +60,7 @@ def test_analyst_disabled_or_no_key_returns_none():
 def test_pipeline_bearish_analyst_penalizes():
     # محلّل يرجّع محفّزًا هبوطيًا قويًا → خصم قد يُسقط التنبيه
     bearish = _analyst({"direction": "هبوطي", "materiality": 9,
-                        "thesis": "طرح مخفِّف", "warning": "offering يقتل الرَنر"})
+                        "thesis": "طرح مخفِّف", "warning": "offering يقتل السهم"})
     cfg = Config(analyst_enabled=True, anthropic_api_key="x",
                  analyst_bearish_penalty=30.0)
     cand = process_candidate(

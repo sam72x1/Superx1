@@ -16,12 +16,12 @@ ET_NOW = datetime(2026, 6, 25, 10, 30, tzinfo=ET)   # جلسة رسمية
 
 
 class CycleClient(FakeClient):
-    """FakeClient + full_snapshot يرجّع رَنر قوي + ضوضاء تُفلتر."""
+    """FakeClient + full_snapshot يرجّع سهم قوي + ضوضاء تُفلتر."""
 
     def full_snapshot(self):
         return [
             make_snapshot(ticker="STRONG", last=2.5, prev=2.0, vol=1_500_000,
-                          change_pct=25.0),     # رَنر قوي يُقبل
+                          change_pct=25.0),     # سهم قوي يُقبل
             make_snapshot(ticker="WEAK", last=5.0, prev=4.9, vol=40_000,
                           change_pct=2.0),       # تحت العتبة → لا يُكشف
             make_snapshot(ticker="PENNY", last=0.40, prev=0.30, vol=900_000,

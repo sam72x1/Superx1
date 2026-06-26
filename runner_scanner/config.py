@@ -78,7 +78,7 @@ class Config:
     rvol_min: float = 5.0                # RVol ≥ 5x (حسب الجلسة)
     volume_min: float = 300_000          # حجم يومي ≥ 300K (سيولة خروج)
     price_min: float = 1.0               # لا سنتات
-    price_max: float = 30.0              # لا فوق نطاق الرَنرات
+    price_max: float = 30.0              # لا فوق نطاق الأسهم
     # امتداد بارابولِك: رفض لو السعر ابتعد عن VWAP بأكثر من هذا%
     parabolic_vwap_ext_pct: float = 40.0
     # أو لو صعد عن إغلاق أمس بأكثر من هذا% (منهك / خطر blow-off)
@@ -117,7 +117,7 @@ class Config:
     champions_enabled: bool = True       # متابعة أبطال الفترة السابقة بأولوية
 
     # ── تتبّع النتائج + أداة التطوير (القسم 12 closed-loop) ────────
-    outcome_window_min: float = 90.0     # نافذة متابعة الرَنر بعد التنبيه (دقائق)
+    outcome_window_min: float = 90.0     # نافذة متابعة السهم بعد التنبيه (دقائق)
     missed_rise_pct: float = 30.0        # مرفوض صعد ≥ هذا = فرصة فائتة
     surge_leg_pct: float = 8.0           # قفزة جديدة ≥ هذا فوق آخر قمة = تحديث
     dev_min_sample: int = 10             # أقل عدد نتائج محسومة قبل تقرير ذو معنى

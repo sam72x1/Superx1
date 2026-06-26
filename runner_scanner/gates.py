@@ -29,7 +29,7 @@ def check_price(cfg: Config, c: Candidate) -> GateResult:
     if p < cfg.price_min:
         return GateResult(False, f"سعر {p:.2f} < {cfg.price_min} (سنتات)")
     if p > cfg.price_max:
-        return GateResult(False, f"سعر {p:.2f} > {cfg.price_max} (فوق نطاق الرَنرات)")
+        return GateResult(False, f"سعر {p:.2f} > {cfg.price_max} (فوق نطاق الأسهم)")
     return GateResult(True)
 
 

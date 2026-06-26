@@ -1,8 +1,8 @@
 """أداة التطوير (Dev Assistant) — تتعلّم من نتائج البوت المتراكمة.
 
-مكيّفة لماسح الرَنرات (لا تنسخ مشروع الارتكاز): تحلّل تتبّعات النتائج
+مكيّفة لالماسح الشامل (لا تنسخ مشروع الارتكاز): تحلّل تتبّعات النتائج
 (win/loss/timeout) من جدول tracking وتُنتج تقرير أداء بالشرائح المناسبة
-لرَنرات الزخم:
+لأسهم الزخم:
 
   • نسبة النجاح الكلية + بالشرائح (جلسة · فلوت · RVol · 5min RVol ·
     الدرجة · الجاهزية · الخبر)
@@ -11,7 +11,7 @@
     قد تكون متشدّدة
   • 💡 اقتراحات ضبط للبوابات (اقتراح فقط — لا يغيّر إعدادات)
 
-«نجاح» = الرَنر بلغ الهدف الأول بعد التنبيه. «خسارة» = ضرب الوقف.
+«نجاح» = السهم بلغ الهدف الأول بعد التنبيه. «خسارة» = ضرب الوقف.
 «انتهاء نافذة» = ما بلغ أيًّا منهما خلال نافذة المتابعة.
 
 النصوص HTML-آمنة لتيليجرام. اقتراح فقط — لا يلمس الإعدادات (المستخدم يقرّر).
@@ -74,7 +74,7 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
     alerts = [r for r in store.fetch_resolved(only_alerts=True)]
     missed = list(store.fetch_missed(cfg.missed_rise_pct))
 
-    head = ["🔬 <b>مساعد التطوير — أداء ماسح الرَنرات</b>",
+    head = ["🔬 <b>مساعد التطوير — أداء الماسح الشامل</b>",
             f"تنبيهات محسومة متراكمة: <b>{len(alerts)}</b>"]
 
     SEG_MIN_N = 3
@@ -106,7 +106,7 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
             return []
         out = [f"\n👻 <b>فرص فائتة (مرفوض صعد ≥{int(cfg.missed_rise_pct)}%)</b>: "
                f"<b>{len(missed)}</b>"]
-        # تجميع حسب سبب الرفض = أي بوّابة فوّتت رَنرات صاعدة
+        # تجميع حسب سبب الرفض = أي بوّابة فوّتت أسهم صاعدة
         by_reason: dict = {}
         for m in missed:
             reason = (m["reject_reason"] or "غير معروف").split("(")[0].strip()
@@ -189,13 +189,13 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
     # فرص فائتة بسبب RVol → خفّض RVOL_MIN
     rvol_missed = [m for m in missed if "RVol" in (m["reject_reason"] or "")]
     if len(rvol_missed) >= 3:
-        sugg.append(f"   • {len(rvol_missed)} رَنر فاتنا بسبب بوّابة RVol — "
+        sugg.append(f"   • {len(rvol_missed)} سهم فاتنا بسبب بوّابة RVol — "
                     f"فكّر بخفض RVOL_MIN (حاليًا {cfg.rvol_min:g}x).")
 
     # فرص فائتة بسبب الفلوت → ارفع FLOAT_MAX
     float_missed = [m for m in missed if "فلوت" in (m["reject_reason"] or "")]
     if len(float_missed) >= 3:
-        sugg.append(f"   • {len(float_missed)} رَنر فاتنا بسبب بوّابة الفلوت — "
+        sugg.append(f"   • {len(float_missed)} سهم فاتنا بسبب بوّابة الفلوت — "
                     f"فكّر برفع FLOAT_MAX (حاليًا {_human(cfg.float_max)}).")
 
     # شريحة جاهزية عالية لكن نجاحها متدنٍّ؟ (نادر — مؤشّر للمراجعة)

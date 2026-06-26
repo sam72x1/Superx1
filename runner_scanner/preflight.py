@@ -99,7 +99,7 @@ def check_telegram(cfg: Config) -> bool:
     _ok(f"التوكن صحيح (@{me['result'].get('username')})")
 
     # رسالة تجريبية
-    text = ("🧪 <b>فحص جاهزية ماسح الرَنرات</b>\n"
+    text = ("🧪 <b>فحص جاهزية الماسح الشامل</b>\n"
             f"الوقت (ET): {now_et().strftime('%Y-%m-%d %H:%M')}\n"
             "إذا وصلتك هذي الرسالة فالربط مع تيليجرام شغّال ✅")
     try:
@@ -119,7 +119,7 @@ def check_telegram(cfg: Config) -> bool:
 
 def main() -> int:
     cfg = Config.from_env()
-    print("══════════ فحص جاهزية ماسح الرَنرات ══════════")
+    print("══════════ فحص جاهزية الماسح الشامل ══════════")
     results = [
         check_env(cfg),
     ]

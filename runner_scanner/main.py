@@ -159,10 +159,10 @@ class Scanner:
         # رسالة إقلاع: تأكيد أن البوت نُشر وموصول بتيليجرام
         session = classify_session(self.cfg)
         self.telegram.send(
-            "🚀 <b>ماسح الرَنرات اشتغل</b>\n"
+            "🚀 <b>الماسح الشامل اشتغل</b>\n"
             f"الجلسة الحالية: {session.value} · "
             f"المسح كل {self.cfg.poll_interval_sec}ث\n"
-            "<i>صامت عند الصحة، ينبّه فقط عند رَنر مؤهّل أو عطل.</i>")
+            "<i>صامت عند الصحة، ينبّه فقط عند سهم مؤهّل أو عطل.</i>")
         while not self._stop.is_set():
             cycle_start = time.monotonic()
             try:
@@ -266,7 +266,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    logger.info("🚀 ماسح الرَنرات اشتغل (poll=%ds, dry_run=%s)",
+    logger.info("🚀 الماسح الشامل اشتغل (poll=%ds, dry_run=%s)",
                 cfg.poll_interval_sec, cfg.dry_run)
     try:
         scanner.loop()

@@ -1,4 +1,4 @@
-# ماسح الرَنرات اللحظي — التبعيات
+# الماسح الشامل اللحظي — التبعيات
 requests==2.32.3          # نداءات REST لـ Massive + تيليجرام + Fintel/FINRA
 websocket-client==1.8.0   # مستهلك WebSocket للتوقّفات LULD
 yfinance==0.2.51          # احتياطي الشورت من Yahoo (نسبة من الفلوت)
