@@ -55,7 +55,7 @@ class FakeClient:
     def __init__(self, *, float_shares=1_890_000,
                  float_source=FloatSource.FLOAT_ENDPOINT,
                  shares=3_000_000, daily=None, bars5=None, bars1=None,
-                 news=True):
+                 news=True, short=None):
         self._float = float_shares
         self._float_source = float_source
         self._shares = shares
@@ -63,12 +63,16 @@ class FakeClient:
         self._bars5 = bars5 if bars5 is not None else rising_5min_bars()
         self._bars1 = bars1 if bars1 is not None else flat_1min_bars()
         self._news = news
+        self._short = short
 
     def free_float(self, ticker):
         return self._float, self._float_source
 
     def shares_outstanding(self, ticker):
         return self._shares
+
+    def short_interest(self, ticker):
+        return self._short
 
     def bars_5min(self, ticker, start, end):
         return list(self._bars5)

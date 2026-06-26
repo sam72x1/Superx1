@@ -13,20 +13,24 @@ from .indicators import pivots
 from .models import Bar, RiskPlan
 
 
-def _intraday_support(closed_bars: list[Bar], entry: float) -> float | None:
-    """أقرب دعم تحت الدخول من قيعان شموع 5د المغلقة."""
+def _support_levels(closed_bars: list[Bar], entry: float) -> list[float]:
+    """مستويات الدعم تحت الدخول من قيعان شموع 5د المغلقة، الأقرب أولًا."""
     if len(closed_bars) < 3:
-        return None
+        return []
     lows = [b.l for b in closed_bars]
     _, low_idx = pivots(lows)
-    candidates = [lows[i] for i in low_idx if lows[i] < entry]
+    candidates = sorted({lows[i] for i in low_idx if lows[i] < entry},
+                        reverse=True)  # الأقرب (الأعلى) أولًا
     if not candidates:
-        # fallback: أدنى قاع حديث تحت الدخول
-        below = [lo for lo in lows if lo < entry]
-        if not below:
-            return None
-        return max(below)  # أقرب دعم (الأعلى من القيعان تحت السعر)
-    return max(candidates)
+        below = sorted({lo for lo in lows if lo < entry}, reverse=True)
+        return below
+    return candidates
+
+
+def _intraday_support(closed_bars: list[Bar], entry: float) -> float | None:
+    """أقرب دعم تحت الدخول (للوقف)."""
+    levels = _support_levels(closed_bars, entry)
+    return levels[0] if levels else None
 
 
 def _intraday_resistance(closed_bars: list[Bar], entry: float) -> float | None:
@@ -68,13 +72,32 @@ def build_risk_plan(cfg: Config, entry: float,
         stop_price = entry * (1 - stop_pct / 100.0)
         basis = "سقف أقصى"
 
-    # ── الأهداف: مضاعفات R + أقرب مقاومة داخل-جلسة ───────────────
-    r = entry - stop_price
-    targets = [round(entry + r * mult, 4) for mult in cfg.target_r_multiples]
-    resistance = _intraday_resistance(closed_bars_5min, entry)
-    if resistance is not None and resistance not in targets:
-        targets.append(round(resistance, 4))
-        targets = sorted(set(targets))
+    # ── الأهداف: مقاومات داخل-جلسة أولًا، ثم مضاعفات R لتكملة 3 ──
+    r = max(entry - stop_price, entry * 0.05)
+    targets: list[float] = []
+    # أقرب 3 مقاومات فوق الدخول من قمم الشموع المغلقة
+    highs = [b.h for b in closed_bars_5min]
+    high_idx, _ = pivots(highs) if len(closed_bars_5min) >= 3 else ([], [])
+    resistances = sorted({highs[i] for i in high_idx if highs[i] > entry})
+    for res in resistances:
+        if len(targets) >= 3:
+            break
+        targets.append(round(res, 4))
+    # تكملة بمضاعفات R لو أقل من 3
+    mult = 1
+    while len(targets) < 3:
+        cand = round(entry + r * mult, 4)
+        if not targets or cand > targets[-1]:
+            targets.append(cand)
+        mult += 1
+    targets = sorted(targets)[:3]
+
+    # ── مستويات الدعم ومنطقة الشراء (للعرض) ──────────────────────
+    levels = _support_levels(closed_bars_5min, entry)
+    support_near = round(levels[0], 4) if len(levels) >= 1 else None
+    support_deep = round(levels[1], 4) if len(levels) >= 2 else None
+    buy_low = round(entry, 4)
+    buy_high = round(entry * (1 + cfg.buy_zone_pct / 100.0), 4)
 
     return RiskPlan(
         stop_price=round(stop_price, 4),
@@ -82,4 +105,8 @@ def build_risk_plan(cfg: Config, entry: float,
         entry_ref=round(entry, 4),
         targets=targets,
         stop_basis=basis,
+        support_near=support_near,
+        support_deep=support_deep,
+        buy_low=buy_low,
+        buy_high=buy_high,
     )

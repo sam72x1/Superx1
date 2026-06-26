@@ -17,10 +17,15 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from .models import Candidate
 
 logger = logging.getLogger(__name__)
+
+# يوم التداول يُحسب بتوقيت نيويورك (السوق ET) لتجنّب اختلاف التاريخ قرب
+# منتصف الليل UTC بين تسجيل المرشّح وتحديث نتيجته.
+_ET = ZoneInfo("America/New_York")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS alerts (
@@ -72,9 +77,11 @@ CREATE TABLE IF NOT EXISTS tracking (
 
 
 def trade_date_str(now: datetime | None = None) -> str:
-    """تاريخ يوم التداول (UTC date) كمفتاح."""
+    """تاريخ يوم التداول (بتوقيت ET) كمفتاح موحّد."""
     now = now or datetime.now(timezone.utc)
-    return now.strftime("%Y-%m-%d")
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(_ET).strftime("%Y-%m-%d")
 
 
 def _iso(now: datetime | None) -> str:

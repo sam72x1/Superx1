@@ -214,7 +214,31 @@ class MassiveClient:
             publisher=pub.get("name", "") if isinstance(pub, dict) else str(pub),
             url=top.get("article_url", ""),
             published_utc=top.get("published_utc", ""),
+            description=top.get("description", "") or "",
         )
+
+    def short_interest(self, ticker: str) -> Optional[float]:
+        """عدد الأسهم المُشتراة على المكشوف (best-effort، تجريبي vX).
+
+        يرجّع None عند أي فشل (لا يُسقط البوت). تُحوَّل لنسبة من الفلوت في
+        خط المعالجة.
+        """
+        try:
+            data = self._get("/stocks/vX/short-interest", params={
+                "ticker": ticker, "limit": 1,
+                "sort": "settlement_date", "order": "desc"})
+        except MassiveError as exc:
+            logger.debug("short-interest فشل لـ %s: %s", ticker, exc)
+            return None
+        results = data.get("results")
+        row = results[0] if isinstance(results, list) and results else results
+        if isinstance(row, dict):
+            si = row.get("short_interest") or row.get("short_volume")
+            try:
+                return float(si) if si else None
+            except (TypeError, ValueError):
+                return None
+        return None
 
     # ── حالة السوق (تشخيص عام، ليست توقّف per-ticker) ─────────────
     def market_status(self) -> dict[str, Any]:

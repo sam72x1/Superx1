@@ -113,6 +113,11 @@ class Config:
     dev_min_sample: int = 10             # أقل عدد نتائج محسومة قبل تقرير ذو معنى
     dev_report_on_close: bool = True     # إرسال تقرير تطوير تلقائي عند إغلاق السوق
 
+    # ── العرض ─────────────────────────────────────────────────────
+    display_tz: str = "Asia/Riyadh"      # توقيت عرض وقت البطاقة
+    code_version: str = ""               # إصدار الكود (commit) — يُعرض بالبطاقة
+    buy_zone_pct: float = 1.3            # عرض منطقة الشراء فوق السعر%
+
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
     dry_run: bool = False                # لا يرسل تيليجرام، يطبع فقط
@@ -151,6 +156,9 @@ class Config:
             regular_end_hour=_f("REGULAR_END_HOUR", 16.0),
             afterhours_end_hour=_f("AFTERHOURS_END_HOUR", 20.0),
             dedup_per_day=_b("DEDUP_PER_DAY", True),
+            display_tz=_s("DISPLAY_TZ", "Asia/Riyadh"),
+            code_version=_s("CODE_VERSION", _s("RENDER_GIT_COMMIT", ""))[:7],
+            buy_zone_pct=_f("BUY_ZONE_PCT", 1.3),
             top_n_runners=_i("TOP_N_RUNNERS", 15),
             outcome_window_min=_f("OUTCOME_WINDOW_MIN", 90.0),
             missed_rise_pct=_f("MISSED_RISE_PCT", 30.0),

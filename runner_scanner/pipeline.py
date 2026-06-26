@@ -55,6 +55,10 @@ def process_candidate(
         shares = client.shares_outstanding(snap.ticker)
         if shares:
             c.market_cap = shares * snap.last_price
+        # الشورت best-effort → نسبة من الفلوت (للعرض فقط)
+        si = client.short_interest(snap.ticker)
+        if si and c.float_shares:
+            c.short_pct = min(100.0, si / c.float_shares * 100.0)
     except MassiveError as exc:
         logger.debug("فلوت/أسهم فشل لـ %s: %s", snap.ticker, exc)
 

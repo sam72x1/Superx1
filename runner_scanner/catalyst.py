@@ -11,6 +11,42 @@ from datetime import datetime, timedelta, timezone
 from .config import Config
 from .models import Catalyst
 
+# تصنيف الخبر من كلمات مفتاحية في العنوان/الوصف (أخبار Massive إنجليزية).
+# الترتيب يهمّ: الأكثر دلالةً أولًا. كل عنصر: (تسمية عربية، كلمات مفتاحية).
+_NEWS_CATEGORIES: list[tuple[str, tuple[str, ...]]] = [
+    ("⚠️ طرح/تخفيف (سلبي)",
+     ("offering", "dilut", "priced", "registered direct", "atm ",
+      "shelf", "warrant", "raise", "private placement")),
+    ("💊 موافقة/تجارب سريرية",
+     ("fda", "approval", "approve", "clinical", "phase 1", "phase 2",
+      "phase 3", "trial", "therapy", "drug", "ind ", "510(k)", "breakthrough")),
+    ("🔀 اندماج/استحواذ",
+     ("merger", "acqui", "buyout", "to be acquired", "takeover", "tender offer")),
+    ("🤝 شراكة",
+     ("partner", "collaborat", "teams up", "joint venture", "alliance")),
+    ("📑 عقد/صفقة",
+     ("contract", "awarded", "purchase order", "deal", "selected by", "wins")),
+    ("📈 أرباح/نتائج مالية",
+     ("earnings", "revenue", "eps", "beats", "guidance", "quarterly results",
+      " q1", " q2", " q3", " q4", "record sales", "preliminary results")),
+    ("🚀 منتج/إطلاق",
+     ("launch", "unveil", "introduce", "new product", "rollout", "availab")),
+    ("🔬 براءة اختراع",
+     ("patent",)),
+    ("📊 تغطية محلّل",
+     ("price target", "upgrade", "downgrade", "initiates coverage", "rating",
+      "reiterates")),
+]
+
+
+def classify_news(title: str, description: str = "") -> str:
+    """يرجّع تسمية عربية لنوع الخبر من العنوان/الوصف، أو «📰 خبر» افتراضيًا."""
+    text = f"{title or ''} {description or ''}".lower()
+    for label, keywords in _NEWS_CATEGORIES:
+        if any(kw in text for kw in keywords):
+            return label
+    return "📰 خبر"
+
 
 def lookback_iso(cfg: Config, now_utc: datetime | None = None) -> str:
     """طابع RFC3339 (UTC) لبداية نافذة «خبر حديث»."""
@@ -48,6 +84,8 @@ def evaluate_catalyst(cfg: Config, catalyst: Catalyst | None,
         # خبر خارج النافذة → نعامله كأنه لا محفّز فعّال
         if catalyst.age_hours > cfg.catalyst_lookback_hours:
             return Catalyst(has_news=False)
+    # صنّف نوع الخبر للعرض في البطاقة
+    catalyst.category = classify_news(catalyst.headline, catalyst.description)
     return catalyst
 
 

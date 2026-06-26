@@ -112,18 +112,24 @@ class Catalyst:
     publisher: str = ""
     url: str = ""
     published_utc: str = ""
+    description: str = ""
+    category: str = ""               # تصنيف الخبر (أرباح/شراكة/...) للعرض
     age_hours: Optional[float] = None
 
 
 @dataclass
 class RiskPlan:
-    """الوقف والأهداف."""
+    """الوقف والأهداف ومستويات الدعم ومنطقة الشراء."""
 
     stop_price: float
     stop_pct: float                   # مسافة الوقف عن الدخول%
     entry_ref: float                  # السعر المرجعي للدخول (آخر سعر)
     targets: list[float] = field(default_factory=list)
     stop_basis: str = ""              # "دعم 5د" أو "سقف نسبة"
+    support_near: Optional[float] = None   # الدعم الأقرب تحت السعر (الدخول)
+    support_deep: Optional[float] = None   # الدعم الأعمق
+    buy_low: Optional[float] = None        # بداية منطقة الشراء
+    buy_high: Optional[float] = None       # نهاية منطقة الشراء
 
 
 @dataclass
@@ -138,6 +144,7 @@ class Candidate:
     float_shares: Optional[float] = None
     float_source: FloatSource = FloatSource.UNKNOWN
     market_cap: Optional[float] = None
+    short_pct: Optional[float] = None      # نسبة الشورت من الفلوت% (best-effort)
 
     # نتائج التحليل
     momentum: Optional[MomentumResult] = None
