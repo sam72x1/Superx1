@@ -91,18 +91,21 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
                         "دون ضعف واضح في الشريحة المنخفضة."),
                 confidence="متوسطة"))
 
-    # ── 2) TECH_READINESS_MIN: شريحة 70-80 تخسر بوضوح → ارفع لـ80 ─
-    if cfg.tech_readiness_min < 80:
+    # ── 2) TECH_READINESS_MIN: الشريحة فوق العتبة مباشرة (10 نقاط) تخسر →
+    # ارفع العتبة 10 نقاط (مثال: 60 والشريحة 60-70 ضعيفة → رجّعها إلى 70).
+    if cfg.tech_readiness_min < 90:
+        hi = cfg.tech_readiness_min + 10
         band = [r for r in alerts if r["readiness"] is not None
-                and cfg.tech_readiness_min <= r["readiness"] < 80]
+                and cfg.tech_readiness_min <= r["readiness"] < hi]
         b_wr, b_n = _win_rate(band)
         conf = _conf(b_n)
         if b_wr is not None and conf and b_wr <= base_wr - 20:
             props.append(CalibrationProposal(
                 env="TECH_READINESS_MIN", current=cfg.tech_readiness_min,
-                proposed=80,
-                reason=(f"الجاهزية {cfg.tech_readiness_min:g}-80 نجاحها "
-                        f"{b_wr:.0f}% فقط ({b_n} محسوم) — رفع العتبة يصفّيها."),
+                proposed=round(hi),
+                reason=(f"الجاهزية {cfg.tech_readiness_min:g}-{hi:g} نجاحها "
+                        f"{b_wr:.0f}% فقط مقابل {base_wr:.0f}% للكل ({b_n} محسوم) "
+                        f"— رفع العتبة إلى {hi:g} يصفّي الشريحة الضعيفة."),
                 confidence=conf))
 
     # ── 3) ALERT_SCORE_MIN: الشريحة فوق العتبة مباشرة تخسر → ارفع ─

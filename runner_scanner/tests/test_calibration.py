@@ -42,6 +42,16 @@ def test_raises_rvol_min_when_low_bucket_loses():
     assert rvol and rvol[0].proposed == 7   # 5 → 7
 
 
+def test_raises_readiness_when_band_above_threshold_loses():
+    # العتبة 60 وشريحة 60-70 كلها خسارة + 70+ نجاح → اقترح رفع العتبة إلى 70
+    alerts = ([_row(result="loss", readiness=65.0) for _ in range(8)]
+              + [_row(result="win", readiness=85.0) for _ in range(8)])
+    cfg = Config(tech_readiness_min=60.0)
+    props = propose_calibrations(_FakeStore(alerts), cfg)
+    rd = [p for p in props if p.env == "TECH_READINESS_MIN"]
+    assert rd and rd[0].current == 60.0 and rd[0].proposed == 70
+
+
 def test_raises_float_max_on_missed_opportunities():
     alerts = [_row(result="win", rvol=12.0) for _ in range(4)]
     missed = [{"reject_reason": "فلوت كبير", "max_gain_pct": 50.0,
