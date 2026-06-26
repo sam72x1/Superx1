@@ -144,6 +144,19 @@ class MassiveClient:
     def bars_daily(self, ticker: str, start: str, end: str) -> list[Bar]:
         return self.aggregates(ticker, 1, "day", start, end)
 
+    # ── بيانات يوم تاريخي كامل (للباكتيست) ────────────────────────
+    def grouped_daily(self, date: str, adjusted: bool = True) -> list[dict]:
+        """كل أسهم السوق ليوم تاريخي (OHLCV) بنداء واحد — مكافئ السنابشوت
+        للماضي. يرجّع نتائج خام [{T,o,h,l,c,v,vw,t}]. [] عند الفشل."""
+        try:
+            data = self._get(
+                f"/v2/aggs/grouped/locale/us/market/stocks/{date}",
+                params={"adjusted": str(adjusted).lower()})
+            return data.get("results") or []
+        except MassiveError as exc:
+            logger.debug("grouped_daily فشل %s: %s", date, exc)
+            return []
+
     @staticmethod
     def _parse_bar(b: dict[str, Any]) -> Bar:
         return Bar(
@@ -182,17 +195,22 @@ class MassiveClient:
 
     # ── الخبر/المحفّز (إشارة تقوية) ───────────────────────────────
     def latest_news(self, ticker: str, published_gte_utc: str,
-                    limit: int = 5) -> Optional[Catalyst]:
-        """أحدث خبر للسهم بعد طابع زمني UTC (RFC3339). None لو ما فيه."""
+                    limit: int = 5,
+                    published_lte_utc: Optional[str] = None) -> Optional[Catalyst]:
+        """أحدث خبر للسهم بعد طابع زمني UTC (RFC3339). None لو ما فيه.
+        published_lte_utc: سقف زمني علوي (للباكتيست: لا أخبار من المستقبل)."""
         # التحليل داخل الحماية: رد مشوّه (شكل مختلف) يُتجاهَل ولا يكسر الدورة.
         try:
-            data = self._get("/v2/reference/news", params={
+            params = {
                 "ticker": ticker,
                 "published_utc.gte": published_gte_utc,
                 "order": "desc",
                 "sort": "published_utc",
                 "limit": limit,
-            })
+            }
+            if published_lte_utc:
+                params["published_utc.lte"] = published_lte_utc
+            data = self._get("/v2/reference/news", params=params)
             results = data.get("results") if isinstance(data, dict) else None
             if not isinstance(results, list) or not results:
                 return None

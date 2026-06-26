@@ -203,6 +203,7 @@ class Scanner:
                 self.monitor.raise_fault("cycle", str(exc))
             self._maybe_daily_report()
             self._maybe_advisor_briefing()
+            self._maybe_backtest()
             self.monitor.check_stall()
             # نوم حتى الدورة التالية (يحترم وقت الدورة المنقضي)
             elapsed = time.monotonic() - cycle_start
@@ -257,6 +258,47 @@ class Scanner:
         if self.telegram.send(text):
             self.store.set_meta("last_advisor", key)
             logger.info("أُرسل بريفنغ المستشار (%s)", key)
+
+    def _maybe_backtest(self, et_now=None) -> None:
+        """باكتيست أسبوعي **تلقائي** في الخلفية (بلا تدخّل): يقيس حافة الاستراتيجية
+        على آخر ~30 يوم تداول ويرسل النتيجة على تيليجرام. مرة/أسبوع."""
+        if not self.cfg.backtest_enabled or self.cfg.dry_run:
+            return
+        if not self.cfg.massive_api_key:
+            return
+        et_now = et_now or now_et()
+        try:
+            tz = ZoneInfo(self.cfg.display_tz)
+        except Exception:  # noqa: BLE001
+            tz = ZoneInfo("Asia/Riyadh")
+        local = et_now.astimezone(tz)
+        if local.weekday() != self.cfg.backtest_weekday:
+            return
+        if local.hour < self.cfg.backtest_hour:
+            return
+        key = local.strftime("%Y-W%W")        # مفتاح أسبوعي
+        if self.store.get_meta("last_backtest") == key:
+            return
+        self.store.set_meta("last_backtest", key)   # قبل البدء: يمنع إعادة الإطلاق
+        threading.Thread(target=self._run_backtest_bg, args=(et_now,),
+                         daemon=True, name="backtest").start()
+
+    def _run_backtest_bg(self, et_now) -> None:
+        from datetime import timedelta
+        from . import backtest
+        end = (et_now.date() - timedelta(days=1)).isoformat()
+        start = (et_now.date()
+                 - timedelta(days=self.cfg.backtest_lookback_days)).isoformat()
+        try:
+            self.telegram.send(
+                f"🧪 <b>باكتيست تلقائي</b> {start} → {end}\n"
+                "<i>يقيس حافة الاستراتيجية على الماضي — قد يأخذ دقائق…</i>")
+            res = backtest.run_backtest(self.cfg, self.client, start, end)
+            self.telegram.send(backtest.format_report(res))
+            logger.info("اكتمل الباكتيست التلقائي (%d صفقة)", len(res.trades))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("الباكتيست التلقائي فشل")
+            self.telegram.send(f"⚠️ تعذّر الباكتيست التلقائي: {exc}")
 
     def shutdown(self) -> None:
         logger.info("إيقاف الماسح...")

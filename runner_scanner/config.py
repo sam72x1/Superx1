@@ -143,6 +143,12 @@ class Config:
     postmortem_enabled: bool = True       # تشريح سبب فشل/نجاح السهم (Claude)
     postmortem_on_stop: bool = True       # تشريح لحظي فور كسر الوقف
 
+    # ── الباكتيست التلقائي (يشتغل بنفسه ويرسل النتيجة — بلا تدخّل) ──
+    backtest_enabled: bool = True         # باكتيست أسبوعي تلقائي في الخلفية
+    backtest_lookback_days: int = 45      # نافذة الباكتيست (أيام تقويم ≈ 30 تداول)
+    backtest_weekday: int = 5             # يوم التشغيل (الرياض): السبت=5
+    backtest_hour: int = 6                # ساعة التشغيل فجرًا (الرياض)
+
     # ── رادار التخفيف (SEC EDGAR) — يحذّر من الطرح القادم ──────────
     dilution_radar_enabled: bool = True   # رصد ملفات SEC التخفيفية
     # نافذة «طرح فعّال/وشيك» (424B/EFFECT): خطر مرتفع
@@ -221,6 +227,10 @@ class Config:
             analyst_bearish_penalty=_f("ANALYST_BEARISH_PENALTY", 12.0),
             postmortem_enabled=_b("POSTMORTEM_ENABLED", True),
             postmortem_on_stop=_b("POSTMORTEM_ON_STOP", True),
+            backtest_enabled=_b("BACKTEST_ENABLED", True),
+            backtest_lookback_days=_i("BACKTEST_LOOKBACK_DAYS", 45),
+            backtest_weekday=_i("BACKTEST_WEEKDAY", 5),
+            backtest_hour=_i("BACKTEST_HOUR", 6),
             dilution_radar_enabled=_b("DILUTION_RADAR_ENABLED", True),
             dilution_active_days=_i("DILUTION_ACTIVE_DAYS", 45),
             dilution_shelf_days=_i("DILUTION_SHELF_DAYS", 180),
