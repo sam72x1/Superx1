@@ -111,6 +111,36 @@ def session_volume_baselines(
     return avg_pre, avg_aft
 
 
+def _session_window(cfg: Config, session: Session) -> tuple[float, float]:
+    """حدود الساعة (ET) للجلسة، لتصفية الشموع التي تخصّها."""
+    if session is Session.PREMARKET:
+        return cfg.premarket_start_hour, cfg.regular_start_hour
+    if session is Session.REGULAR:
+        return cfg.regular_start_hour, cfg.regular_end_hour
+    if session is Session.AFTERHOURS:
+        return cfg.regular_end_hour, cfg.afterhours_end_hour
+    return 0.0, 24.0
+
+
+def session_cumulative_volume(cfg: Config, session: Session,
+                              bars: list[Bar]) -> float:
+    """الحجم التراكمي **الفعلي** للجلسة الحالية من الشموع (لا من snap.day_volume
+    الذي قد يكون صفرًا/قديمًا في البريماركت). يصفّي الشموع ضمن نافذة الجلسة (ET).
+    """
+    if not bars:
+        return 0.0
+    lo, hi = _session_window(cfg, session)
+    total = 0.0
+    for b in bars:
+        if b.v <= 0 or b.t_ms <= 0:
+            continue
+        dt = datetime.fromtimestamp(b.t_ms / 1000, tz=timezone.utc).astimezone(ET)
+        h = _hour_float(dt)
+        if lo <= h < hi:
+            total += b.v
+    return total
+
+
 def compute_rvol(
     cfg: Config,
     session: Session,
@@ -139,17 +169,24 @@ def compute_rvol(
         expected = max(1.0, avg_daily_volume * frac)
         return cumulative_volume / expected
 
+    # حدّ أدنى لمتوسط يومي «موثوق» قبل الاعتماد عليه في تقدير baseline الجلسة،
+    # وإلا فمتوسط جزئي صغير (شمعة واحدة) يصنع baseline ضئيلًا → RVol منفوخ كذبًا.
+    daily_ok = avg_daily_volume >= cfg.volume_min * 0.1
+
     if session is Session.PREMARKET:
         baseline = avg_premarket_volume
         if not baseline or baseline <= 0:
-            # تقدير محافظ: البريماركت ~3% من اليوم في المتوسط.
-            baseline = max(1.0, avg_daily_volume * 0.03)
+            if not daily_ok:
+                return 0.0   # لا أساس موثوق → لا نفبرك RVol
+            baseline = avg_daily_volume * 0.03   # البريماركت ~3% من اليوم
         return cumulative_volume / baseline
 
     if session is Session.AFTERHOURS:
         baseline = avg_afterhours_volume
         if not baseline or baseline <= 0:
-            baseline = max(1.0, avg_daily_volume * 0.05)
+            if not daily_ok:
+                return 0.0
+            baseline = avg_daily_volume * 0.05
         return cumulative_volume / baseline
 
     return 0.0

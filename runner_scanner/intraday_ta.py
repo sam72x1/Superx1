@@ -10,7 +10,7 @@ from __future__ import annotations
 from .config import Config
 from .indicators import session_vwap
 from .models import Bar, MomentumResult, Session, SnapshotEntry
-from .sessions import compute_rvol
+from .sessions import compute_rvol, session_cumulative_volume
 
 
 def _avg(values: list[float]) -> float:
@@ -31,23 +31,34 @@ def compute_momentum(
     """يبني MomentumResult بدرجة 0..momentum_pillar_max."""
     notes: list[str] = []
 
-    # ── VWAP الجلسي: من شموع الدقيقة، وإلا تقريب من السنابشوت ──────
-    vwap = session_vwap(bars_1min) if bars_1min else None
-    if vwap is None:
-        vwap = snap.day_vwap or snap.last_price
-        notes.append("VWAP تقريبي (snapshot)")
     price = snap.last_price
-    vwap_dist = ((price - vwap) / vwap * 100.0) if vwap else 0.0
-    above_vwap = price >= vwap if vwap else False
 
-    # ── زخم آخر 5 دقائق ──────────────────────────────────────────
+    # ── VWAP الجلسي: من شموع الدقيقة (موثوق)، وإلا غير موثوق ───────
+    # day_vwap في البريماركت/الأفترهاوس غالبًا 0 (artifact) → لا نعامله قياسًا.
+    vwap = session_vwap(bars_1min) if bars_1min else None
+    vwap_reliable = vwap is not None
+    if vwap is None:
+        if session is Session.REGULAR and snap.day_vwap > 0:
+            vwap = snap.day_vwap                 # تقريب مقبول في الجلسة الرسمية
+            vwap_reliable = True
+            notes.append("VWAP تقريبي (snapshot)")
+        else:
+            vwap = price                          # لا قياس حقيقي
+            vwap_reliable = False
+            notes.append("VWAP غير موثوق (لا شموع)")
+    vwap_dist = ((price - vwap) / vwap * 100.0) if (vwap and vwap_reliable) else 0.0
+    above_vwap = (price >= vwap) if (vwap and vwap_reliable) else False
+
+    # ── زخم آخر 5 دقائق (من شمعة **مكتملة** لا الجارية ≈ صفر) ─────
     change_5min = 0.0
     rvol_5min = 0.0
     volume_rising = False
     if bars_5min:
+        # الشمعة الجارية (الأخيرة) قد تكون c≈o → نقيس من آخر شمعة مكتملة
+        ref = bars_5min[-2] if len(bars_5min) >= 2 else bars_5min[-1]
+        if ref.o > 0:
+            change_5min = (ref.c - ref.o) / ref.o * 100.0
         last = bars_5min[-1]
-        if last.o > 0:
-            change_5min = (last.c - last.o) / last.o * 100.0
         vols = [b.v for b in bars_5min if b.v > 0]
         if len(vols) >= 2:
             avg_vol = _avg(vols[:-1]) or _avg(vols)
@@ -57,9 +68,16 @@ def compute_momentum(
             volume_rising = vols[-1] >= vols[-2] >= vols[-3]
 
     # ── RVol حسب الجلسة ──────────────────────────────────────────
+    # في الجلسات الممتدة: الحجم التراكمي من شموع الجلسة الفعلية (snap.day_volume
+    # قد يكون صفرًا/قديمًا = artifact). الرسمي: snap.day_volume موثوق وكامل.
+    if session in (Session.PREMARKET, Session.AFTERHOURS):
+        cum_vol = session_cumulative_volume(cfg, session, bars_5min) \
+            or snap.day_volume
+    else:
+        cum_vol = snap.day_volume
     rvol = compute_rvol(
         cfg, session,
-        cumulative_volume=snap.day_volume,
+        cumulative_volume=cum_vol,
         avg_daily_volume=avg_daily_volume,
         elapsed_fraction=elapsed_fraction,
         avg_premarket_volume=avg_premarket_volume,
@@ -79,16 +97,17 @@ def compute_momentum(
     # 5min RVol حتى 12 نقطة (5x → نصف، 20x+ → كامل)
     score += min(12.0, rvol_5min / 20.0 * 12.0)
 
-    # موقع من VWAP حتى 10 نقاط (فوق + مسافة معقولة 0..15% مثالي)
-    if above_vwap:
+    # موقع من VWAP حتى 10 نقاط — فقط عند VWAP موثوق (لا نمنح نقاطًا لـ artifact)
+    if vwap_reliable and above_vwap:
         if vwap_dist <= 15.0:
             score += 10.0
         elif vwap_dist <= 25.0:
             score += 6.0
         else:
             score += 2.0  # ممتد، خطر (يُعاقَب أكثر في البوابات)
-    else:
+    elif vwap_reliable and not above_vwap:
         notes.append("تحت VWAP")
+    # vwap غير موثوق → لا نقاط ولا عقوبة (نتجنّب قرارًا على بيانات مصطنعة)
 
     # زخم 5د موجب حتى 5 نقاط
     if change_5min > 0:
@@ -110,5 +129,6 @@ def compute_momentum(
         vwap_distance_pct=round(vwap_dist, 2),
         above_vwap=above_vwap,
         volume_rising=volume_rising,
+        vwap_reliable=vwap_reliable,
         notes=notes,
     )

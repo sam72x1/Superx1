@@ -225,15 +225,20 @@ def adx_dmi(highs: Sequence[float], lows: Sequence[float],
     return adx, plus_di[-1], minus_di[-1]
 
 
-def session_vwap(bars: Sequence[Bar]) -> float | None:
-    """VWAP جلسي مُجمَّع من شموع الدقيقة (sum(typical×vol)/sum(vol))."""
-    tot_pv, tot_v = 0.0, 0.0
+def session_vwap(bars: Sequence[Bar], min_bars: int = 2) -> float | None:
+    """VWAP جلسي مُجمَّع من شموع الدقيقة (sum(typical×vol)/sum(vol)).
+
+    يتطلّب ≥ min_bars شمعة بحجم>0 وإلا None — شمعة واحدة رقيقة ليست VWAP
+    موثوقًا (artifact سيولة)، فلا نعاملها كقياس حقيقي.
+    """
+    tot_pv, tot_v, contributing = 0.0, 0.0, 0
     for b in bars:
         if b.v <= 0:
             continue
         typical = (b.h + b.l + b.c) / 3.0
         tot_pv += typical * b.v
         tot_v += b.v
-    if tot_v <= 0:
+        contributing += 1
+    if tot_v <= 0 or contributing < min_bars:
         return None
     return tot_pv / tot_v

@@ -103,6 +103,7 @@ class Config:
     stop_min_pct: float = 4.0            # حد أدنى لمسافة الوقف (ضوضاء LULD)
     stop_max_pct: float = 20.0           # سقف أعلى لمسافة الوقف
     target_max_pct: float = 80.0         # سقف مسافة الهدف (يمنع أهدافًا بعيدة سخيفة)
+    min_bar_trades: int = 3              # أقل عدد صفقات لاعتبار قمة الشمعة مقاومة حقيقية
     target_r_multiples: tuple[float, ...] = (1.0, 2.0, 3.0)  # أهداف كمضاعفات R
 
     # ── الجلسات (ET) — ساعات بتوقيت نيويورك ───────────────────────
@@ -200,6 +201,7 @@ class Config:
             stop_min_pct=_f("STOP_MIN_PCT", 4.0),
             stop_max_pct=_f("STOP_MAX_PCT", 20.0),
             target_max_pct=_f("TARGET_MAX_PCT", 80.0),
+            min_bar_trades=_i("MIN_BAR_TRADES", 3),
             premarket_start_hour=_f("PREMARKET_START_HOUR", 4.0),
             regular_start_hour=_f("REGULAR_START_HOUR", 9.5),
             regular_end_hour=_f("REGULAR_END_HOUR", 16.0),

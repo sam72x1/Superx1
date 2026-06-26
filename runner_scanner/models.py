@@ -83,6 +83,7 @@ class MomentumResult:
     vwap_distance_pct: float          # بُعد السعر عن VWAP%
     above_vwap: bool
     volume_rising: bool               # أحجام متصاعدة لا متناقصة
+    vwap_reliable: bool = True        # VWAP من شموع حقيقية (لا artifact صفري)
     notes: list[str] = field(default_factory=list)
 
 

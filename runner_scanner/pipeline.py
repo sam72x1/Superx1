@@ -19,7 +19,7 @@ from .halts import HaltTracker
 from .massive_client import MassiveClient, MassiveError
 from .models import Candidate, FloatSource, HaltState, Session, SnapshotEntry
 from .sessions import (
-    classify_session, now_et, session_elapsed_fraction,
+    ET, classify_session, now_et, session_elapsed_fraction,
     session_volume_baselines,
 )
 
@@ -28,6 +28,17 @@ logger = logging.getLogger(__name__)
 
 def _et_date(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d")
+
+
+def _bar_et_date(b) -> str:
+    return datetime.fromtimestamp(b.t_ms / 1000, tz=timezone.utc) \
+        .astimezone(ET).strftime("%Y-%m-%d")
+
+
+def _closed_daily(daily: list, today: str) -> list:
+    """يستبعد شمعة اليوم الجزئية (نفس تاريخ اليوم) من السلسلة اليومية —
+    شمعة اليوم في البريماركت حجمها/قمتها جزئية مضلّلة (متوسط الحجم/المقاومات)."""
+    return [b for b in daily if b.t_ms > 0 and _bar_et_date(b) != today]
 
 
 def process_candidate(
@@ -105,9 +116,12 @@ def process_candidate(
         return c.reject(f"تعذّر جلب الشموع: {exc}")
 
     # ── 5) التحليل: الركيزتان ────────────────────────────────────
+    # متوسط الحجم اليومي من الأيام **المغلقة** فقط (استبعاد شمعة اليوم الجزئية
+    # التي تلوّث المتوسط فتنفخ RVol كذبًا في البريماركت).
+    daily_closed = _closed_daily(daily, today)
     avg_daily_vol = (
-        sum(b.v for b in daily[-20:]) / min(20, len(daily))
-    ) if daily else 0.0
+        sum(b.v for b in daily_closed[-20:]) / min(20, len(daily_closed))
+    ) if daily_closed else 0.0
     elapsed = session_elapsed_fraction(cfg, et_now) \
         if session is Session.REGULAR else None
     # RVol حقيقي للجلسات الممتدة: متوسط حجم البريماركت/الأفترهاوس من
@@ -172,12 +186,15 @@ def process_candidate(
     # ── 9) الوقف (دعم 5د) والأهداف (مقاومات حقيقية) ─────────────
     from . import risk
     closed_5min = bars_5min[:-1] if len(bars_5min) > 1 else bars_5min
-    # مقاومات يومية كأهداف محتملة: قمة أمس + قمة آخر 10 أيام
+    # مقاومات يومية كأهداف محتملة — من الأيام **المغلقة** فقط (لا شمعة اليوم
+    # الجزئية)، وبسقف اتجاهي قريب: قمة بعيدة جدًا فوق السعر (سهم منهار) ليست
+    # هدفًا واقعيًا داخل-الجلسة (تجنّب فئة بق +474%).
     daily_res: list[float] = []
-    if daily:
-        if len(daily) >= 2:
-            daily_res.append(daily[-2].h)                 # قمة أمس
-        daily_res.append(max(b.h for b in daily[-10:]))   # قمة 10 أيام
+    if daily_closed:
+        daily_res.append(daily_closed[-1].h)                      # قمة أمس
+        daily_res.append(max(b.h for b in daily_closed[-10:]))    # قمة 10 أيام
+    daily_cap = snap.last_price * 1.30   # المقاومة اليومية كهدف ضمن +30% فقط
+    daily_res = [r for r in daily_res if r and r <= daily_cap]
     c.risk = risk.build_risk_plan(cfg, snap.last_price, closed_5min,
                                   daily_resistances=daily_res)
 

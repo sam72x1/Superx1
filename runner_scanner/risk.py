@@ -60,23 +60,32 @@ def _round_levels_above(entry: float, n: int) -> list[float]:
 
 def resistance_targets(entry: float, closed_bars: list[Bar],
                        extra: list[float] | None = None,
-                       count: int = 3, max_pct: float = 80.0) -> list[float]:
+                       count: int = 3, max_pct: float = 80.0,
+                       min_bar_trades: int = 0) -> list[float]:
     """أهداف = **مقاومات حقيقية** فقط (لا مضاعفات حسابية):
     قمم 5د المحورية · قمة اليوم داخل-الجلسة · قمم يومية مُمرَّرة (أمس/الأسبوع)
     · أرقام مستديرة. تُدمج المتقاربة (~1.5%) وتُؤخذ الأقرب فوق الدخول، وضمن
-    سقف مسافة معقول (max_pct) كي لا تدخل قمة بعيدة جدًا (سهم انهار من فوق)."""
+    سقف مسافة معقول (max_pct) كي لا تدخل قمة بعيدة جدًا (سهم انهار من فوق).
+    min_bar_trades: يستبعد قمم الشموع الرقيقة (طبعة واحدة) من مقاومة اليوم."""
+    if entry <= 0:
+        return []   # سعر غير صالح → لا أهداف (حارس للاستدعاء المباشر)
     ceiling = entry * (1 + max_pct / 100.0)
     cands: set[float] = set()
-    # قمم 5د المحورية فوق الدخول
+    # قمم 5د المحورية فوق الدخول — من شموع ذات سيولة فعلية فقط (لا طبعة رقيقة)
+    def _liquid(b: Bar) -> bool:
+        return b.v > 0 and (b.n == 0 or b.n >= min_bar_trades)
     if len(closed_bars) >= 3:
         highs = [b.h for b in closed_bars]
         hi_idx, _ = pivots(highs)
-        cands |= {highs[i] for i in hi_idx if entry < highs[i] <= ceiling}
-    # قمة اليوم داخل-الجلسة
+        cands |= {highs[i] for i in hi_idx
+                  if entry < highs[i] <= ceiling and _liquid(closed_bars[i])}
+    # قمة اليوم داخل-الجلسة — من شموع ذات سيولة فعلية فقط (لا طبعة رقيقة)
     if closed_bars:
-        day_hi = max(b.h for b in closed_bars)
-        if entry < day_hi <= ceiling:
-            cands.add(day_hi)
+        liquid = [b for b in closed_bars if _liquid(b)]
+        if liquid:
+            day_hi = max(b.h for b in liquid)
+            if entry < day_hi <= ceiling:
+                cands.add(day_hi)
     # مقاومات يومية مُمرَّرة (قمة أمس، قمة 10 أيام...) — ضمن السقف فقط
     for r in (extra or []):
         if r and entry < r <= ceiling:
@@ -106,6 +115,9 @@ def build_risk_plan(cfg: Config, entry: float,
                     daily_resistances: list[float] | None = None) -> RiskPlan:
     """يبني الوقف (دعم 5د) والأهداف (**مقاومات حقيقية**) من الشارت.
     daily_resistances: مقاومات يومية اختيارية (قمة أمس/الأسبوع) تُدمج كأهداف."""
+    if entry <= 0:   # حارس: سعر غير صالح → خطة فارغة بدل أرقام عبثية
+        return RiskPlan(stop_price=0.0, stop_pct=0.0, entry_ref=0.0, targets=[],
+                        stop_basis="سعر غير صالح")
     # ── الوقف: هجين ──────────────────────────────────────────────
     # الأساس = الدعم داخل-الجلسة (تحته بهامش بسيط). لو ما فيه دعم،
     # نستخدم الحد الأدنى للنسبة. ثم نقصّ المسافة بين [min%, max%]:
@@ -132,7 +144,8 @@ def build_risk_plan(cfg: Config, entry: float,
     # ── الأهداف: مقاومات حقيقية فقط (لا مضاعفات حسابية) ──────────
     targets = resistance_targets(entry, closed_bars_5min,
                                  extra=daily_resistances, count=3,
-                                 max_pct=cfg.target_max_pct)
+                                 max_pct=cfg.target_max_pct,
+                                 min_bar_trades=cfg.min_bar_trades)
 
     # ── مستويات الدعم ومنطقة الشراء (للعرض) ──────────────────────
     levels = _support_levels(closed_bars_5min, entry)

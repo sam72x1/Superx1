@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .config import Config
-from .models import Candidate, FloatSource
+from .models import Candidate, FloatSource, Session
 
 
 @dataclass
@@ -42,6 +42,10 @@ def check_volume(cfg: Config, c: Candidate) -> GateResult:
     """
     if not cfg.volume_gate_enabled:
         return GateResult(True, "بوّابة الحجم معطّلة (RVol وحده)")
+    # الجلسات الممتدة: day.v حجم جزئي للجلسة (≠ يوم كامل) → لا نقيسه بعتبة اليوم؛
+    # RVol الجلسي (واعٍ بالجلسة) هو الحكم. هذا يمنع رفض موفرز بريماركت حقيقيين.
+    if c.session in (Session.PREMARKET, Session.AFTERHOURS):
+        return GateResult(True, "حجم جزئي للجلسة → نعتمد على RVol الجلسي")
     v = c.snapshot.day_volume
     if v <= 0:
         return GateResult(True, "حجم غير موثوق → نعتمد على RVol")
@@ -97,8 +101,8 @@ def check_parabolic(cfg: Config, c: Candidate) -> GateResult:
             f"بارابولِك: +{c.snapshot.change_pct:.0f}% عن أمس "
             f"≥ {cfg.parabolic_day_change_pct:.0f}% (منهك)",
         )
-    # ابتعاد كبير عن VWAP (لو الزخم محسوب)
-    if c.momentum is not None and \
+    # ابتعاد كبير عن VWAP (فقط لو VWAP موثوق — لا نرفض/نمرّر على artifact صفري)
+    if c.momentum is not None and c.momentum.vwap_reliable and \
             c.momentum.vwap_distance_pct >= cfg.parabolic_vwap_ext_pct:
         return GateResult(
             False,
