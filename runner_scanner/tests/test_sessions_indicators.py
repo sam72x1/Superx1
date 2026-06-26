@@ -62,3 +62,31 @@ def test_session_vwap_weighted():
 
 def test_session_vwap_empty():
     assert ind.session_vwap([]) is None
+
+
+def test_session_volume_baselines_from_hourly():
+    from runner_scanner.models import Bar
+    bars = []
+    for day in (23, 24, 25):
+        for h in range(4, 20):
+            dt = datetime(2026, 6, day, h, 0, tzinfo=ET)
+            ms = int(dt.timestamp() * 1000)
+            # بريماركت 4-8 = 50k، أفترهاوس 16-19 = 40k، رسمي = 200k
+            if 4 <= h < 9:
+                v = 50_000
+            elif 16 <= h < 20:
+                v = 40_000
+            else:
+                v = 200_000
+            bars.append(Bar(t_ms=ms, o=2, h=2.1, l=1.9, c=2.0, v=v))
+    pre, aft = sessions.session_volume_baselines(CFG, bars, today_et="2026-06-26")
+    assert pre is not None and aft is not None
+    assert aft == 160_000          # 4 ساعات × 40k = 160k/يوم
+    # RVol بقاعدة حقيقية يختلف عن التقدير
+    real = sessions.compute_rvol(CFG, Session.AFTERHOURS, 320_000, 5_000_000,
+                                 avg_afterhours_volume=aft)
+    assert abs(real - 2.0) < 0.01   # 320k ÷ 160k = 2.0
+
+
+def test_session_volume_baselines_empty():
+    assert sessions.session_volume_baselines(CFG, []) == (None, None)

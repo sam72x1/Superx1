@@ -8,12 +8,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from . import market_calendar
 from .config import Config
-from .models import Session
+from .models import Bar, Session
 
 ET = ZoneInfo("America/New_York")
 
@@ -78,6 +79,36 @@ def session_elapsed_fraction(cfg: Config, dt: datetime | None = None) -> float:
     elapsed_min = (h - cfg.regular_start_hour) * 60.0
     frac = elapsed_min / _REGULAR_MINUTES
     return max(0.02, min(1.0, frac))
+
+
+def session_volume_baselines(
+    cfg: Config, hourly_bars: list[Bar], today_et: str | None = None,
+) -> tuple[float | None, float | None]:
+    """متوسط حجم **البريماركت** و**الأفترهاوس** الفعلي من شموع الساعة التاريخية.
+
+    يصنّف كل شمعة ساعة حسب توقيت ET، يجمّع حجم كل جلسة لكل يوم، ثم يتوسّط
+    عبر الأيام (يستثني يوم اليوم لتجنّب التحيّز بالبيانات الجزئية).
+    يرجّع (متوسط بريماركت، متوسط أفترهاوس) أو None لكلٍّ عند غياب البيانات.
+    """
+    if not hourly_bars:
+        return None, None
+    pre: dict[str, float] = defaultdict(float)
+    aft: dict[str, float] = defaultdict(float)
+    for b in hourly_bars:
+        if b.v <= 0 or b.t_ms <= 0:
+            continue
+        dt = datetime.fromtimestamp(b.t_ms / 1000, tz=timezone.utc).astimezone(ET)
+        day = dt.strftime("%Y-%m-%d")
+        if today_et and day == today_et:
+            continue   # استثناء اليوم (بيانات جزئية)
+        h = _hour_float(dt)
+        if cfg.premarket_start_hour <= h < cfg.regular_start_hour:
+            pre[day] += b.v
+        elif cfg.regular_end_hour <= h < cfg.afterhours_end_hour:
+            aft[day] += b.v
+    avg_pre = sum(pre.values()) / len(pre) if pre else None
+    avg_aft = sum(aft.values()) / len(aft) if aft else None
+    return avg_pre, avg_aft
 
 
 def compute_rvol(

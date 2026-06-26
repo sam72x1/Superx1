@@ -25,6 +25,7 @@ def compute_momentum(
     bars_1min: list[Bar] | None = None,
     avg_daily_volume: float = 0.0,
     avg_premarket_volume: float | None = None,
+    avg_afterhours_volume: float | None = None,
     elapsed_fraction: float | None = None,
 ) -> MomentumResult:
     """يبني MomentumResult بدرجة 0..momentum_pillar_max."""
@@ -62,6 +63,7 @@ def compute_momentum(
         avg_daily_volume=avg_daily_volume,
         elapsed_fraction=elapsed_fraction,
         avg_premarket_volume=avg_premarket_volume,
+        avg_afterhours_volume=avg_afterhours_volume,
     )
 
     # ── الدرجة (مجموع المكوّنات ≤ momentum_pillar_max) ────────────

@@ -18,7 +18,10 @@ from .config import Config
 from .halts import HaltTracker
 from .massive_client import MassiveClient, MassiveError
 from .models import Candidate, FloatSource, HaltState, Session, SnapshotEntry
-from .sessions import classify_session, now_et, session_elapsed_fraction
+from .sessions import (
+    classify_session, now_et, session_elapsed_fraction,
+    session_volume_baselines,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,9 +103,15 @@ def process_candidate(
     ) if daily else 0.0
     elapsed = session_elapsed_fraction(cfg, et_now) \
         if session is Session.REGULAR else None
+    # RVol حقيقي للجلسات الممتدة: متوسط حجم البريماركت/الأفترهاوس من
+    # شموع الساعة (بدل تقدير 3%/5%). تُحسب فقط عند الحاجة.
+    avg_pre = avg_aft = None
+    if session in (Session.PREMARKET, Session.AFTERHOURS):
+        avg_pre, avg_aft = session_volume_baselines(cfg, hourly, today)
     c.momentum = intraday_ta.compute_momentum(
         cfg, snap, session, bars_5min, bars_1min,
-        avg_daily_volume=avg_daily_vol, elapsed_fraction=elapsed)
+        avg_daily_volume=avg_daily_vol, avg_premarket_volume=avg_pre,
+        avg_afterhours_volume=avg_aft, elapsed_fraction=elapsed)
     c.readiness = classic_ta.compute_readiness(cfg, daily, hourly=hourly)
 
     # ── 6) بوابات ما-بعد-التحليل (RVol + بارابولِك بعد VWAP) ─────
