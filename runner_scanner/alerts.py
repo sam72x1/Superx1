@@ -111,6 +111,10 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
         lines.append(f"🩳 شورت الحجم اليومي: {c.short_vol_pct:.0f}%")
     if c.short_pct is None and c.short_vol_pct is None:
         lines.append("🩳 الشورت: — (تعذّر الجلب)")
+    # ⚠️ التخفيف (SEC) — طرح/إصدار أسهم يضرّ السهم الصاعد (كالشورت)
+    if c.dilution is not None and c.dilution.is_active:
+        icon = "🔴" if c.dilution.risk == "مرتفع" else "🟠"
+        lines.append(f"{icon} تخفيف {c.dilution.risk} (SEC): {c.dilution.note}")
     lines.append(f"📦 الحجم: {_human(s.day_volume)}")
     if m is not None:
         lines.append(f"📊 RVol: {m.rvol:.1f}x")

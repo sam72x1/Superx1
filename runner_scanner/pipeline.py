@@ -40,6 +40,7 @@ def process_candidate(
     short_provider=None,
     cache=None,
     analyst=None,
+    sec_radar=None,
 ) -> Candidate:
     """يعالج مرشّحًا واحدًا عبر خط المعالجة الكامل."""
     et_now = et_now or now_et()
@@ -140,6 +141,22 @@ def process_candidate(
             if c.final_score < cfg.alert_score_min:
                 return c.reject(
                     f"محفّز هبوطي ({c.analyst.warning or c.analyst.direction})"
+                    f" → درجة {c.final_score:.0f} تحت العتبة")
+
+    # ── 8.6) رادار التخفيف (SEC) — للمقبولين فقط ─────────────────
+    # طرح/تخفيف فعّال (S-1/424B/EFFECT) يضرّ السهم الصاعد كالشورت تمامًا
+    # → خصم درجة وقد يُسقط التنبيه. الرفّ المُسجّل (متوسط) خصمه أخفّ.
+    if sec_radar is not None:
+        try:
+            c.dilution = _cached(f"sec:{tkr}", lambda: sec_radar.check(tkr))
+        except Exception as exc:  # noqa: BLE001 — مصدر خارجي best-effort
+            logger.debug("رادار SEC فشل لـ %s: %s", tkr, exc)
+        if c.dilution is not None and c.dilution.is_active:
+            pen = cfg.dilution_penalty * (0.5 if c.dilution.risk == "متوسط" else 1.0)
+            c.final_score = max(0.0, c.final_score - pen)
+            if c.final_score < cfg.alert_score_min:
+                return c.reject(
+                    f"تخفيف {c.dilution.risk} ({c.dilution.latest_form})"
                     f" → درجة {c.final_score:.0f} تحت العتبة")
 
     # ── 9) الوقف (دعم 5د) والأهداف (مقاومات حقيقية) ─────────────

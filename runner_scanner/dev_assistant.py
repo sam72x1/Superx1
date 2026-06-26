@@ -25,6 +25,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
+from . import calibration
 from .config import Config
 
 
@@ -213,9 +214,16 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
     if len(sugg) == 1:
         sugg.append("   • لا نمط واضح بعد — البيانات متّسقة أو غير كافية.")
 
+    # ── معايرة كمّية محدّدة (أرقام جاهزة للّصق) ───────────────────
+    calib = calibration.format_proposals(
+        calibration.propose_calibrations(store, cfg))
+
     tail = ["", "⚠️ <i>أداة تطوير ذاتي تتعلّم من نتائج البوت — ليست توصية. "
             "الاقتراحات للمراجعة البشرية فقط.</i>"]
-    return "\n".join(head + body + sugg + tail)
+    parts = head + body + sugg
+    if calib:
+        parts.append(calib)
+    return "\n".join(parts + tail)
 
 
 # ── تصدير CSV (ملفات الصفقات والفرص الفائتة) ─────────────────────

@@ -27,6 +27,7 @@ from .massive_client import MassiveClient, MassiveError
 from .models import Candidate, Session
 from .monitor import HealthMonitor
 from .pipeline import process_candidate
+from .sec_radar import SecRadar
 from .sessions import classify_session, is_scanning_window, now_et
 from .short_interest import ShortInterestProvider
 from .state import Store, trade_date_str
@@ -64,6 +65,7 @@ class Scanner:
         self.short = ShortInterestProvider()
         self.cache = DailyCache()   # كاش يومي للبيانات البطيئة
         self.analyst = ClaudeAnalyst(cfg)   # محلّل ذكي لكل تنبيه
+        self.sec_radar = SecRadar(cfg)      # رادار التخفيف (SEC EDGAR)
         self.render = RenderClient(cfg)     # وعي/تحكّم ريندر
         self.claude = ClaudeClient(cfg.anthropic_api_key)   # للبريفنغ/المساعد
         self.monitor = HealthMonitor(
@@ -127,7 +129,8 @@ class Scanner:
                 cand = process_candidate(
                     self.cfg, self.client, snap, halts=self.halts,
                     session=session, et_now=et_now, short_provider=self.short,
-                    cache=self.cache, analyst=self.analyst)
+                    cache=self.cache, analyst=self.analyst,
+                    sec_radar=self.sec_radar)
             except MassiveError as exc:
                 logger.warning("معالجة %s فشلت: %s", snap.ticker, exc)
                 continue

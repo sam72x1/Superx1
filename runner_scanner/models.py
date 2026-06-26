@@ -138,6 +138,28 @@ class AnalystResult:
 
 
 @dataclass
+class DilutionResult:
+    """ناتج رادار التخفيف (SEC EDGAR) — خطر طرح/تخفيف قادم يضرّ السهم.
+
+    التخفيف (إصدار أسهم جديدة عبر S-1/S-3/424B/ATM) **يضرّ** السهم الصاعد
+    تمامًا مثل الشورت: يزيد المعروض ويضغط السعر. نرصده ونحذّر منه، ولا
+    نكافئ أبدًا. best-effort: تعذّر الجلب = None (لا يضرّ ولا ينفع).
+    """
+
+    risk: str = "لا"               # مرتفع/متوسط/منخفض/لا
+    forms: list[str] = field(default_factory=list)   # أنواع النماذج الحديثة
+    latest_form: str = ""          # أحدث نموذج تخفيفي
+    latest_date: str = ""          # تاريخه (YYYY-MM-DD)
+    note: str = ""                 # سطر تحذير بشري للبطاقة
+    source: str = "SEC EDGAR"
+
+    @property
+    def is_active(self) -> bool:
+        """خطر فعّال (طرح جارٍ/وشيك) يستحق خصم درجة."""
+        return self.risk in ("مرتفع", "متوسط")
+
+
+@dataclass
 class RiskPlan:
     """الوقف والأهداف ومستويات الدعم ومنطقة الشراء."""
 
@@ -179,6 +201,7 @@ class Candidate:
     catalyst: Optional[Catalyst] = None
     risk: Optional[RiskPlan] = None
     analyst: Optional[AnalystResult] = None   # تقييم Claude الذكي
+    dilution: Optional["DilutionResult"] = None   # رادار التخفيف (SEC)
 
     # الدرجة
     final_score: float = 0.0

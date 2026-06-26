@@ -135,6 +135,16 @@ class Config:
     assistant_enabled: bool = True        # مساعد تيليجرام تفاعلي
     analyst_bearish_penalty: float = 12.0 # خصم درجة عند محفّز هبوطي (طرح/تخفيف)
 
+    # ── رادار التخفيف (SEC EDGAR) — يحذّر من الطرح القادم ──────────
+    dilution_radar_enabled: bool = True   # رصد ملفات SEC التخفيفية
+    # نافذة «طرح فعّال/وشيك» (424B/EFFECT): خطر مرتفع
+    dilution_active_days: int = 45
+    # نافذة «رفّ مُسجّل» (S-1/S-3 shelf): قدرة على التخفيف = خطر متوسط
+    dilution_shelf_days: int = 180
+    dilution_penalty: float = 12.0        # خصم درجة عند طرح فعّال (يضرّ كالشورت)
+    # User-Agent إلزامي من SEC (سياستهم) — يُفضّل بريد حقيقي
+    sec_user_agent: str = "RunnerScanner research contact@example.com"
+
     # ── ريندر (وعي/تحكّم) ─────────────────────────────────────────
     render_api_key: str = ""
     render_service_id: str = ""           # srv-xxxx للخدمة
@@ -198,6 +208,12 @@ class Config:
             advisor_enabled=_b("ADVISOR_ENABLED", True),
             assistant_enabled=_b("ASSISTANT_ENABLED", True),
             analyst_bearish_penalty=_f("ANALYST_BEARISH_PENALTY", 12.0),
+            dilution_radar_enabled=_b("DILUTION_RADAR_ENABLED", True),
+            dilution_active_days=_i("DILUTION_ACTIVE_DAYS", 45),
+            dilution_shelf_days=_i("DILUTION_SHELF_DAYS", 180),
+            dilution_penalty=_f("DILUTION_PENALTY", 12.0),
+            sec_user_agent=_s("SEC_USER_AGENT",
+                              "RunnerScanner research contact@example.com"),
             render_api_key=_s("RENDER_API_KEY", ""),
             render_service_id=_s("RENDER_SERVICE_ID", ""),
             display_tz=_s("DISPLAY_TZ", "Asia/Riyadh"),
