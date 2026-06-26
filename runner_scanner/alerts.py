@@ -35,6 +35,13 @@ def _money(p: float | None) -> str:
     return f"${p:.2f}" if p is not None else "—"
 
 
+# نماذج شموع القمة الهبوطية (تحذير للرَنر الصاعد)
+_BEARISH_CANDLES = {
+    "نجمة المساء", "ثلاثة غربان سود", "ابتلاع هابط", "غطاء داكن",
+    "شهاب", "رجل مشنوق", "شاهد القبر", "ماروبوزو هابط",
+}
+
+
 def _strength_bar(score: float) -> tuple[str, str]:
     """يرجّع (شريط من 10 خانات، تصنيف نصّي) للقوة."""
     filled = max(0, min(10, round(score / 10.0)))
@@ -109,7 +116,10 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
         lines.append(f"⚡ 5min Δ%: {m.change_5min_pct:+.1f}%")
         lines.append(f"🔥 5min RVol: {m.rvol_5min:.1f}x")
     if rk is not None:
-        lines.append(f"🎓 الجاهزية الفنية: {rk.classic_score:.0f}/100")
+        adx_part = f" · ADX {rk.adx:.0f}" if rk.adx else ""
+        lines.append(f"🎓 الجاهزية الفنية: {rk.classic_score:.0f}/100{adx_part}")
+        if rk.candle in _BEARISH_CANDLES:
+            lines.append(f"⚠️ شمعة قمة هبوطية يومية: {rk.candle}")
 
     # 📉 الدعم الثاني (الدخول) + الدعم الأول
     if rp is not None:

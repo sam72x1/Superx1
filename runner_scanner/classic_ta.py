@@ -1,25 +1,32 @@
-"""ركيزة الجاهزية الفنية الكلاسيكية (القسم 4) — مقياس 0..100.
+"""ركيزة الجاهزية الفنية الكلاسيكية — مقياس 0..100 (مدرسة التحليل الكلاسيكي).
 
-تُحسب درجة جزئية [-100,+100] لكل فريم (يومي/أسبوعي/شهري) من:
-الاتجاه (±30) · موقع MA50 (±15) · موقع MA200 (±15) · التقاطع (±10) ·
-RSI (±8) · MACD (±7) · دايفرجنس (±10) · الحجم (±5)  = ±100.
+درجة جزئية [-100,+100] لكل فريم (يومي/أسبوعي/شهري)، ميزانية موزّعة على
+مكوّنات المدرسة الكلاسيكية:
 
-ثم: ترجيح (يومي 0.45 · أسبوعي 0.35 · شهري 0.20) → تحويل إلى 0..100.
+  الاتجاه (داو) ±25 · موقع MA50 ±12 · موقع MA200 ±12 · التقاطع ±8 ·
+  RSI ±6 · MACD ±6 · Stochastic RSI ±4 · دايفرجنس ±8 · ADX/DMI ±5 ·
+  بولينجر %B ±4 · نماذج الشموع ±6 · الحجم ±4   = ±100.
+
+ثم ترجيح (يومي 0.45 · أسبوعي 0.35 · شهري 0.20) → 0..100.
 بوّابة المستخدم: classic_score ≥ 70 وإلا رفض.
 
-رَنرات حديثة الإدراج (تاريخ محدود): نتدرّج بأمان على الفريمات المتاحة
-ونوسم limited_history.
+رَنرات حديثة الإدراج (تاريخ محدود): نتدرّج بأمان على المتاح ونوسم.
 """
 
 from __future__ import annotations
 
+from .candles import candle_signal
 from .config import Config
 from .indicators import (
+    adx_dmi,
+    bollinger_pct_b,
     detect_divergence,
     linreg_slope_pct,
     macd as macd_calc,
     rsi as rsi_calc,
+    rsi_series,
     sma,
+    stoch_rsi as stoch_rsi_calc,
     trend_label,
 )
 from .models import Bar, ReadinessResult
@@ -47,88 +54,112 @@ def resample(daily: list[Bar], group: int) -> list[Bar]:
     return out
 
 
-def _rsi_series(closes: list[float], period: int = 14) -> list[float]:
-    """سلسلة RSI تقريبية (قيمة لكل نقطة من period+1 فصاعدًا) للدايفرجنس."""
-    out: list[float] = []
-    for i in range(len(closes)):
-        window = closes[: i + 1]
-        val = rsi_calc(window, period)
-        out.append(val if val is not None else 50.0)
-    return out
-
-
-def score_timeframe(closes: list[float], highs: list[float],
-                    lows: list[float], volumes: list[float]) -> tuple[float, dict]:
+def score_timeframe(bars: list[Bar]) -> tuple[float, dict]:
     """درجة فريم واحد [-100,100] + تفاصيل. None-آمنة للتاريخ القصير."""
     detail: dict = {}
-    if len(closes) < 5:
+    if len(bars) < 5:
         return 0.0, {"insufficient": True}
 
+    closes = [b.c for b in bars]
+    highs = [b.h for b in bars]
+    lows = [b.l for b in bars]
+    volumes = [b.v for b in bars]
+    price = closes[-1]
     score = 0.0
 
-    # الاتجاه ±30
+    # ── الاتجاه (داو) ±25 ────────────────────────────────────────
     slope = linreg_slope_pct(closes)
-    label = trend_label(slope)
-    detail["trend"] = label
-    score += max(-30.0, min(30.0, slope * 3.0))
+    detail["trend"] = trend_label(slope)
+    score += max(-25.0, min(25.0, slope * 2.5))
 
-    price = closes[-1]
-    ma20 = sma(closes, 20)
+    # ── المتوسطات والتقاطع ±32 ───────────────────────────────────
     ma50 = sma(closes, 50)
     ma200 = sma(closes, 200)
     detail["above_ma50"] = bool(ma50 and price >= ma50)
     detail["above_ma200"] = bool(ma200 and price >= ma200)
-
-    # موقع MA50 ±15
     if ma50:
-        score += 15.0 if price >= ma50 else -15.0
-    # موقع MA200 ±15
+        score += 12.0 if price >= ma50 else -12.0
     if ma200:
-        score += 15.0 if price >= ma200 else -15.0
-    # التقاطع الذهبي/الموت ±10
+        score += 12.0 if price >= ma200 else -12.0
     golden = bool(ma50 and ma200 and ma50 >= ma200)
     detail["golden_cross"] = golden
     if ma50 and ma200:
-        score += 10.0 if golden else -10.0
+        score += 8.0 if golden else -8.0
 
-    # RSI ±8
+    # ── RSI ±6 ───────────────────────────────────────────────────
     r = rsi_calc(closes)
     detail["rsi"] = round(r, 1) if r is not None else None
     if r is not None:
         if r >= 50:
-            score += min(8.0, (r - 50) / 20.0 * 8.0)
-            if r > 80:  # تشبّع شرائي حاد → تخفيف
-                score -= 3.0
+            score += min(6.0, (r - 50) / 20.0 * 6.0)
+            if r > 80:
+                score -= 2.0   # تشبّع شرائي حاد
         else:
-            score -= min(8.0, (50 - r) / 20.0 * 8.0)
+            score -= min(6.0, (50 - r) / 20.0 * 6.0)
 
-    # MACD ±7
+    # ── MACD ±6 ──────────────────────────────────────────────────
     m = macd_calc(closes)
     macd_bull = bool(m and m[0] >= m[1])
     detail["macd_bull"] = macd_bull
     if m:
-        score += 7.0 if macd_bull else -7.0
+        score += 6.0 if macd_bull else -6.0
 
-    # دايفرجنس ±10
-    div = detect_divergence(closes, _rsi_series(closes))
+    # ── Stochastic RSI ±4 ────────────────────────────────────────
+    sr = stoch_rsi_calc(closes)
+    detail["stoch_rsi"] = round(sr, 2) if sr is not None else None
+    if sr is not None:
+        c = max(-4.0, min(4.0, (sr - 0.5) * 8.0))
+        if sr > 0.9:           # تشبّع متطرّف → تخفيف
+            c -= 2.0
+        score += c
+
+    # ── دايفرجنس ±8 ──────────────────────────────────────────────
+    div = detect_divergence(closes, rsi_series(closes))
     detail["divergence"] = div
     if div == "صاعد":
-        score += 10.0
+        score += 8.0
     elif div == "هابط":
-        score -= 10.0
+        score -= 8.0
 
-    # الحجم كمؤكّد ±5 (متوسط آخر 3 ÷ متوسط 20)
+    # ── ADX / DMI ±5 (قوة + وجهة) ───────────────────────────────
+    adx_res = adx_dmi(highs, lows, closes)
+    if adx_res is not None:
+        adx_val, plus_di, minus_di = adx_res
+        detail["adx"] = round(adx_val, 1)
+        strength = min(1.0, adx_val / 30.0)
+        if plus_di > minus_di:
+            contrib = 5.0 * strength
+            if adx_val > 45:      # قوي جدًا → قرب إنهاك
+                contrib -= 1.5
+            score += contrib
+        else:
+            score -= 5.0 * strength
+
+    # ── بولينجر %B ±4 ────────────────────────────────────────────
+    pb = bollinger_pct_b(closes)
+    if pb is not None:
+        detail["bb_pct_b"] = round(pb, 2)
+        if pb > 1.05:             # فوق الباند العلوي = ممتد
+            score -= 2.0
+        else:
+            score += max(-4.0, min(4.0, (pb - 0.5) * 8.0))
+
+    # ── نماذج الشموع ±6 (بسياق الاتجاه) ─────────────────────────
+    csig, cname = candle_signal(bars)
+    detail["candle"] = cname
+    score += csig * 6.0
+
+    # ── الحجم كمؤكّد ±4 ──────────────────────────────────────────
     if len(volumes) >= 20:
         recent = sum(volumes[-3:]) / 3.0
         base = sum(volumes[-20:]) / 20.0
         if base > 0:
             ratio = recent / base
             if ratio >= 1.3:
-                score += 5.0
+                score += 4.0
             elif ratio <= 0.7:
-                score -= 5.0
+                score -= 4.0
 
-    detail["ma20"] = ma20
     return max(-100.0, min(100.0, score)), detail
 
 
@@ -148,25 +179,20 @@ def compute_readiness(cfg: Config, daily: list[Bar],
     weighted_sum = 0.0
     weight_total = 0.0
     notes: list[str] = []
-    limited = len(daily) < 200  # أقل من ~سنة تداول
+    limited = len(daily) < 200
 
     daily_detail: dict = {}
     for name, (bars, w) in frames.items():
         if len(bars) < 5:
             notes.append(f"{name}: تاريخ غير كافٍ")
             continue
-        closes = [b.c for b in bars]
-        highs = [b.h for b in bars]
-        lows = [b.l for b in bars]
-        vols = [b.v for b in bars]
-        part, detail = score_timeframe(closes, highs, lows, vols)
+        part, detail = score_timeframe(bars)
         if name == "daily":
             daily_detail = detail
         weighted_sum += part * w
         weight_total += w
 
     if weight_total == 0:
-        # لا تاريخ كافٍ على أي فريم → جاهزية صفر، تاريخ محدود
         return ReadinessResult(
             classic_score=0.0, pillar_score=0.0, trend="غير معروف",
             rsi=0.0, macd_bull=False, divergence="لا شيء",
@@ -174,10 +200,13 @@ def compute_readiness(cfg: Config, daily: list[Bar],
             limited_history=True, notes=["لا تاريخ كافٍ"],
         )
 
-    # إعادة تطبيع لو غابت بعض الفريمات
-    partial = weighted_sum / weight_total  # في [-100,100]
+    partial = weighted_sum / weight_total
     classic_score = max(0.0, min(100.0, (partial + 100.0) / 2.0))
     pillar = classic_score / 100.0 * cfg.readiness_pillar_max
+
+    candle = daily_detail.get("candle", "")
+    if candle:
+        notes.append(f"شمعة يومية: {candle}")
 
     return ReadinessResult(
         classic_score=round(classic_score, 1),
@@ -189,6 +218,10 @@ def compute_readiness(cfg: Config, daily: list[Bar],
         above_ma50=bool(daily_detail.get("above_ma50")),
         above_ma200=bool(daily_detail.get("above_ma200")),
         golden_cross=bool(daily_detail.get("golden_cross")),
+        adx=float(daily_detail.get("adx") or 0.0),
+        stoch_rsi=float(daily_detail.get("stoch_rsi") or 0.0),
+        bb_pct_b=float(daily_detail.get("bb_pct_b") or 0.5),
+        candle=candle,
         limited_history=limited,
         notes=notes,
     )
