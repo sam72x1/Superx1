@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 class MassiveError(RuntimeError):
     """عطل في الاتصال بـ Massive (شبكة/مصادقة/حدود)."""
 
+    def __init__(self, msg: str, retry_after: float | None = None):
+        super().__init__(msg)
+        self.retry_after = retry_after   # مدّة الانتظار المقترحة من المزوّد (429)
+
 
 class MassiveClient:
     """عميل REST لـ Massive. آمِن للاستخدام من ثريد واحد (حلقة المسح)."""
@@ -47,7 +51,13 @@ class MassiveClient:
         if resp.status_code == 401:
             raise MassiveError("مصادقة مرفوضة (401) — تأكّد من MASSIVE_API_KEY")
         if resp.status_code == 429:
-            raise MassiveError("تجاوز حدّ الطلبات (429) — خفّض معدّل الاستدعاء")
+            try:
+                ra = float(resp.headers.get("Retry-After", 0)) or None
+            except (TypeError, ValueError):
+                ra = None
+            logger.warning("Massive 429 — Retry-After=%s", ra)
+            raise MassiveError(
+                "تجاوز حدّ الطلبات (429) — خفّض معدّل الاستدعاء", retry_after=ra)
         if resp.status_code >= 400:
             raise MassiveError(f"خطأ {resp.status_code} على {path}: {resp.text[:200]}")
         try:
@@ -174,6 +184,7 @@ class MassiveClient:
     def latest_news(self, ticker: str, published_gte_utc: str,
                     limit: int = 5) -> Optional[Catalyst]:
         """أحدث خبر للسهم بعد طابع زمني UTC (RFC3339). None لو ما فيه."""
+        # التحليل داخل الحماية: رد مشوّه (شكل مختلف) يُتجاهَل ولا يكسر الدورة.
         try:
             data = self._get("/v2/reference/news", params={
                 "ticker": ticker,
@@ -182,22 +193,25 @@ class MassiveClient:
                 "sort": "published_utc",
                 "limit": limit,
             })
-        except MassiveError as exc:
+            results = data.get("results") if isinstance(data, dict) else None
+            if not isinstance(results, list) or not results:
+                return None
+            top = results[0]
+            if not isinstance(top, dict):
+                return None
+            pub = top.get("publisher") or {}
+            return Catalyst(
+                has_news=True,
+                headline=top.get("title", ""),
+                publisher=pub.get("name", "") if isinstance(pub, dict) else str(pub),
+                url=top.get("article_url", ""),
+                published_utc=top.get("published_utc", ""),
+                description=top.get("description", "") or "",
+            )
+        except (MassiveError, TypeError, ValueError, KeyError,
+                AttributeError, IndexError) as exc:
             logger.debug("news فشل لـ %s: %s", ticker, exc)
             return None
-        results = data.get("results") or []
-        if not results:
-            return None
-        top = results[0]
-        pub = top.get("publisher") or {}
-        return Catalyst(
-            has_news=True,
-            headline=top.get("title", ""),
-            publisher=pub.get("name", "") if isinstance(pub, dict) else str(pub),
-            url=top.get("article_url", ""),
-            published_utc=top.get("published_utc", ""),
-            description=top.get("description", "") or "",
-        )
 
     # ── حالة السوق (تشخيص عام، ليست توقّف per-ticker) ─────────────
     def market_status(self) -> dict[str, Any]:

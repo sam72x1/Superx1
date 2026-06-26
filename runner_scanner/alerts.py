@@ -17,6 +17,7 @@ import requests
 
 from .config import Config
 from .models import Candidate, FloatSource, Session
+from .textutil import esc
 
 logger = logging.getLogger(__name__)
 
@@ -145,20 +146,21 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
             f"⛔ الوقف: {_money(rp.stop_price)} (-{rp.stop_pct:.0f}%)")
         lines.append("↑ الوقف والأهداف من الشارت (دعوم/مقاومات حقيقية)")
 
-    # 🧠 رؤية المحلّل الذكي (Claude)
+    # 🧠 رؤية المحلّل الذكي (Claude) — نص حرّ من النموذج → يُهرَّب
     if c.analyst is not None and c.analyst.thesis:
         a = c.analyst
-        lines.append(f"🧠 المحلّل: {a.thesis} (محفّز {a.direction} {a.materiality}/10)")
+        lines.append(f"🧠 المحلّل: {esc(a.thesis)} "
+                     f"(محفّز {esc(a.direction)} {a.materiality}/10)")
         if a.warning:
-            lines.append(f"🔴 تحذير المحلّل: {a.warning}")
+            lines.append(f"🔴 تحذير المحلّل: {esc(a.warning)}")
 
-    # 📰 ملخص الخبر (مطلب المستخدم)
+    # 📰 ملخص الخبر — العنوان/المصدر خارجيان → يُهرَّبان (وإلا تُرفَض البطاقة)
     if c.catalyst is not None and c.catalyst.has_news:
         cat = c.catalyst.category or "📰 خبر"
-        head = (c.catalyst.headline or "").strip()[:110]
+        head = esc((c.catalyst.headline or "").strip()[:110])
         lines.append(f"📰 الخبر — {cat}: {head}")
         if c.catalyst.publisher:
-            lines.append(f"   ↳ المصدر: {c.catalyst.publisher}")
+            lines.append(f"   ↳ المصدر: {esc(c.catalyst.publisher)}")
     else:
         lines.append("📰 الخبر: لا يوجد محفّز خبري حديث ⚠️")
 

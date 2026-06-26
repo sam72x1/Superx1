@@ -20,9 +20,11 @@ import threading
 import requests
 
 from . import advisor, postmortem
+from .alerts import TelegramSender
 from .dev_assistant import send_report_and_files
 from .sessions import classify_session, now_et
 from .state import trade_date_str
+from .textutil import esc
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,10 @@ class TelegramAssistant:
                     "offset": self._offset, "timeout": 25,
                     "allowed_updates": '["message"]',
                 }, timeout=35)
+                if resp.status_code == 429:
+                    # احترام Retry-After من تيليجرام بدل ثابت 5ث
+                    self._stop.wait(min(TelegramSender._retry_after(resp), 30.0))
+                    continue
                 if resp.status_code != 200:
                     self._stop.wait(5)
                     continue
@@ -166,7 +172,8 @@ class TelegramAssistant:
         ctx = self._context_text()
         prompt = f"بيانات البوت الآن:\n{ctx}\n\nسؤال المستخدم: {question}"
         ans = self.sc.claude.chat(self.cfg.anthropic_model, _ASK_SYSTEM, prompt)
-        self._reply(ans or "تعذّر الحصول على رد.")
+        # رد Claude حرّ → يُهرَّب قبل الإرسال بصيغة HTML
+        self._reply(esc(ans) if ans else "تعذّر الحصول على رد.")
 
     def _handle_why(self, arg: str) -> None:
         tkr = arg.strip().upper().lstrip("$").split()[0] if arg.strip() else ""

@@ -27,12 +27,9 @@ from datetime import datetime, timezone
 
 from . import calibration
 from .config import Config
+from .textutil import esc   # هروب HTML مشترك (يُعاد تصديره للتوافق)
 
-
-def esc(s) -> str:
-    """تعقيم النصوص الخارجية حتى لا تكسر HTML تيليجرام."""
-    return (str(s).replace("&", "&amp;")
-            .replace("<", "&lt;").replace(">", "&gt;"))
+__all__ = ["esc", "build_dev_report", "export_csvs", "send_report_and_files"]
 
 
 def _human(n) -> str:

@@ -11,10 +11,13 @@ from datetime import datetime, timedelta, timezone
 from .config import Config
 from .models import Catalyst
 
+# فئة الخبر السلبي (طرح/تخفيف) — تضرّ السهم فلا تُمنح مكافأة درجة.
+NEGATIVE_NEWS = "⚠️ طرح/تخفيف (سلبي)"
+
 # تصنيف الخبر من كلمات مفتاحية في العنوان/الوصف (أخبار Massive إنجليزية).
 # الترتيب يهمّ: الأكثر دلالةً أولًا. كل عنصر: (تسمية عربية، كلمات مفتاحية).
 _NEWS_CATEGORIES: list[tuple[str, tuple[str, ...]]] = [
-    ("⚠️ طرح/تخفيف (سلبي)",
+    (NEGATIVE_NEWS,
      ("offering", "dilut", "priced", "registered direct", "atm ",
       "shelf", "warrant", "raise", "private placement")),
     ("💊 موافقة/تجارب سريرية",
@@ -90,7 +93,15 @@ def evaluate_catalyst(cfg: Config, catalyst: Catalyst | None,
 
 
 def catalyst_bonus(cfg: Config, catalyst: Catalyst | None) -> float:
-    """مقدار التقوية المضافة للدرجة عند وجود محفّز ضمن النافذة."""
-    if catalyst is not None and catalyst.has_news:
-        return cfg.catalyst_score_bonus
-    return 0.0
+    """مقدار التقوية المضافة للدرجة عند وجود محفّز ضمن النافذة.
+
+    خبر الطرح/التخفيف (سلبي) **لا يُكافأ** — يضرّ السهم لا يدعمه؛ نتركه للخصم
+    عبر المحلّل/رادار SEC. نصنّفه هنا إن لم يكن مُصنّفًا (للاستدعاء المباشر).
+    """
+    if catalyst is None or not catalyst.has_news:
+        return 0.0
+    category = catalyst.category or classify_news(
+        catalyst.headline, catalyst.description)
+    if category == NEGATIVE_NEWS:
+        return 0.0
+    return cfg.catalyst_score_bonus

@@ -114,7 +114,9 @@ class Scanner:
             price_map, et_now, window_min=self.cfg.outcome_window_min,
             surge_leg_pct=self.cfg.surge_leg_pct)
         for ev in events:
-            self.telegram.send(build_followup(self.cfg, ev))
+            if not self.telegram.send(build_followup(self.cfg, ev)):
+                logger.warning("فشل إرسال حدث متابعة محسوم في DB (قد يُفقد): %s %s",
+                               ev.get("ticker"), ev.get("type"))
             # 🔍 تشريح لحظي عند كسر الوقف: لماذا فشل السهم؟
             if ev.get("type") == "stop" and self.cfg.postmortem_on_stop:
                 row = self.store.fetch_row(ev["ticker"], et_date)
@@ -139,6 +141,9 @@ class Scanner:
                     sec_radar=self.sec_radar)
             except MassiveError as exc:
                 logger.warning("معالجة %s فشلت: %s", snap.ticker, exc)
+                continue
+            except Exception:  # noqa: BLE001 — اعزل فشل سهم واحد عن بقية الدورة
+                logger.exception("معالجة %s فشلت باستثناء غير متوقّع", snap.ticker)
                 continue
             cand.is_champion = snap.ticker in champ_syms
             self.store.log_candidate(cand)   # closed-loop لكل مرشّح
@@ -184,6 +189,10 @@ class Scanner:
                     self.monitor.heartbeat()  # خارج الجلسة ليس عطلًا
             except MassiveError as exc:
                 self.monitor.raise_fault("api", str(exc))
+                # احترام Retry-After عند 429 (تهدئة بدل قصف المزوّد)
+                wait = getattr(exc, "retry_after", None)
+                if wait:
+                    self._stop.wait(min(float(wait), 120.0))
             except Exception as exc:  # noqa: BLE001
                 logger.exception("خطأ غير متوقّع في الدورة")
                 self.monitor.raise_fault("cycle", str(exc))

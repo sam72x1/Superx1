@@ -84,15 +84,18 @@ class SecRadar:
     def _cik_for(self, ticker: str) -> str | None:
         if self._cik_map is None:
             data = self._get_json(_CIK_MAP_URL)
+            # فشل التحميل (شبكة/403/429/JSON غير صالح) → لا نكاش، نعيد المحاولة
+            # الدورة القادمة بدل تجميد الرادار فارغًا طوال عمر العملية.
+            if not isinstance(data, dict):
+                return None
             mapping: dict[str, str] = {}
-            if isinstance(data, dict):
-                for row in data.values():
-                    try:
-                        sym = str(row["ticker"]).upper()
-                        mapping[sym] = f"{int(row['cik_str']):010d}"
-                    except (KeyError, TypeError, ValueError):
-                        continue
-            self._cik_map = mapping   # حتى لو فاضية: لا نعيد المحاولة كل دورة
+            for row in data.values():
+                try:
+                    sym = str(row["ticker"]).upper()
+                    mapping[sym] = f"{int(row['cik_str']):010d}"
+                except (KeyError, TypeError, ValueError):
+                    continue
+            self._cik_map = mapping   # نكاش فقط عند تحميل ناجح فعلي
         return self._cik_map.get(ticker.upper())
 
     # ── الملفات الأخيرة لشركة ─────────────────────────────────────

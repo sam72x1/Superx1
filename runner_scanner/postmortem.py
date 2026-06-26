@@ -19,6 +19,7 @@ import logging
 
 from .config import Config
 from .llm import ClaudeClient
+from .textutil import esc
 
 logger = logging.getLogger(__name__)
 
@@ -168,10 +169,10 @@ def build_failure_message(cfg: Config, row, client: ClaudeClient | None = None
     tkr = _get(row, "ticker", "?")
     res = _get(row, "result", "")
     head = "كسر الوقف ⛔" if res == "loss" else "انتهت النافذة بلا حسم ⏳"
-    out = [f"🔍 <b>تشريح ${tkr}</b> — {head}",
-           f"السبب: {cause}"]
+    out = [f"🔍 <b>تشريح ${esc(tkr)}</b> — {head}",
+           f"السبب: {esc(cause)}"]
     if lesson:
-        out.append(f"الدرس: {lesson}")
+        out.append(f"الدرس: {esc(lesson)}")
     out.append("<i>— تشريح آلي للتعلّم، ليس توصية.</i>")
     return "\n".join(out)
 
@@ -184,6 +185,6 @@ def build_why_message(cfg: Config, row, client: ClaudeClient | None = None
     res = _get(row, "result", "") or "مفتوح"
     label = {"win": "نجاح ✅", "loss": "خسارة 🛑",
              "timeout": "بلا حسم ⏳"}.get(res, "مفتوح ⏳")
-    return (f"🔍 <b>${tkr}</b> — النتيجة: {label}\n"
-            f"السبب: {cause}\n" + (f"الدرس: {lesson}\n" if lesson else "")
+    return (f"🔍 <b>${esc(tkr)}</b> — النتيجة: {label}\n"
+            f"السبب: {esc(cause)}\n" + (f"الدرس: {esc(lesson)}\n" if lesson else "")
             + "<i>— تشريح آلي، ليس توصية.</i>")

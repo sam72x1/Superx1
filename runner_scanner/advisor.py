@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from .config import Config
 from .llm import ClaudeClient
 from .state import trade_date_str
+from .textutil import esc
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +92,9 @@ def build_briefing(cfg: Config, store, render_summary: str = "",
                   "اكتب بريفنغ نهاية الجلسة كمستشار.")
         text = client.chat(cfg.anthropic_model, _SYSTEM, prompt, max_tokens=900)
         if text:
+            # نص Claude حرّ → يُهرَّب قبل لفّه بوسوم HTML الثابتة
             return (f"🌙 <b>بريفنغ نهاية الجلسة — {summary['day']}</b>\n\n"
-                    f"{text}\n\n<i>— مستشارك الآلي (توصيات للمراجعة فقط).</i>")
+                    f"{esc(text)}\n\n<i>— مستشارك الآلي (توصيات للمراجعة فقط).</i>")
 
     # fallback مبسّط (بلا Claude)
     s = summary

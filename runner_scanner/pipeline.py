@@ -69,14 +69,19 @@ def process_candidate(
     c.primary_exchange = (overview.get("primary_exchange") or "").upper()
     shares = overview.get("weighted_shares_outstanding") or \
         overview.get("share_class_shares_outstanding")
+    # حقل مرجعي خام قد يكون نصًّا/كائنًا مشوّهًا → تطبيع دفاعي لا يُسقط الدورة
+    try:
+        shares = float(shares) if shares else None
+    except (TypeError, ValueError):
+        shares = None
     if shares:
-        c.market_cap = float(shares) * snap.last_price
+        c.market_cap = shares * snap.last_price
     # الفلوت: endpoint vX، وإلا الأسهم القائمة (ليس فلوت حقيقي)، وإلا مجهول
     fv = _cached(f"fl:{tkr}", lambda: client.float_endpoint(tkr))
     if fv:
         c.float_shares, c.float_source = fv, FloatSource.FLOAT_ENDPOINT
     elif shares:
-        c.float_shares, c.float_source = float(shares), FloatSource.SHARES_OUTSTANDING
+        c.float_shares, c.float_source = shares, FloatSource.SHARES_OUTSTANDING
     else:
         c.float_shares, c.float_source = None, FloatSource.UNKNOWN
 
@@ -135,7 +140,11 @@ def process_candidate(
     # ── 8.5) المحلّل الذكي (Claude) — للمقبولين فقط ──────────────
     # يقيّم المحفّز؛ خبر هبوطي (طرح/تخفيف) يخصم الدرجة وقد يُسقط التنبيه.
     if analyst is not None:
-        c.analyst = analyst.analyze(c)
+        try:
+            c.analyst = analyst.analyze(c)
+        except Exception as exc:  # noqa: BLE001 — محلّل best-effort
+            logger.debug("المحلّل الذكي فشل لـ %s: %s", tkr, exc)
+            c.analyst = None
         if c.analyst is not None and c.analyst.is_bearish:
             c.final_score = max(0.0, c.final_score - cfg.analyst_bearish_penalty)
             if c.final_score < cfg.alert_score_min:
@@ -148,7 +157,8 @@ def process_candidate(
     # → خصم درجة وقد يُسقط التنبيه. الرفّ المُسجّل (متوسط) خصمه أخفّ.
     if sec_radar is not None:
         try:
-            c.dilution = _cached(f"sec:{tkr}", lambda: sec_radar.check(tkr))
+            c.dilution = _cached(
+                f"sec:{tkr}", lambda: sec_radar.check(tkr, today=et_now.date()))
         except Exception as exc:  # noqa: BLE001 — مصدر خارجي best-effort
             logger.debug("رادار SEC فشل لـ %s: %s", tkr, exc)
         if c.dilution is not None and c.dilution.is_active:
