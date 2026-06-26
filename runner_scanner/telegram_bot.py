@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 _HELP = (
     "🤖 <b>مساعدك الشخصي</b>\n"
+    "اكتب سؤالك مباشرة (بلا أي أمر) وأجاوبك 💬\n"
+    "أو استخدم الأوامر:\n"
     "/status — حالة البوت وريندر\n"
     "/top — أقوى الأسهم الآن\n"
     "/report — تقرير التطوير + ملفات CSV\n"
@@ -99,6 +101,11 @@ class TelegramAssistant:
             self._reply(f"تعذّر تنفيذ الأمر: {exc}")
 
     def _dispatch(self, text: str) -> None:
+        # رسالة عادية (لا تبدأ بـ /) = سؤال مباشر للمساعد الذكي.
+        # «مساعد شخصي» طبيعي: تكلّمه بلا أوامر، و/ask يبقى متاحًا أيضًا.
+        if not text.startswith("/"):
+            self._handle_ask(text)
+            return
         cmd = text.split()[0].lower().lstrip("/")
         arg = text[len(text.split()[0]):].strip()
         if cmd in ("start", "help"):
