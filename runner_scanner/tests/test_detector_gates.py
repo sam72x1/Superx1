@@ -36,20 +36,15 @@ def test_price_gate_rejects_pennies_and_highflyers():
     assert gates.check_price(CFG, _cand(last=5.0)).passed is True
 
 
-def test_volume_gate():
-    assert gates.check_volume(CFG, _cand(vol=50_000)).passed is False
-    assert gates.check_volume(CFG, _cand(vol=600_000)).passed is True
+def test_volume_gate_off_by_default():
+    # القرار: RVol هو مقياس السيولة الوحيد → بوّابة الحجم ملغاة افتراضيًا
+    assert gates.check_volume(CFG, _cand(vol=50_000)).passed is True
 
 
-def test_volume_gate_zero_relies_on_rvol():
-    # حجم صفر (artifact بريماركت لسهم صاعد) لا يرفض — يعتمد على RVol
-    res = gates.check_volume(CFG, _cand(vol=0))
-    assert res.passed is True and "RVol" in res.reason
-
-
-def test_volume_gate_can_be_fully_disabled():
-    cfg = Config(volume_gate_enabled=False)
-    assert gates.check_volume(cfg, _cand(vol=50_000)).passed is True
+def test_volume_gate_when_explicitly_enabled():
+    cfg = Config(volume_gate_enabled=True)
+    assert gates.check_volume(cfg, _cand(vol=50_000)).passed is False
+    assert gates.check_volume(cfg, _cand(vol=600_000)).passed is True
 
 
 def test_float_gate_unknown_passes_but_flagged():

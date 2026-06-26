@@ -78,8 +78,10 @@ class Config:
     # ── البوابات الصارمة (القسم 6) ────────────────────────────────
     float_max: float = 40_000_000        # فلوت ≤ 40M
     rvol_min: float = 5.0                # RVol ≥ 5x (حسب الجلسة)
-    volume_min: float = 300_000          # حجم يومي ≥ 300K (شبكة أمان سيولة خروج)
-    volume_gate_enabled: bool = True     # بوّابة الحجم المطلق (RVol هو الأساس)
+    volume_min: float = 300_000          # عتبة الحجم المطلق (مستخدمة فقط لو فُعّلت)
+    # قرار المستخدم: RVol هو المقياس الوحيد للنشاط في الجلسات الثلاث؛ الحجم
+    # المطلق مُلغى (نسبي > مطلق). يمكن إعادته بـ VOLUME_GATE_ENABLED=true.
+    volume_gate_enabled: bool = False
     price_min: float = 1.0               # لا سنتات
     price_max: float = 30.0              # لا فوق نطاق الأسهم
     # امتداد بارابولِك: رفض لو السعر ابتعد عن VWAP بأكثر من هذا%
@@ -195,7 +197,7 @@ class Config:
             float_max=_f("FLOAT_MAX", 40_000_000),
             rvol_min=_f("RVOL_MIN", 5.0),
             volume_min=_f("VOLUME_MIN", 300_000),
-            volume_gate_enabled=_b("VOLUME_GATE_ENABLED", True),
+            volume_gate_enabled=_b("VOLUME_GATE_ENABLED", False),
             price_min=_f("PRICE_MIN", 1.0),
             price_max=_f("PRICE_MAX", 30.0),
             parabolic_vwap_ext_pct=_f("PARABOLIC_VWAP_EXT_PCT", 40.0),

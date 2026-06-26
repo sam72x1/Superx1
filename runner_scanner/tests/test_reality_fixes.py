@@ -28,12 +28,18 @@ def _tms(h, mi):
     return int(datetime(2026, 6, 26, h, mi, tzinfo=ET).timestamp() * 1000)
 
 
-# ── #1: بوّابة الحجم تتخطّى الجلسات الممتدة (تعتمد على RVol) ──────
-def test_volume_gate_skips_premarket():
-    c = Candidate(snapshot=make_snapshot(vol=80_000), session=Session.PREMARKET)
-    assert gates.check_volume(CFG, c).passed is True
-    c2 = Candidate(snapshot=make_snapshot(vol=80_000), session=Session.REGULAR)
-    assert gates.check_volume(CFG, c2).passed is False   # الرسمي يُطبّق العتبة
+# ── #1: بوّابة الحجم — ملغاة افتراضيًا (RVol وحده)؛ ولو فُعّلت تتخطّى الممتدة
+def test_volume_gate_off_by_default_relies_on_rvol():
+    c = Candidate(snapshot=make_snapshot(vol=80_000), session=Session.REGULAR)
+    assert gates.check_volume(CFG, c).passed is True     # ملغاة → RVol وحده
+
+
+def test_volume_gate_when_enabled_skips_premarket_only():
+    cfg = Config(volume_gate_enabled=True)
+    pre = Candidate(snapshot=make_snapshot(vol=80_000), session=Session.PREMARKET)
+    assert gates.check_volume(cfg, pre).passed is True   # ممتدة → RVol الجلسي
+    reg = Candidate(snapshot=make_snapshot(vol=80_000), session=Session.REGULAR)
+    assert gates.check_volume(cfg, reg).passed is False  # الرسمي يُطبّق العتبة
 
 
 # ── #17: VWAP يتطلّب ≥2 شمعة مساهِمة (شمعة واحدة ليست قياسًا) ─────
