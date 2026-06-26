@@ -304,6 +304,27 @@ class Store:
             self._conn.commit()
         return events
 
+    def finalize_stale(self, now: datetime | None = None) -> int:
+        """يحسم صفوف التتبّع المفتوحة من **أيام سابقة** (لم تكتمل نافذتها قبل
+        إغلاق السوق) كـ win/loss/timeout حسب ما تحقّق، حتى لا تضيع من
+        إحصاء أداة التطوير. يرجّع عدد المحسومة."""
+        now = now or datetime.now(timezone.utc)
+        day = trade_date_str(now)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM tracking WHERE outcome='open' AND trade_date < ?",
+                (day,)).fetchall()
+            for r in rows:
+                result = r["result"] or (
+                    "win" if r["hit_target"] else
+                    "loss" if r["hit_stop"] else "timeout")
+                self._conn.execute(
+                    "UPDATE tracking SET outcome='closed', result=?, closed_at=?"
+                    " WHERE ticker=? AND trade_date=?",
+                    (result, _iso(now), r["ticker"], r["trade_date"]))
+            self._conn.commit()
+            return len(rows)
+
     # ── استعلامات أداة التطوير ────────────────────────────────────
     def fetch_resolved(self, only_alerts: bool = False) -> list[sqlite3.Row]:
         """التتبّعات المحسومة نتيجتها (result غير فارغ)."""

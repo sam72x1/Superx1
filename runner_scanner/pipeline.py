@@ -35,11 +35,18 @@ def process_candidate(
     session: Session | None = None,
     et_now: datetime | None = None,
     short_provider=None,
+    cache=None,
 ) -> Candidate:
     """يعالج مرشّحًا واحدًا عبر خط المعالجة الكامل."""
     et_now = et_now or now_et()
     session = session or classify_session(cfg, et_now)
     c = Candidate(snapshot=snap, session=session)
+    today = _et_date(et_now)
+    tkr = snap.ticker
+
+    def _cached(key: str, fetch):
+        """يكاش البيانات البطيئة لكل (سهم/يوم) إن وُجد كاش."""
+        return cache.get(today, key, fetch) if cache is not None else fetch()
 
     # ── 1) التوقّف ───────────────────────────────────────────────
     if halts is not None:
@@ -51,7 +58,8 @@ def process_candidate(
             return c.reject(f"توقّف ({st.value}) — لا بطاقة، انتظر استئنافًا نظيفًا")
 
     # ── 2) تفاصيل الورقة (نوع/بورصة/أسهم) + الفلوت + الماركت كاب ──
-    overview = client.ticker_overview(snap.ticker)   # {} عند الفشل
+    # بطيئة لا تتغيّر خلال اليوم → تُكاش لكل (سهم/يوم).
+    overview = _cached(f"ov:{tkr}", lambda: client.ticker_overview(tkr))
     c.ticker_type = (overview.get("type") or "").upper()
     c.primary_exchange = (overview.get("primary_exchange") or "").upper()
     shares = overview.get("weighted_shares_outstanding") or \
@@ -59,7 +67,7 @@ def process_candidate(
     if shares:
         c.market_cap = float(shares) * snap.last_price
     # الفلوت: endpoint vX، وإلا الأسهم القائمة (ليس فلوت حقيقي)، وإلا مجهول
-    fv = client.float_endpoint(snap.ticker)
+    fv = _cached(f"fl:{tkr}", lambda: client.float_endpoint(tkr))
     if fv:
         c.float_shares, c.float_source = fv, FloatSource.FLOAT_ENDPOINT
     elif shares:
@@ -73,15 +81,16 @@ def process_candidate(
         return c.reject(pre.reason)
 
     # ── 4) جلب الشموع ────────────────────────────────────────────
-    today = _et_date(et_now)
     year_ago = _et_date(et_now - timedelta(days=400))
     two_months = _et_date(et_now - timedelta(days=60))
     try:
-        bars_5min = client.bars_5min(snap.ticker, today, today)
-        bars_1min = client.bars_1min(snap.ticker, today, today)
-        daily = client.bars_daily(snap.ticker, year_ago, today)
-        # إطار الساعة (الدرجة الوسطى Top-Down: جسر بين اليومي واللحظي)
-        hourly = client.aggregates(snap.ticker, 1, "hour", two_months, today)
+        # الشموع اللحظية طازجة دائمًا (الزخم لحظي)
+        bars_5min = client.bars_5min(tkr, today, today)
+        bars_1min = client.bars_1min(tkr, today, today)
+        # اليومي/الساعة بطيئة → تُكاش لكل (سهم/يوم)
+        daily = _cached(f"d:{tkr}", lambda: client.bars_daily(tkr, year_ago, today))
+        hourly = _cached(
+            f"h:{tkr}", lambda: client.aggregates(tkr, 1, "hour", two_months, today))
     except MassiveError as exc:
         return c.reject(f"تعذّر جلب الشموع: {exc}")
 

@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from . import detector
 from .alerts import TelegramSender, build_card, build_followup, prioritize
+from .cache import DailyCache
 from .config import Config
 from .dev_assistant import send_report_and_files
 from .halts import HaltTracker
@@ -57,6 +58,7 @@ class Scanner:
         self.telegram = TelegramSender(cfg)
         self.halts = HaltTracker(cfg)
         self.short = ShortInterestProvider()
+        self.cache = DailyCache()   # كاش يومي للبيانات البطيئة
         self.monitor = HealthMonitor(
             notify=self.telegram.send,
             stall_seconds=max(300.0, cfg.poll_interval_sec * 8),
@@ -88,6 +90,9 @@ class Scanner:
         logger.info("الجلسة %s — فوق العتبة: %d · أعلى %d + %d بطل موروث",
                     session.value, len(runners), len(top), len(champ_entries))
 
+        # حسم أي تتبّعات معلّقة من أيام سابقة (لم تكتمل نافذتها قبل الإغلاق)
+        self.store.finalize_stale(et_now)
+
         # تحديث نتائج التنبيهات المفتوحة من نفس السنابشوت (بلا نداء إضافي)
         # ويصدّر أحداث متابعة (🎯 هدف · ⛔ وقف · 🚀 قفزة) نرسلها فورًا.
         price_map = {e.ticker: e.last_price for e in snapshot if e.is_valid}
@@ -109,7 +114,8 @@ class Scanner:
             try:
                 cand = process_candidate(
                     self.cfg, self.client, snap, halts=self.halts,
-                    session=session, et_now=et_now, short_provider=self.short)
+                    session=session, et_now=et_now, short_provider=self.short,
+                    cache=self.cache)
             except MassiveError as exc:
                 logger.warning("معالجة %s فشلت: %s", snap.ticker, exc)
                 continue

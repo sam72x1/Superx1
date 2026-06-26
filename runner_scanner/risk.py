@@ -60,24 +60,26 @@ def _round_levels_above(entry: float, n: int) -> list[float]:
 
 def resistance_targets(entry: float, closed_bars: list[Bar],
                        extra: list[float] | None = None,
-                       count: int = 3) -> list[float]:
+                       count: int = 3, max_pct: float = 80.0) -> list[float]:
     """أهداف = **مقاومات حقيقية** فقط (لا مضاعفات حسابية):
     قمم 5د المحورية · قمة اليوم داخل-الجلسة · قمم يومية مُمرَّرة (أمس/الأسبوع)
-    · أرقام مستديرة. تُدمج المتقاربة (~1.5%) وتُؤخذ الأقرب فوق الدخول."""
+    · أرقام مستديرة. تُدمج المتقاربة (~1.5%) وتُؤخذ الأقرب فوق الدخول، وضمن
+    سقف مسافة معقول (max_pct) كي لا تدخل قمة بعيدة جدًا (سهم انهار من فوق)."""
+    ceiling = entry * (1 + max_pct / 100.0)
     cands: set[float] = set()
     # قمم 5د المحورية فوق الدخول
     if len(closed_bars) >= 3:
         highs = [b.h for b in closed_bars]
         hi_idx, _ = pivots(highs)
-        cands |= {highs[i] for i in hi_idx if highs[i] > entry}
+        cands |= {highs[i] for i in hi_idx if entry < highs[i] <= ceiling}
     # قمة اليوم داخل-الجلسة
     if closed_bars:
         day_hi = max(b.h for b in closed_bars)
-        if day_hi > entry:
+        if entry < day_hi <= ceiling:
             cands.add(day_hi)
-    # مقاومات يومية مُمرَّرة (قمة أمس، قمة 10 أيام...)
+    # مقاومات يومية مُمرَّرة (قمة أمس، قمة 10 أيام...) — ضمن السقف فقط
     for r in (extra or []):
-        if r and r > entry:
+        if r and entry < r <= ceiling:
             cands.add(r)
 
     # دمج المتقاربة (ضمن ~1.5%) للحفاظ على مستويات متمايزة
@@ -86,9 +88,10 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
         if not merged or lv > merged[-1] * 1.015:
             merged.append(lv)
 
-    # تكملة بأرقام مستديرة (مقاومات نفسية) لو أقل من العدد المطلوب
+    # تكملة بأرقام مستديرة (مقاومات نفسية) لضمان العدد — السقف يمنع القمم
+    # البعيدة فقط، أما الأرقام المستديرة فقريبة بطبعها (تبدأ فوق الدخول).
     if len(merged) < count:
-        for rl in _round_levels_above(entry, count + 3):
+        for rl in _round_levels_above(entry, count + 6):
             if len(merged) >= count:
                 break
             if all(abs(rl - m) / m > 0.015 for m in merged):
@@ -128,7 +131,8 @@ def build_risk_plan(cfg: Config, entry: float,
 
     # ── الأهداف: مقاومات حقيقية فقط (لا مضاعفات حسابية) ──────────
     targets = resistance_targets(entry, closed_bars_5min,
-                                 extra=daily_resistances, count=3)
+                                 extra=daily_resistances, count=3,
+                                 max_pct=cfg.target_max_pct)
 
     # ── مستويات الدعم ومنطقة الشراء (للعرض) ──────────────────────
     levels = _support_levels(closed_bars_5min, entry)

@@ -8,9 +8,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from . import market_calendar
 from .config import Config
 from .models import Session
 
@@ -32,18 +33,28 @@ def _hour_float(dt: datetime) -> float:
 
 
 def classify_session(cfg: Config, dt: datetime | None = None) -> Session:
-    """يحدّد الجلسة الحالية. الأحد–السبت: يُعامل الويكند كمغلق."""
+    """يحدّد الجلسة الحالية. يحترم الويكند والعطلات والإغلاق المبكر."""
     dt = dt or now_et()
     # 5 = السبت، 6 = الأحد
     if dt.weekday() >= 5:
         return Session.CLOSED
+    if market_calendar.is_holiday(dt.date()):   # عطلة كاملة
+        return Session.CLOSED
+
+    # إغلاق مبكر (نصف يوم): الجلسة الرسمية تنتهي 1م، بلا أفترهاوس
+    if market_calendar.is_early_close(dt.date()):
+        regular_end = market_calendar.EARLY_CLOSE_HOUR
+        afterhours_end = market_calendar.EARLY_CLOSE_HOUR
+    else:
+        regular_end = cfg.regular_end_hour
+        afterhours_end = cfg.afterhours_end_hour
 
     h = _hour_float(dt)
     if cfg.premarket_start_hour <= h < cfg.regular_start_hour:
         return Session.PREMARKET
-    if cfg.regular_start_hour <= h < cfg.regular_end_hour:
+    if cfg.regular_start_hour <= h < regular_end:
         return Session.REGULAR
-    if cfg.regular_end_hour <= h < cfg.afterhours_end_hour:
+    if regular_end <= h < afterhours_end:
         return Session.AFTERHOURS
     return Session.CLOSED
 

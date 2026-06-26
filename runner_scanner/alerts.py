@@ -9,6 +9,7 @@ RVol · 5min Δ% · 5min RVol — بالإضافة إلى ⛔ الوقف · 🎯
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -194,46 +195,72 @@ class TelegramSender:
             f"https://api.telegram.org/bot{cfg.telegram_bot_token}/sendMessage"
         )
 
-    def send(self, text: str) -> bool:
+    @staticmethod
+    def _retry_after(resp: requests.Response) -> float:
+        """يستخرج مدّة الانتظار من رد 429 (parameters.retry_after أو الترويسة)."""
+        try:
+            ra = (resp.json().get("parameters") or {}).get("retry_after")
+            if ra:
+                return float(ra)
+        except ValueError:
+            pass
+        try:
+            return float(resp.headers.get("Retry-After", 1))
+        except (TypeError, ValueError):
+            return 1.0
+
+    def send(self, text: str, _retries: int = 2) -> bool:
         if self.cfg.dry_run:
             logger.info("[DRY_RUN] بطاقة:\n%s", text)
             print(text)
             return True
-        try:
-            resp = requests.post(self._url, json={
-                "chat_id": self.cfg.telegram_chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            }, timeout=15)
+        payload = {
+            "chat_id": self.cfg.telegram_chat_id, "text": text,
+            "parse_mode": "HTML", "disable_web_page_preview": True,
+        }
+        for attempt in range(_retries + 1):
+            try:
+                resp = requests.post(self._url, json=payload, timeout=15)
+            except requests.RequestException as exc:
+                logger.error("فشل إرسال تيليجرام: %s", exc)
+                return False
+            if resp.status_code == 429 and attempt < _retries:
+                wait = min(self._retry_after(resp), 30.0)
+                logger.warning("تيليجرام 429 — انتظار %.0fث ثم إعادة", wait)
+                time.sleep(wait)
+                continue
             if resp.status_code != 200:
                 logger.error("تيليجرام رفض (%s): %s", resp.status_code,
                              resp.text[:200])
                 return False
             return True
-        except requests.RequestException as exc:
-            logger.error("فشل إرسال تيليجرام: %s", exc)
-            return False
+        return False
 
-    def send_document(self, path: str, caption: str = "") -> bool:
-        """يرسل ملفًا (CSV...) عبر sendDocument."""
+    def send_document(self, path: str, caption: str = "",
+                      _retries: int = 2) -> bool:
+        """يرسل ملفًا (CSV...) عبر sendDocument مع معالجة 429."""
         if self.cfg.dry_run:
             logger.info("[DRY_RUN] ملف: %s (%s)", path, caption)
             print(f"[ملف] {path} — {caption}")
             return True
         url = (f"https://api.telegram.org/bot{self.cfg.telegram_bot_token}"
                "/sendDocument")
-        try:
-            with open(path, "rb") as fh:
-                resp = requests.post(url, data={
-                    "chat_id": self.cfg.telegram_chat_id,
-                    "caption": caption[:1000],
-                }, files={"document": fh}, timeout=30)
+        for attempt in range(_retries + 1):
+            try:
+                with open(path, "rb") as fh:   # نعيد فتح الملف لكل محاولة
+                    resp = requests.post(url, data={
+                        "chat_id": self.cfg.telegram_chat_id,
+                        "caption": caption[:1000],
+                    }, files={"document": fh}, timeout=30)
+            except (requests.RequestException, OSError) as exc:
+                logger.error("فشل إرسال الملف: %s", exc)
+                return False
+            if resp.status_code == 429 and attempt < _retries:
+                time.sleep(min(self._retry_after(resp), 30.0))
+                continue
             if resp.status_code != 200:
                 logger.error("تيليجرام رفض الملف (%s): %s", resp.status_code,
                              resp.text[:200])
                 return False
             return True
-        except (requests.RequestException, OSError) as exc:
-            logger.error("فشل إرسال الملف: %s", exc)
-            return False
+        return False
