@@ -214,3 +214,26 @@ class TelegramSender:
         except requests.RequestException as exc:
             logger.error("فشل إرسال تيليجرام: %s", exc)
             return False
+
+    def send_document(self, path: str, caption: str = "") -> bool:
+        """يرسل ملفًا (CSV...) عبر sendDocument."""
+        if self.cfg.dry_run:
+            logger.info("[DRY_RUN] ملف: %s (%s)", path, caption)
+            print(f"[ملف] {path} — {caption}")
+            return True
+        url = (f"https://api.telegram.org/bot{self.cfg.telegram_bot_token}"
+               "/sendDocument")
+        try:
+            with open(path, "rb") as fh:
+                resp = requests.post(url, data={
+                    "chat_id": self.cfg.telegram_chat_id,
+                    "caption": caption[:1000],
+                }, files={"document": fh}, timeout=30)
+            if resp.status_code != 200:
+                logger.error("تيليجرام رفض الملف (%s): %s", resp.status_code,
+                             resp.text[:200])
+                return False
+            return True
+        except (requests.RequestException, OSError) as exc:
+            logger.error("فشل إرسال الملف: %s", exc)
+            return False

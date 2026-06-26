@@ -169,3 +169,18 @@ def test_dev_report_full_with_segments_and_suggestions():
 
 def test_esc_escapes_html():
     assert esc("<b>&") == "&lt;b&gt;&amp;"
+
+
+def test_export_csvs_writes_files():
+    import os
+    from runner_scanner.dev_assistant import export_csvs
+    st = _store()
+    c = _cand("MISS", 2.0, rejected=True, reason="RVol 3x < 5x")
+    st.log_candidate(c, T0)
+    st.update_outcomes({"MISS": 2.8},
+                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    files = export_csvs(st, CFG, T0)
+    assert any("missed" in os.path.basename(p) for p, _ in files)
+    for path, _ in files:
+        content = open(path, encoding="utf-8-sig").read()
+        assert "ticker" in content and "MISS" in content

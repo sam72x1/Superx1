@@ -19,7 +19,10 @@
 
 from __future__ import annotations
 
+import csv
+import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 from .config import Config
@@ -215,6 +218,51 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
     return "\n".join(head + body + sugg + tail)
 
 
+# ── تصدير CSV (ملفات الصفقات والفرص الفائتة) ─────────────────────
+def _write_csv(rows: list, path: str) -> str | None:
+    """يكتب صفوف sqlite3.Row إلى CSV ويرجّع المسار (أو None لو فاضي)."""
+    if not rows:
+        return None
+    cols = list(rows[0].keys())
+    try:
+        with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.writer(fh)
+            w.writerow(cols)
+            for r in rows:
+                w.writerow([r[c] for c in cols])
+        return path
+    except OSError:
+        return None
+
+
+def export_csvs(store, cfg: Config, now: datetime | None = None
+                ) -> list[tuple[str, str]]:
+    """يصدّر CSV للتتبّعات المحسومة والفرص الفائتة. يرجّع [(مسار، وصف)]."""
+    now = now or datetime.now(timezone.utc)
+    day = now.strftime("%Y-%m-%d")
+    tmp = tempfile.mkdtemp(prefix="runner_dev_")
+    out: list[tuple[str, str]] = []
+    p1 = _write_csv(store.fetch_resolved(only_alerts=False),
+                    os.path.join(tmp, f"tracking_{day}.csv"))
+    if p1:
+        out.append((p1, f"📎 التتبّعات المحسومة ونتائجها — {day}"))
+    p2 = _write_csv(store.fetch_missed(cfg.missed_rise_pct),
+                    os.path.join(tmp, f"missed_{day}.csv"))
+    if p2:
+        out.append((p2, f"📎 الفرص الفائتة (مرفوض صعد) — {day}"))
+    return out
+
+
+def send_report_and_files(store, cfg: Config, telegram,
+                          now: datetime | None = None) -> str:
+    """يبني التقرير، يرسله، ثم يرسل ملفات CSV. يرجّع نص التقرير."""
+    report = build_dev_report(store, cfg, now)
+    telegram.send(report)
+    for path, caption in export_csvs(store, cfg, now):
+        telegram.send_document(path, caption)
+    return report
+
+
 # ── تشغيل يدوي: python -m runner_scanner.dev_assistant ───────────
 def main() -> int:
     from .alerts import TelegramSender
@@ -222,10 +270,8 @@ def main() -> int:
 
     cfg = Config.from_env()
     store = Store(cfg.db_path)
-    report = build_dev_report(store, cfg)
+    report = send_report_and_files(store, cfg, TelegramSender(cfg))
     print(report)
-    if not cfg.dry_run and cfg.telegram_bot_token and cfg.telegram_chat_id:
-        TelegramSender(cfg).send(report)
     store.close()
     return 0
 

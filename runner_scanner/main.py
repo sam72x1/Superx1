@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from . import detector
 from .alerts import TelegramSender, build_card, build_followup, prioritize
 from .config import Config
-from .dev_assistant import build_dev_report
+from .dev_assistant import send_report_and_files
 from .halts import HaltTracker
 from .massive_client import MassiveClient, MassiveError
 from .models import Candidate, Session
@@ -179,10 +179,9 @@ class Scanner:
                         self.store.fetch_missed(self.cfg.missed_rise_pct))
         if not has_activity:
             return
-        report = build_dev_report(self.store, self.cfg)
-        if self.telegram.send(report):
-            self.store.set_meta("last_dev_report", today)
-            logger.info("أُرسل تقرير التطوير اليومي")
+        send_report_and_files(self.store, self.cfg, self.telegram)
+        self.store.set_meta("last_dev_report", today)
+        logger.info("أُرسل تقرير التطوير اليومي + ملفات CSV")
 
     def shutdown(self) -> None:
         logger.info("إيقاف الماسح...")
