@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS tracking (
     -- تتبّع النتيجة + الأحداث
     is_alert        INTEGER DEFAULT 0,
     first_price     REAL,
+    first_volume    REAL,                 -- حجم وقت أول رصد (لقياس المشاركة)
     stop_price      REAL,
     target1         REAL,
     target2         REAL,
@@ -136,7 +137,8 @@ class Store:
             # ترقية قواعد قديمة: إضافة أعمدة تشريح الفشل إن غابت
             for col, typ in (("short_pct", "REAL"), ("dilution_risk", "TEXT"),
                              ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT"),
-                             ("notified_missed", "INTEGER DEFAULT 0")):
+                             ("notified_missed", "INTEGER DEFAULT 0"),
+                             ("first_volume", "REAL")):
                 try:
                     self._conn.execute(
                         f"ALTER TABLE tracking ADD COLUMN {col} {typ}")
@@ -189,10 +191,10 @@ class Store:
                     change_pct, score, momentum, readiness, rvol, rvol_5min,
                     float_shares, float_source, halt_state, had_news, rejected,
                     reject_reason, short_pct, dilution_risk, analyst_dir,
-                    catalyst_head, first_price, stop_price, target1, target2,
-                    target3, high_after, low_after, max_gain_pct, notified_high,
-                    outcome)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
+                    catalyst_head, first_price, first_volume, stop_price, target1,
+                    target2, target3, high_after, low_after, max_gain_pct,
+                    notified_high, outcome)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
                 ON CONFLICT(ticker, trade_date) DO UPDATE SET
                     logged_at=excluded.logged_at, session=excluded.session,
                     change_pct=excluded.change_pct, score=excluded.score,
@@ -212,6 +214,9 @@ class Store:
                     first_price=CASE WHEN tracking.session <> 'رسمي'
                         AND excluded.session = 'رسمي' AND tracking.is_alert = 0
                         THEN excluded.first_price ELSE tracking.first_price END,
+                    first_volume=CASE WHEN tracking.session <> 'رسمي'
+                        AND excluded.session = 'رسمي' AND tracking.is_alert = 0
+                        THEN excluded.first_volume ELSE tracking.first_volume END,
                     high_after=CASE WHEN tracking.session <> 'رسمي'
                         AND excluded.session = 'رسمي' AND tracking.is_alert = 0
                         THEN excluded.first_price ELSE tracking.high_after END,
@@ -236,7 +241,8 @@ class Store:
                     c.float_shares, c.float_source.value, c.halt_state.value,
                     had_news, 1 if c.is_rejected else 0, c.rejected_reason,
                     c.short_pct, dilution_risk, analyst_dir, catalyst_head,
-                    price, stop, t1, t2, t3, price, price, price,
+                    price, c.snapshot.day_volume, stop, t1, t2, t3,
+                    price, price, price,
                 ))
             self._conn.commit()
 
@@ -245,7 +251,8 @@ class Store:
                         now: datetime | None = None,
                         window_min: float = 90.0,
                         surge_leg_pct: float = 8.0,
-                        missed_rise_pct: float = 1e9) -> list[dict]:
+                        missed_rise_pct: float = 1e9,
+                        volume_map: dict[str, float] | None = None) -> list[dict]:
         """يحدّث كل تتبّع مفتوح ويرجّع أحداث المتابعة:
         [{ticker, type:'target'/'stop'/'surge'/'missed', price, gain_pct, ...}].
         - target/stop/surge: للمُنبَّه عنه فقط.
@@ -281,6 +288,16 @@ class Store:
                 outcome = "open"
                 is_alert = r["is_alert"] or 0
 
+                # مشاركة الحجم منذ الرصد (تُدمج مع RVol لمتابعة أدقّ): قفزة على
+                # حجم متزايد = حركة حقيقية مدعومة؛ على حجم خافت = حذر.
+                cur_vol = (volume_map or {}).get(r["ticker"])
+                first_vol = r["first_volume"] or 0.0
+                participation = None
+                if cur_vol and first_vol > 0:
+                    g = cur_vol / first_vol
+                    participation = ("قوية ⬆️" if g >= 1.5 else
+                                     "معتدلة" if g >= 1.1 else "خافتة ⚠️")
+
                 # 🎯 أهداف: نبلّغ كل هدف عُبر لأول مرة (نرسل للمُنبَّه فقط)
                 while notified_t < len(targets) and high >= targets[notified_t]:
                     notified_t += 1
@@ -292,6 +309,7 @@ class Store:
                             "ticker": r["ticker"], "type": "target",
                             "level": notified_t, "price": targets[notified_t - 1],
                             "gain_pct": (targets[notified_t - 1] - first) / first * 100.0,
+                            "participation": participation,
                         })
 
                 # ⛔ الوقف: نبلّغ مرة واحدة (ويغلق التتبّع)
@@ -315,6 +333,7 @@ class Store:
                             "ticker": r["ticker"], "type": "surge",
                             "price": high,
                             "gain_pct": (high - first) / first * 100.0,
+                            "participation": participation,
                         })
                 else:
                     notified_high = max(notified_high, high)

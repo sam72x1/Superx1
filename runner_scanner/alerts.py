@@ -186,16 +186,18 @@ def build_followup(cfg: Config, event: dict, now: datetime | None = None) -> str
     gain = event.get("gain_pct", 0.0)
     etype = event.get("type")
     when = f"⏰ {_local_time(cfg, now)} (الرياض)"
+    part = event.get("participation")
+    part_line = f"\n📊 مشاركة الحجم: {part}" if part else ""
     if etype == "target":
         lvl = event.get("level", 1)
         return (f"🎯 <b>${tkr}</b> وصل الهدف {lvl}!  "
-                f"{_money(price)} (+{gain:.0f}%)\n{when}")
+                f"{_money(price)} (+{gain:.0f}%){part_line}\n{when}")
     if etype == "stop":
         return (f"⛔ <b>${tkr}</b> كسر الوقف  "
                 f"{_money(price)} ({gain:.0f}%)\n{when}")
     if etype == "surge":
         return (f"🚀 <b>${tkr}</b> قفزة قوية!  "
-                f"{_money(price)} (+{gain:.0f}% من الدخول)\n{when}")
+                f"{_money(price)} (+{gain:.0f}% من الدخول){part_line}\n{when}")
     if etype == "missed":
         reason = esc(event.get("reason", "") or "غير مسجّل")
         return (f"👻 <b>${tkr}</b> فرصة فائتة — صعد +{gain:.0f}%!  {_money(price)}\n"

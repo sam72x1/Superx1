@@ -128,6 +128,20 @@ def test_missed_disabled_by_default_threshold():
     st.close()
 
 
+def test_surge_event_carries_volume_participation():
+    st = _store()
+    c = _cand("PART", 3.0, stop=2.7, t1=10.0)   # هدف بعيد كي يبقى مفتوحًا
+    st.log_candidate(c, T0)                       # first_volume = 1,000,000
+    st.mark_alerted("PART", 80, T0)
+    # قفزة +10% مع حجم تضاعف ×2 → مشاركة قوية
+    events = st.update_outcomes(
+        {"PART": 3.3}, datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc),
+        surge_leg_pct=8.0, volume_map={"PART": 2_000_000})
+    surge = [e for e in events if e["type"] == "surge"]
+    assert surge and surge[0]["participation"] == "قوية ⬆️"
+    st.close()
+
+
 def test_followup_missed_message():
     from runner_scanner.alerts import build_followup
     msg = build_followup(CFG, {"ticker": "MISS", "type": "missed",

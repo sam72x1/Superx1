@@ -110,11 +110,13 @@ class Scanner:
         # تحديث نتائج التنبيهات المفتوحة من نفس السنابشوت (بلا نداء إضافي)
         # ويصدّر أحداث متابعة (🎯 هدف · ⛔ وقف · 🚀 قفزة) نرسلها فورًا.
         price_map = {e.ticker: e.last_price for e in snapshot if e.is_valid}
+        volume_map = {e.ticker: e.day_volume for e in snapshot if e.is_valid}
         events = self.store.update_outcomes(
             price_map, et_now, window_min=self.cfg.outcome_window_min,
             surge_leg_pct=self.cfg.surge_leg_pct,
             missed_rise_pct=(self.cfg.missed_rise_pct
-                             if self.cfg.missed_alert_enabled else 1e9))
+                             if self.cfg.missed_alert_enabled else 1e9),
+            volume_map=volume_map)
         for ev in events:
             if not self.telegram.send(build_followup(self.cfg, ev)):
                 logger.warning("فشل إرسال حدث متابعة محسوم في DB (قد يُفقد): %s %s",
