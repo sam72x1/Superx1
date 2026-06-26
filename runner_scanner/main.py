@@ -176,6 +176,7 @@ class Scanner:
             "🚀 <b>الماسح الشامل اشتغل</b>\n"
             f"الجلسة الحالية: {session.value} · "
             f"المسح كل {self.cfg.poll_interval_sec}ث\n"
+            f"📦 SHA: {self.cfg.code_version or 'غير معروف'}\n"
             "<i>صامت عند الصحة، ينبّه فقط عند سهم مؤهّل أو عطل.</i>")
         while not self._stop.is_set():
             cycle_start = time.monotonic()
@@ -286,6 +287,8 @@ def main() -> int:
 
     logger.info("🚀 الماسح الشامل اشتغل (poll=%ds, dry_run=%s)",
                 cfg.poll_interval_sec, cfg.dry_run)
+    # سطر صريح للبحث عنه بكلمة «SHA» في سجلّات Render للتأكّد من الإصدار المنشور
+    logger.info("📦 SHA الإصدار المنشور: %s", cfg.code_version or "غير معروف")
     try:
         scanner.loop()
     finally:

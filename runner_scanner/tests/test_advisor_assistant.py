@@ -72,6 +72,17 @@ def test_assistant_help():
     sc.shutdown()
 
 
+def test_assistant_sha_reports_real_version(monkeypatch):
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abcdef1234567")
+    sc = _scanner(code_version="abcdef1")
+    sent = _capture(sc)
+    sc.assistant._dispatch("/sha")          # أمر صريح
+    sc.assistant._dispatch("sha")           # كلمة عادية (لا تذهب لـ Claude)
+    assert len(sent) == 2
+    assert all("abcdef1" in m and "SHA" in m for m in sent)
+    sc.shutdown()
+
+
 # ── ريندر ────────────────────────────────────────────────────────
 def test_render_not_available_without_keys():
     cfg = Config()

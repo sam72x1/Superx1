@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 
 import requests
@@ -38,8 +39,12 @@ _HELP = (
     "/briefing — بريفنغ المستشار\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
     "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
+    "/sha — إصدار الكود المنشور (للتأكّد من آخر تحديث)\n"
     "/restart — إعادة تشغيل الخدمة (يتطلّب تأكيد)"
 )
+
+# كلمات تُعامَل كطلب إصدار (تُعرض رقمًا حقيقيًا، لا تُمرَّر لـ Claude لئلا يهلوس)
+_VERSION_WORDS = {"sha", "version", "إصدار", "الإصدار", "الاصدار", "النسخة"}
 
 _ASK_SYSTEM = (
     "أنت مساعد ومستشار الماسح الشامل للمستخدم. أجب عن أسئلته حول حالة البوت "
@@ -111,6 +116,10 @@ class TelegramAssistant:
         # رسالة عادية (لا تبدأ بـ /) = سؤال مباشر للمساعد الذكي.
         # «مساعد شخصي» طبيعي: تكلّمه بلا أوامر، و/ask يبقى متاحًا أيضًا.
         if not text.startswith("/"):
+            # كلمة «sha»/«إصدار» → رقم الإصدار الحقيقي (لا نمرّرها لـ Claude)
+            if text.strip().lower() in _VERSION_WORDS:
+                self._reply(self._version_text())
+                return
             self._handle_ask(text)
             return
         cmd = text.split()[0].lower().lstrip("/")
@@ -134,6 +143,8 @@ class TelegramAssistant:
             self._handle_ask(arg)
         elif cmd == "why":
             self._handle_why(arg)
+        elif cmd in ("sha", "version"):
+            self._reply(self._version_text())
         elif cmd == "restart":
             self._handle_restart(arg)
         else:
@@ -174,6 +185,29 @@ class TelegramAssistant:
         ans = self.sc.claude.chat(self.cfg.anthropic_model, _ASK_SYSTEM, prompt)
         # رد Claude حرّ → يُهرَّب قبل الإرسال بصيغة HTML
         self._reply(esc(ans) if ans else "تعذّر الحصول على رد.")
+
+    def _version_text(self) -> str:
+        """إصدار الكود المنشور فعليًا (SHA من البيئة — رقم حقيقي لا تخمين)."""
+        sha = self.cfg.code_version or "غير معروف"
+        full = os.getenv("RENDER_GIT_COMMIT", "") or "—"
+        branch = os.getenv("RENDER_GIT_BRANCH", "") or "—"
+        lines = [
+            "📦 <b>إصدار الكود المنشور (SHA)</b>",
+            f"SHA: <code>{esc(sha)}</code>",
+            f"الكامل: <code>{esc(full)}</code>",
+            f"الفرع: {esc(branch)}",
+        ]
+        # مقارنة بآخر نشر على Render (لو مربوط) — تأكيد أنك على الأحدث
+        if self.sc.render.available:
+            dep = self.sc.render.latest_deploy()
+            if dep and dep.get("commit_id"):
+                same = dep["commit_id"][:7] == (sha or "")[:7]
+                mark = "✅ مطابق لآخر نشر" if same else "⚠️ مختلف عن آخر نشر"
+                lines.append(
+                    f"آخر نشر على Render: <code>{esc(dep['commit_id'])}</code>"
+                    f" ({esc(dep['status'])}) {mark}")
+        lines.append("↳ قارن SHA بآخر commit على GitHub للتأكّد أنك على الأحدث.")
+        return "\n".join(lines)
 
     def _handle_why(self, arg: str) -> None:
         tkr = arg.strip().upper().lstrip("$").split()[0] if arg.strip() else ""
