@@ -227,6 +227,30 @@ def test_day_candidates_pool_wider_than_live_top_n():
     assert len(backtest._day_candidates(cfg2, grouped, prev)) == 10
 
 
+def test_parallel_matches_serial():
+    """الجلب المتوازي يعطي نفس نتيجة التسلسلي (آمن، بلا تسابق)."""
+    snaps = {f"S{i}": 2.0 for i in range(8)}
+
+    class ManyBase(MockBase):
+        def grouped_daily(self, date):
+            if date == "2026-06-26":
+                return [{"T": k, "o": 2.1, "h": 3.0, "l": 2.0, "c": 2.9, "v": 5e6}
+                        for k in snaps]
+            return [{"T": k, "c": 2.0} for k in snaps]
+
+    serial = backtest.run_backtest(
+        Config(massive_api_key="x", trigger_change_pct=10.0, backtest_workers=1),
+        ManyBase(), "2026-06-26", "2026-06-26")
+    parallel = backtest.run_backtest(
+        Config(massive_api_key="x", trigger_change_pct=10.0, backtest_workers=8),
+        ManyBase(), "2026-06-26", "2026-06-26")
+    assert serial.funnel["considered"] == parallel.funnel["considered"]
+    assert serial.funnel["alerts"] == parallel.funnel["alerts"]
+    assert len(serial.trades) == len(parallel.trades)
+    assert {t["ticker"] for t in serial.trades} == \
+           {t["ticker"] for t in parallel.trades}
+
+
 def test_reject_bucket_classifies():
     assert backtest._reject_bucket("RVol 3.0x < 5x") == "RVol"
     assert backtest._reject_bucket("فلوت 90,000,000 > 40,000,000") == "فلوت"

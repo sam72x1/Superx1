@@ -285,7 +285,8 @@ class Scanner:
         threading.Thread(target=self._run_backtest_bg, args=(et_now,),
                          daemon=True, name="backtest").start()
 
-    def _run_backtest_bg(self, et_now, quick: bool = False) -> None:
+    def _run_backtest_bg(self, et_now, quick: bool = False,
+                         with_grid: bool = True) -> None:
         from datetime import timedelta
         from dataclasses import replace
         from . import backtest, backtest_grid, backtest_notes
@@ -320,9 +321,9 @@ class Scanner:
                                         progress=_progress)
             self.telegram.send(backtest.format_report(res))
             logger.info("اكتمل الباكتيست (%d صفقة)", len(res.trades))
-            # ── معايرة العتبات A/B — للكامل فقط (ثقيلة، تتخطّاها المعاينة) ──
+            # ── معايرة العتبات A/B — للوظيفة الأسبوعية فقط (ثقيلة 7×) ──
             grid = None
-            if not quick and self.cfg.backtest_grid_enabled:
+            if with_grid and not quick and self.cfg.backtest_grid_enabled:
                 grid = backtest_grid.run_grid(run_cfg, client, start, end)
                 self.telegram.send(backtest_grid.format_grid_report(grid))
                 logger.info("اكتملت معايرة العتبات A/B")

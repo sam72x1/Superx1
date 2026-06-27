@@ -76,12 +76,14 @@ def test_assistant_backtest_triggers_run():
     sc = _scanner()
     sent = _capture(sc)
     calls = []
-    sc._run_backtest_bg = lambda et_now, quick=False: calls.append(quick)  # بلا شبكة
-    sc.assistant._dispatch("/backtest")
+    sc._run_backtest_bg = (
+        lambda et_now, quick=False, with_grid=True: calls.append(quick))
+    sc.assistant._dispatch("/backtest")            # افتراضي = سريع
+    sc.assistant._dispatch("/backtest كامل")       # كامل
     import time
     time.sleep(0.1)                                  # نمهل الثريد
     assert any("بدء باكتيست" in m for m in sent)
-    assert calls == [True]                            # شُغّل بوضع سريع
+    assert sorted(calls) == [False, True]            # سريع + كامل
     sc.shutdown()
 
 

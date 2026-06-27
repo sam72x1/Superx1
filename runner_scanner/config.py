@@ -186,6 +186,9 @@ class Config:
     backtest_quick_days: int = 5          # نافذة المعاينة السريعة (أيام تقويم)
     backtest_quick_top_n: int = 12        # مرشّحون/يوم في المعاينة السريعة
     backtest_quick_step: int = 2          # فحص كل شمعتين 5د في المعاينة السريعة
+    # جلب متوازٍ: عدد الأسهم التي تُعالَج معًا (يسرّع الشهر من ساعة لدقائق).
+    # محافظ كي لا يصطدم بحدّ معدّل Massive؛ ارفعه لو خطّتك تسمح.
+    backtest_workers: int = 8
 
     # ── معايرة العتبات A/B (يقترح أفضل عتبات تاريخيًا — لا يطبّق) ───
     # يجرّب تغيير عتبة واحدة كل مرة على نفس البيانات (no-lookahead) ويرتّب
@@ -294,6 +297,7 @@ class Config:
             backtest_quick_days=_i("BACKTEST_QUICK_DAYS", 5),
             backtest_quick_top_n=_i("BACKTEST_QUICK_TOP_N", 12),
             backtest_quick_step=_i("BACKTEST_QUICK_STEP", 2),
+            backtest_workers=_i("BACKTEST_WORKERS", 8),
             backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", True),
             backtest_grid_readiness=_ftuple(
                 "BACKTEST_GRID_READINESS", (55.0, 60.0, 65.0, 70.0)),

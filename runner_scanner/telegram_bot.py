@@ -38,7 +38,7 @@ _HELP = (
     "/top — أقوى الأسهم الآن\n"
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
-    "/backtest — باكتيست + معايرة العتبات A/B الآن\n"
+    "/backtest — معاينة سريعة (أو «/backtest كامل» للشهر)\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
     "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
     "/diag RMZ — بيانات السهم الخام (تشخيص الفيد)\n"
@@ -143,7 +143,7 @@ class TelegramAssistant:
                 health_faults=self.sc.monitor.active_faults(),
                 client=self.sc.claude))
         elif cmd == "backtest":
-            self._handle_backtest()
+            self._handle_backtest(arg)
         elif cmd == "ask":
             self._handle_ask(arg)
         elif cmd == "why":
@@ -267,17 +267,23 @@ class TelegramAssistant:
         self._reply("جاري إعادة التشغيل..." if self.sc.render.restart()
                     else "تعذّرت إعادة التشغيل.")
 
-    def _handle_backtest(self) -> None:
-        """تشغيل الباكتيست + معايرة العتبات A/B الآن (يدويًا) — بلا انتظار السبت
-        وبلا قفل التكرار الأسبوعي. يشتغل في الخلفية والنتائج تصلك تباعًا."""
+    def _handle_backtest(self, arg: str = "") -> None:
+        """تشغيل الباكتيست الآن (يدويًا) — بلا انتظار السبت وبلا قفل التكرار.
+        افتراضيًا «معاينة سريعة»؛ «/backtest كامل» يشغّل الشهر كاملًا (متوازٍ،
+        دقائق). يشتغل في الخلفية والنتائج تصلك تباعًا مع مؤشّر تقدّم."""
         if not self.cfg.massive_api_key:
             self._reply("الباكتيست يحتاج MASSIVE_API_KEY.")
             return
-        self._reply("🚀 بدء باكتيست <b>سريع (معاينة)</b> الآن… "
-                    "(دقائق قليلة، تصلك النتائج تباعًا)\n"
-                    "<i>الباكتيست الكامل يشتغل تلقائيًا كل سبت في الخلفية.</i>")
+        full = arg.strip().lower() in ("كامل", "الكامل", "شهر", "الشهر", "full")
+        if full:
+            self._reply("🚀 بدء باكتيست <b>كامل (الشهر)</b> الآن… "
+                        "(دقائق، جلب متوازٍ، تصلك النتائج تباعًا مع مؤشّر تقدّم)")
+        else:
+            self._reply("🚀 بدء باكتيست <b>سريع (معاينة)</b> الآن… "
+                        "(دقائق قليلة، تصلك النتائج تباعًا)\n"
+                        "<i>للشهر كامل أرسل: /backtest كامل (يشتغل أيضًا كل سبت).</i>")
         threading.Thread(target=self.sc._run_backtest_bg, args=(now_et(),),
-                         kwargs={"quick": True},
+                         kwargs={"quick": not full, "with_grid": False},
                          daemon=True, name="backtest-manual").start()
 
     def _context_text(self) -> str:
