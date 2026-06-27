@@ -193,7 +193,10 @@ class Config:
     # ── معايرة العتبات A/B (يقترح أفضل عتبات تاريخيًا — لا يطبّق) ───
     # يجرّب تغيير عتبة واحدة كل مرة على نفس البيانات (no-lookahead) ويرتّب
     # حسب النجاح. الناتج اقتراح للمراجعة فقط (البوت دليل لا منفّذ).
-    backtest_grid_enabled: bool = True
+    # ثقيلة على الذاكرة (تعيد تشغيل الباكتيست 7× بكاش مشترك) → مطفأة افتراضيًا
+    # على خوادم 512MB؛ فعّلها على خادم أكبر. الباكتيست العادي (تقرير+قمع+ملاحظات)
+    # يبقى شغّالًا. التشغيل اليدوي لا يشغّل الشبكة أصلًا (أخفّ).
+    backtest_grid_enabled: bool = False
     # قيم تجربة الجاهزية الفنية (TECH_READINESS_MIN)
     backtest_grid_readiness: tuple[float, ...] = (55.0, 60.0, 65.0, 70.0)
     # قيم تجربة سقف الفلوت (FLOAT_MAX)
@@ -298,7 +301,7 @@ class Config:
             backtest_quick_top_n=_i("BACKTEST_QUICK_TOP_N", 12),
             backtest_quick_step=_i("BACKTEST_QUICK_STEP", 2),
             backtest_workers=_i("BACKTEST_WORKERS", 8),
-            backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", True),
+            backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", False),
             backtest_grid_readiness=_ftuple(
                 "BACKTEST_GRID_READINESS", (55.0, 60.0, 65.0, 70.0)),
             backtest_grid_float_max=_ftuple(

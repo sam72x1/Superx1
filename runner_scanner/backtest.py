@@ -425,9 +425,10 @@ def run_backtest(cfg: Config, base: MassiveClient, start: str, end: str,
     days = trading_days(start, end)
     res = BacktestResult(start=start, end=end, days=len(days),
                          funnel=new_funnel())
-    static_cache: dict = {}
     for i, day in enumerate(days, 1):
-        res.trades.extend(simulate_day(cfg, base, day, static_cache, res.funnel))
+        # كاش جديد لكل يوم ثم يُحرَّر — يمنع تكديس بيانات الشهر كلها في الذاكرة
+        # (سوق كامل × 31 يوم + تاريخ كل سهم) الذي يتجاوز حدّ ذاكرة Render.
+        res.trades.extend(simulate_day(cfg, base, day, {}, res.funnel))
         if progress:
             progress(i, len(days), day, len(res.trades))
     return res

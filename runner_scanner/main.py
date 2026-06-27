@@ -303,7 +303,9 @@ class Scanner:
         if quick:   # معاينة عاجلة: مجمّع أصغر وخطوة أخشن (الكامل للوظيفة الأسبوعية)
             run_cfg = replace(bt_cfg, backtest_top_n=self.cfg.backtest_quick_top_n,
                               backtest_scan_step_bars=self.cfg.backtest_quick_step)
-        client = backtest_grid.memoized(MassiveClient(bt_cfg))
+        # عميل خام بلا مذكّر: المذكّر يكدّس بيانات الشهر كله في الذاكرة (سبب
+        # تجاوز حدّ ذاكرة Render). run_backtest يحرّر كاش كل يوم بعده.
+        client = MassiveClient(bt_cfg)
         label = "سريع (معاينة)" if quick else "كامل"
         try:
             self.telegram.send(
