@@ -44,6 +44,23 @@ def _b(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on", "y")
 
 
+def _ftuple(name: str, default: tuple[float, ...]) -> tuple[float, ...]:
+    """يقرأ قائمة أرقام مفصولة بفواصل (مثل عتبات شبكة المعايرة) بأمان."""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    out: list[float] = []
+    for x in raw.split(","):
+        x = x.strip()
+        if not x:
+            continue
+        try:
+            out.append(float(x))
+        except ValueError:
+            pass
+    return tuple(out) if out else default
+
+
 @dataclass
 class Config:
     """إعدادات التشغيل. تُبنى من البيئة عبر Config.from_env()."""
@@ -151,6 +168,21 @@ class Config:
     backtest_weekday: int = 5             # يوم التشغيل (الرياض): السبت=5
     backtest_hour: int = 6                # ساعة التشغيل فجرًا (الرياض)
 
+    # ── معايرة العتبات A/B (يقترح أفضل عتبات تاريخيًا — لا يطبّق) ───
+    # يجرّب تغيير عتبة واحدة كل مرة على نفس البيانات (no-lookahead) ويرتّب
+    # حسب النجاح. الناتج اقتراح للمراجعة فقط (البوت دليل لا منفّذ).
+    backtest_grid_enabled: bool = True
+    # قيم تجربة الجاهزية الفنية (TECH_READINESS_MIN)
+    backtest_grid_readiness: tuple[float, ...] = (55.0, 60.0, 65.0, 70.0)
+    # قيم تجربة سقف الفلوت (FLOAT_MAX)
+    backtest_grid_float_max: tuple[float, ...] = (40_000_000, 60_000_000, 75_000_000)
+    # قيم تجربة حدّ البارابولِك (PARABOLIC_DAY_CHANGE_PCT)
+    backtest_grid_parabolic: tuple[float, ...] = (120.0, 150.0)
+    # أقل عدد صفقات محسومة (نجاح+خسارة) قبل الوثوق بنسبة نجاح تركيبة
+    backtest_grid_min_decisive: int = 8
+    # أقل تحسّن (نقاط مئوية) فوق الأساس كي نقترح التغيير (يمنع ضوضاء صغيرة)
+    backtest_grid_min_edge: float = 3.0
+
     # ── رادار التخفيف (SEC EDGAR) — يحذّر من الطرح القادم ──────────
     dilution_radar_enabled: bool = True   # رصد ملفات SEC التخفيفية
     # نافذة «طرح فعّال/وشيك» (424B/EFFECT): خطر مرتفع
@@ -233,6 +265,16 @@ class Config:
             backtest_lookback_days=_i("BACKTEST_LOOKBACK_DAYS", 45),
             backtest_weekday=_i("BACKTEST_WEEKDAY", 5),
             backtest_hour=_i("BACKTEST_HOUR", 6),
+            backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", True),
+            backtest_grid_readiness=_ftuple(
+                "BACKTEST_GRID_READINESS", (55.0, 60.0, 65.0, 70.0)),
+            backtest_grid_float_max=_ftuple(
+                "BACKTEST_GRID_FLOAT_MAX",
+                (40_000_000, 60_000_000, 75_000_000)),
+            backtest_grid_parabolic=_ftuple(
+                "BACKTEST_GRID_PARABOLIC", (120.0, 150.0)),
+            backtest_grid_min_decisive=_i("BACKTEST_GRID_MIN_DECISIVE", 8),
+            backtest_grid_min_edge=_f("BACKTEST_GRID_MIN_EDGE", 3.0),
             dilution_radar_enabled=_b("DILUTION_RADAR_ENABLED", True),
             dilution_active_days=_i("DILUTION_ACTIVE_DAYS", 45),
             dilution_shelf_days=_i("DILUTION_SHELF_DAYS", 180),
