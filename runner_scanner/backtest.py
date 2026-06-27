@@ -246,6 +246,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     step = max(1, cfg.backtest_scan_step_bars)
     evaluated = errored = False
     last_reason = ""
+    # كاش الأطر الثابتة (يومي/أسبوعي/شهري) لهذا السهم/اليوم — يُعاد استخدامه عبر
+    # شموع المسح المتكرّر بدل إعادة الحساب الثقيل كل شمعة. بلا أثر على النتيجة.
+    rcache: dict = {}
     for k in range(0, len(runner_idx), step):
         asof = full5[runner_idx[k]].t_ms
         up_to = [x for x in full5 if x.t_ms <= asof]
@@ -259,7 +262,8 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         try:
             cand = process_candidate(
                 cfg, client, snap, halts=None,
-                session=classify_session(cfg, asof_dt), et_now=asof_dt)
+                session=classify_session(cfg, asof_dt), et_now=asof_dt,
+                readiness_cache=rcache)
         except Exception as exc:  # noqa: BLE001 — سهم واحد لا يكسر اليوم
             logger.debug("باكتيست %s@%s فشل: %s", ticker, day, exc)
             errored = True

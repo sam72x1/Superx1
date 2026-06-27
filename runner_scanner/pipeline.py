@@ -60,6 +60,7 @@ def process_candidate(
     cache=None,
     analyst=None,
     sec_radar=None,
+    readiness_cache=None,
 ) -> Candidate:
     """يعالج مرشّحًا واحدًا عبر خط المعالجة الكامل."""
     et_now = et_now or now_et()
@@ -141,7 +142,8 @@ def process_candidate(
         cfg, snap, session, bars_5min, bars_1min,
         avg_daily_volume=avg_daily_vol, avg_premarket_volume=avg_pre,
         avg_afterhours_volume=avg_aft, elapsed_fraction=elapsed)
-    c.readiness = classic_ta.compute_readiness(cfg, daily, hourly=hourly)
+    c.readiness = classic_ta.compute_readiness(
+        cfg, daily, hourly=hourly, frame_cache=readiness_cache)
 
     # ── 6) بوابات ما-بعد-التحليل (RVol + بارابولِك بعد VWAP) ─────
     post = gates.apply_gates(cfg, c, gates.POST_TA_GATES)

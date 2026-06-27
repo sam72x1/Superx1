@@ -173,11 +173,17 @@ def score_timeframe(bars: list[Bar]) -> tuple[float, dict]:
 def compute_readiness(cfg: Config, daily: list[Bar],
                       weekly: list[Bar] | None = None,
                       monthly: list[Bar] | None = None,
-                      hourly: list[Bar] | None = None) -> ReadinessResult:
+                      hourly: list[Bar] | None = None,
+                      frame_cache: dict | None = None) -> ReadinessResult:
     """يجمع درجات الأطر إلى classic_score 0..100 + pillar_score.
 
     Top-Down: شهري/أسبوعي = سياق، يومي = الإعداد، ساعة = جسر للتنفيذ.
     الساعة اختيارية؛ عند غيابها يُعاد تطبيع الأوزان تلقائيًا.
+
+    frame_cache (اختياري، للباكتيست): الأطر شهري/أسبوعي/يومي **ثابتة خلال اليوم**
+    (تُبنى من نفس اليومي)، فنخزّن درجتها مرة لكل (سهم/يوم) ونعيد استخدامها عبر
+    شموع المسح المتكرّر بدل إعادة حسابها الثقيل كل شمعة. الساعة تبقى لحظية.
+    **بلا أي أثر على النتيجة** (نفس المدخلات الثابتة → نفس الدرجة).
     """
     weekly = weekly if weekly else resample(daily, 5)
     monthly = monthly if monthly else resample(daily, 21)
@@ -201,7 +207,15 @@ def compute_readiness(cfg: Config, daily: list[Bar],
         if len(bars) < 5:
             notes.append(f"{name}: تاريخ غير كافٍ")
             continue
-        part, detail = score_timeframe(bars)
+        # الأطر الثابتة خلال اليوم تُكاش؛ الساعة (متغيّرة) تُحسب دائمًا.
+        if frame_cache is not None and name != "hourly":
+            cached = frame_cache.get(name)
+            if cached is None:
+                cached = score_timeframe(bars)
+                frame_cache[name] = cached
+            part, detail = cached
+        else:
+            part, detail = score_timeframe(bars)
         if name == "daily":
             daily_detail = detail
         weighted_sum += part * w
