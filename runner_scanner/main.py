@@ -297,7 +297,17 @@ class Scanner:
                 "<i>يقيس حافة الاستراتيجية على الماضي — قد يأخذ دقائق…</i>")
             # عميل مُذكّر: الجلب الشبكي مرة واحدة يُشارَك بين التقرير والمعايرة
             client = backtest_grid.memoized(self.client)
-            res = backtest.run_backtest(self.cfg, client, start, end)
+
+            # مؤشّر تقدّم: تحديث كل ربع (الباكتيست I/O ثقيل — لا يكون صندوقًا أسود)
+            def _progress(i, total, day, n):
+                stepn = max(1, total // 4)
+                if i == 1 or i == total or i % stepn == 0:
+                    self.telegram.send(
+                        f"⏳ باكتيست: يوم {i}/{total} ({day}) · "
+                        f"صفقات حتى الآن: {n}")
+
+            res = backtest.run_backtest(self.cfg, client, start, end,
+                                        progress=_progress)
             self.telegram.send(backtest.format_report(res))
             logger.info("اكتمل الباكتيست التلقائي (%d صفقة)", len(res.trades))
             # ── معايرة العتبات A/B (اقتراح أفضل عتبات — لا تطبيق) ──
