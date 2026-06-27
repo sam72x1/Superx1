@@ -69,6 +69,10 @@ class Config:
     massive_api_key: str = ""
     massive_rest_base: str = "https://api.massive.com"
     massive_ws_url: str = "wss://socket.massive.com/stocks"
+    # مهلة كل نداء REST (ث) + إعادة المحاولة على الأعطال العابرة (مهلة/429/5xx)
+    # — يمنع فشلًا شبكيًا عابرًا من كسر دورة/باكتيست (best-effort، القسم 3).
+    http_timeout: float = 20.0
+    http_max_retries: int = 3
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
@@ -223,6 +227,8 @@ class Config:
             massive_api_key=_s("MASSIVE_API_KEY", ""),
             massive_rest_base=_s("MASSIVE_REST_BASE", "https://api.massive.com"),
             massive_ws_url=_s("MASSIVE_WS_URL", "wss://socket.massive.com/stocks"),
+            http_timeout=_f("HTTP_TIMEOUT", 20.0),
+            http_max_retries=_i("HTTP_MAX_RETRIES", 3),
             telegram_bot_token=_s("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=_s("TELEGRAM_CHAT_ID", ""),
             db_path=_s("DB_PATH", "/var/data/runner_scanner.sqlite3"),

@@ -14,6 +14,7 @@ JSON خام. الأعطال تُرفع كـ MassiveError ليلتقطها monito
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Optional
 
 import requests
@@ -42,28 +43,51 @@ class MassiveClient:
 
     # ── طبقة النقل ────────────────────────────────────────────────
     def _get(self, path: str, params: dict[str, Any] | None = None,
-             timeout: float = 15.0) -> dict[str, Any]:
+             timeout: float | None = None) -> dict[str, Any]:
+        """نداء REST مع إعادة محاولة على الأعطال **العابرة** (مهلة/شبكة/429/5xx)
+        بتراجع أسّي — حتى لا يكسر فشلٌ لحظيّ دورة المسح أو الباكتيست (القسم 3).
+        الأخطاء الدائمة (401/4xx) تُرفع فورًا بلا إعادة (لا فائدة من تكرارها).
+        """
         url = f"{self.cfg.massive_rest_base}{path}"
-        try:
-            resp = self._http.get(url, params=params or {}, timeout=timeout)
-        except requests.RequestException as exc:
-            raise MassiveError(f"شبكة فشلت على {path}: {exc}") from exc
-        if resp.status_code == 401:
-            raise MassiveError("مصادقة مرفوضة (401) — تأكّد من MASSIVE_API_KEY")
-        if resp.status_code == 429:
+        timeout = timeout if timeout is not None else self.cfg.http_timeout
+        retries = max(0, self.cfg.http_max_retries)
+        for attempt in range(retries + 1):
+            last = attempt == retries
             try:
-                ra = float(resp.headers.get("Retry-After", 0)) or None
-            except (TypeError, ValueError):
-                ra = None
-            logger.warning("Massive 429 — Retry-After=%s", ra)
-            raise MassiveError(
-                "تجاوز حدّ الطلبات (429) — خفّض معدّل الاستدعاء", retry_after=ra)
-        if resp.status_code >= 400:
-            raise MassiveError(f"خطأ {resp.status_code} على {path}: {resp.text[:200]}")
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise MassiveError(f"رد غير JSON من {path}") from exc
+                resp = self._http.get(url, params=params or {}, timeout=timeout)
+            except requests.RequestException as exc:
+                if last:
+                    raise MassiveError(f"شبكة فشلت على {path}: {exc}") from exc
+                time.sleep(min(2.0 ** attempt, 8.0))
+                continue
+            if resp.status_code == 401:
+                raise MassiveError("مصادقة مرفوضة (401) — تأكّد من MASSIVE_API_KEY")
+            if resp.status_code == 429:
+                try:
+                    ra = float(resp.headers.get("Retry-After", 0)) or None
+                except (TypeError, ValueError):
+                    ra = None
+                logger.warning("Massive 429 — Retry-After=%s", ra)
+                if last:
+                    raise MassiveError(
+                        "تجاوز حدّ الطلبات (429) — خفّض معدّل الاستدعاء",
+                        retry_after=ra)
+                time.sleep(ra if ra else min(2.0 ** attempt, 8.0))
+                continue
+            if resp.status_code >= 500:    # خطأ خادم عابر → أعد المحاولة
+                if last:
+                    raise MassiveError(
+                        f"خطأ {resp.status_code} على {path}: {resp.text[:200]}")
+                time.sleep(min(2.0 ** attempt, 8.0))
+                continue
+            if resp.status_code >= 400:    # خطأ دائم (4xx) → لا إعادة
+                raise MassiveError(
+                    f"خطأ {resp.status_code} على {path}: {resp.text[:200]}")
+            try:
+                return resp.json()
+            except ValueError as exc:
+                raise MassiveError(f"رد غير JSON من {path}") from exc
+        raise MassiveError(f"تعذّر الاتصال بـ {path} بعد {retries + 1} محاولات")
 
     # ── Full Market Snapshot (كشف +20%) ───────────────────────────
     def full_snapshot(self) -> list[SnapshotEntry]:

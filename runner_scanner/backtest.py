@@ -240,11 +240,17 @@ def simulate_day(cfg: Config, base: MassiveClient, day: str,
         funnel["considered"] += len(cands)
     for ticker, _chg in cands:
         pc = prev_close[ticker]
-        full5 = base.bars_5min(ticker, day, day)
+        # best-effort (القسم 3): فشل شبكي لسهم واحد يتخطّاه ولا يكسر الباكتيست.
+        try:
+            full5 = base.bars_5min(ticker, day, day)
+            full1 = base.bars_1min(ticker, day, day)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("باكتيست جلب شموع %s@%s فشل: %s", ticker, day, exc)
+            _bump("error")
+            continue
         if not full5:
             _bump("no_5min")
             continue
-        full1 = base.bars_1min(ticker, day, day)
         # شموع اليوم التي يكون فيها السهم «رنر» (تغيّره ≥ الحدّ) = دورات المسح
         # التي يظهر فيها في أعلى-N حيًّا. نفحصه عند كلٍّ حتى **أول نجاح** (تنبيه
         # واحد/سهم/يوم) — يطابق المسح المتكرّر للبوت الحي تمامًا: المرفوض يُعاد

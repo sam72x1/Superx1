@@ -200,6 +200,19 @@ def test_reevaluates_until_pass_like_live():
     assert res.funnel["rejected"] == 0            # نجا، لم يُرفض نهائيًا
 
 
+def test_backtest_survives_fetch_failure():
+    """فشل شبكي لسهم لا يكسر الباكتيست (best-effort) — يتخطّاه ويكمل."""
+
+    class FlakyBase(MockBase):
+        def bars_5min(self, t, s, e):
+            raise RuntimeError("Read timed out")
+
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest.run_backtest(cfg, FlakyBase(), "2026-06-26", "2026-06-26")
+    assert res.days == 1                       # لم ينهَر
+    assert res.funnel["error"] >= 1            # عُدّ الفشل، لم يُسقط الباكتيست
+
+
 def test_day_candidates_pool_wider_than_live_top_n():
     """مجمّع الباكتيست = backtest_top_n (أوسع من top_n_runners الحي = 15)."""
     cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
