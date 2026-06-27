@@ -285,41 +285,51 @@ class Scanner:
         threading.Thread(target=self._run_backtest_bg, args=(et_now,),
                          daemon=True, name="backtest").start()
 
-    def _run_backtest_bg(self, et_now) -> None:
+    def _run_backtest_bg(self, et_now, quick: bool = False) -> None:
         from datetime import timedelta
+        from dataclasses import replace
         from . import backtest, backtest_grid, backtest_notes
+        from .massive_client import MassiveClient
+        lookback = (self.cfg.backtest_quick_days if quick
+                    else self.cfg.backtest_lookback_days)
         end = (et_now.date() - timedelta(days=1)).isoformat()
-        start = (et_now.date()
-                 - timedelta(days=self.cfg.backtest_lookback_days)).isoformat()
+        start = (et_now.date() - timedelta(days=lookback)).isoformat()
+        # عميل سريع الفشل للباكتيست (مهلة قصيرة، إعادة واحدة): النداء البطيء
+        # يُتخطّى بسرعة بدل أن تضاعف الإعادات الطويلة الزمن (آلاف النداءات).
+        bt_cfg = replace(self.cfg, http_timeout=self.cfg.backtest_http_timeout,
+                         http_max_retries=1)
+        run_cfg = bt_cfg
+        if quick:   # معاينة عاجلة: مجمّع أصغر وخطوة أخشن (الكامل للوظيفة الأسبوعية)
+            run_cfg = replace(bt_cfg, backtest_top_n=self.cfg.backtest_quick_top_n,
+                              backtest_scan_step_bars=self.cfg.backtest_quick_step)
+        client = backtest_grid.memoized(MassiveClient(bt_cfg))
+        label = "سريع (معاينة)" if quick else "كامل"
         try:
             self.telegram.send(
-                f"🧪 <b>باكتيست تلقائي</b> {start} → {end}\n"
-                "<i>يقيس حافة الاستراتيجية على الماضي — قد يأخذ دقائق…</i>")
-            # عميل مُذكّر: الجلب الشبكي مرة واحدة يُشارَك بين التقرير والمعايرة
-            client = backtest_grid.memoized(self.client)
+                f"🧪 <b>باكتيست {label}</b> {start} → {end}\n"
+                "<i>يقيس حافة الاستراتيجية على الماضي…</i>")
 
-            # مؤشّر تقدّم: تحديث كل ربع (الباكتيست I/O ثقيل — لا يكون صندوقًا أسود)
+            # مؤشّر تقدّم متكرّر (كل يوم تقريبًا) — لا يكون صندوقًا أسود
             def _progress(i, total, day, n):
-                stepn = max(1, total // 4)
+                stepn = max(1, total // 10)
                 if i == 1 or i == total or i % stepn == 0:
                     self.telegram.send(
-                        f"⏳ باكتيست: يوم {i}/{total} ({day}) · "
-                        f"صفقات حتى الآن: {n}")
+                        f"⏳ يوم {i}/{total} ({day}) · صفقات حتى الآن: {n}")
 
-            res = backtest.run_backtest(self.cfg, client, start, end,
+            res = backtest.run_backtest(run_cfg, client, start, end,
                                         progress=_progress)
             self.telegram.send(backtest.format_report(res))
-            logger.info("اكتمل الباكتيست التلقائي (%d صفقة)", len(res.trades))
-            # ── معايرة العتبات A/B (اقتراح أفضل عتبات — لا تطبيق) ──
+            logger.info("اكتمل الباكتيست (%d صفقة)", len(res.trades))
+            # ── معايرة العتبات A/B — للكامل فقط (ثقيلة، تتخطّاها المعاينة) ──
             grid = None
-            if self.cfg.backtest_grid_enabled:
-                grid = backtest_grid.run_grid(self.cfg, client, start, end)
+            if not quick and self.cfg.backtest_grid_enabled:
+                grid = backtest_grid.run_grid(run_cfg, client, start, end)
                 self.telegram.send(backtest_grid.format_grid_report(grid))
                 logger.info("اكتملت معايرة العتبات A/B")
             # ── ملاحظات تحليلية (تشرح الأرقام والقمع وتقترح — للمراجعة) ──
             if self.cfg.backtest_notes_enabled:
                 self.telegram.send(backtest_notes.build_notes(
-                    self.cfg, res, grid=grid, client=self.claude))
+                    run_cfg, res, grid=grid, client=self.claude))
                 logger.info("أُرسلت ملاحظات الباكتيست")
         except Exception as exc:  # noqa: BLE001
             logger.exception("الباكتيست التلقائي فشل")

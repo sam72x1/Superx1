@@ -273,9 +273,11 @@ class TelegramAssistant:
         if not self.cfg.massive_api_key:
             self._reply("الباكتيست يحتاج MASSIVE_API_KEY.")
             return
-        self._reply("🚀 بدء الباكتيست + معايرة العتبات الآن… "
-                    "(قد يأخذ دقائق، تصلك النتائج تباعًا)")
+        self._reply("🚀 بدء باكتيست <b>سريع (معاينة)</b> الآن… "
+                    "(دقائق قليلة، تصلك النتائج تباعًا)\n"
+                    "<i>الباكتيست الكامل يشتغل تلقائيًا كل سبت في الخلفية.</i>")
         threading.Thread(target=self.sc._run_backtest_bg, args=(now_et(),),
+                         kwargs={"quick": True},
                          daemon=True, name="backtest-manual").start()
 
     def _context_text(self) -> str:

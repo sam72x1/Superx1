@@ -178,6 +178,14 @@ class Config:
     # يغطّي 3 جلسات (حتى 45 مختلفًا)؛ نوسّع المجمّع هنا ليقارب اتحاد قادتها.
     # الترتيب بالقمة اليومية (تشمل الجلسات الممتدة) — تقريب أمين، رخيص الجلب.
     backtest_top_n: int = 45
+    # مهلة قصيرة لنداءات الباكتيست (ث): النداء البطيء يُتخطّى بسرعة بدل أن
+    # تضاعف الإعادات الطويلة الزمن (الباكتيست = آلاف النداءات، فالفشل السريع أهمّ).
+    backtest_http_timeout: float = 8.0
+    # وضع «سريع» للتشغيل اليدوي (/backtest): معاينة عاجلة بدل انتظار ساعات.
+    # الوظيفة الأسبوعية تبقى كاملة (45 يوم/45 مرشّح) في الخلفية.
+    backtest_quick_days: int = 5          # نافذة المعاينة السريعة (أيام تقويم)
+    backtest_quick_top_n: int = 12        # مرشّحون/يوم في المعاينة السريعة
+    backtest_quick_step: int = 2          # فحص كل شمعتين 5د في المعاينة السريعة
 
     # ── معايرة العتبات A/B (يقترح أفضل عتبات تاريخيًا — لا يطبّق) ───
     # يجرّب تغيير عتبة واحدة كل مرة على نفس البيانات (no-lookahead) ويرتّب
@@ -282,6 +290,10 @@ class Config:
             backtest_hour=_i("BACKTEST_HOUR", 6),
             backtest_scan_step_bars=_i("BACKTEST_SCAN_STEP_BARS", 1),
             backtest_top_n=_i("BACKTEST_TOP_N", 45),
+            backtest_http_timeout=_f("BACKTEST_HTTP_TIMEOUT", 8.0),
+            backtest_quick_days=_i("BACKTEST_QUICK_DAYS", 5),
+            backtest_quick_top_n=_i("BACKTEST_QUICK_TOP_N", 12),
+            backtest_quick_step=_i("BACKTEST_QUICK_STEP", 2),
             backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", True),
             backtest_grid_readiness=_ftuple(
                 "BACKTEST_GRID_READINESS", (55.0, 60.0, 65.0, 70.0)),

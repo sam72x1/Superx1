@@ -76,12 +76,12 @@ def test_assistant_backtest_triggers_run():
     sc = _scanner()
     sent = _capture(sc)
     calls = []
-    sc._run_backtest_bg = lambda et_now: calls.append(et_now)   # بلا شبكة
+    sc._run_backtest_bg = lambda et_now, quick=False: calls.append(quick)  # بلا شبكة
     sc.assistant._dispatch("/backtest")
     import time
     time.sleep(0.1)                                  # نمهل الثريد
-    assert any("بدء الباكتيست" in m for m in sent)
-    assert len(calls) == 1                            # شُغّل فعلًا
+    assert any("بدء باكتيست" in m for m in sent)
+    assert calls == [True]                            # شُغّل بوضع سريع
     sc.shutdown()
 
 
@@ -89,7 +89,7 @@ def test_assistant_backtest_needs_key():
     sc = _scanner()
     sc.cfg.massive_api_key = ""               # محاكاة غياب المفتاح
     sent = _capture(sc)
-    sc._run_backtest_bg = lambda et_now: None
+    sc._run_backtest_bg = lambda et_now, quick=False: None
     sc.assistant._dispatch("/backtest")
     assert any("MASSIVE_API_KEY" in m for m in sent)
     sc.shutdown()
