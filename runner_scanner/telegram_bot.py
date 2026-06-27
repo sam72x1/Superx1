@@ -38,7 +38,7 @@ _HELP = (
     "/top — أقوى الأسهم الآن\n"
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
-    "/backtest — معاينة سريعة (كامل: «/backtest كامل» · شهر: «/backtest 4»)\n"
+    "/backtest — معاينة سريعة (كامل: «/backtest كامل» · شهر: «/backtest شهر 4»)\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
     "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
     "/diag RMZ — بيانات السهم الخام (تشخيص الفيد)\n"
@@ -276,14 +276,17 @@ class TelegramAssistant:
         if not self.cfg.massive_api_key:
             self._reply("الباكتيست يحتاج MASSIVE_API_KEY.")
             return
-        parts = arg.strip().split()
-        # «/backtest <شهر> [سنة]» → باكتيست شهر تقويمي محدّد
-        if parts and parts[0].isdigit() and 1 <= int(parts[0]) <= 12:
-            self._start_month_backtest(
-                int(parts[0]),
-                int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None)
+        # تحليل متسامح: نلتقط رقم الشهر (1–12) والسنة (≥2000) من أي صياغة
+        # («شهر 4»، «شهر 4 كامل»، «4»، «4 2025») ونتجاهل الكلمات الزائدة.
+        toks = arg.strip().split()
+        nums = [int(t) for t in toks if t.isdigit()]
+        month = next((n for n in nums if 1 <= n <= 12), None)
+        year = next((n for n in nums if n >= 2000), None)
+        if month is not None:
+            self._start_month_backtest(month, year)
             return
-        full = arg.strip().lower() in ("كامل", "الكامل", "شهر", "الشهر", "full")
+        full = any(t.lower() in ("كامل", "الكامل", "شهر", "الشهر", "full")
+                   for t in toks)
         if full:
             self._reply("🚀 بدء باكتيست <b>كامل (الشهر)</b> الآن… "
                         "(دقائق، جلب متوازٍ، تصلك النتائج تباعًا مع مؤشّر تقدّم)")
