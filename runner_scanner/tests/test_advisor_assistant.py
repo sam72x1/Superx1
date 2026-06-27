@@ -87,6 +87,20 @@ def test_assistant_backtest_triggers_run():
     sc.shutdown()
 
 
+def test_assistant_backtest_month_uses_explicit_dates():
+    sc = _scanner()
+    sent = _capture(sc)
+    calls = []
+    sc._run_backtest_bg = (lambda et_now, quick=False, with_grid=True,
+                           start=None, end=None: calls.append((start, end)))
+    sc.assistant._dispatch("/backtest 4 2025")     # أبريل 2025 كاملًا
+    import time
+    time.sleep(0.1)
+    assert any("أبريل 2025" in m for m in sent)
+    assert calls == [("2025-04-01", "2025-04-30")]
+    sc.shutdown()
+
+
 def test_assistant_backtest_needs_key():
     sc = _scanner()
     sc.cfg.massive_api_key = ""               # محاكاة غياب المفتاح

@@ -286,15 +286,18 @@ class Scanner:
                          daemon=True, name="backtest").start()
 
     def _run_backtest_bg(self, et_now, quick: bool = False,
-                         with_grid: bool = True) -> None:
+                         with_grid: bool = True,
+                         start: str | None = None, end: str | None = None) -> None:
         from datetime import timedelta
         from dataclasses import replace
         from . import backtest, backtest_grid, backtest_notes
         from .massive_client import MassiveClient
-        lookback = (self.cfg.backtest_quick_days if quick
-                    else self.cfg.backtest_lookback_days)
-        end = (et_now.date() - timedelta(days=1)).isoformat()
-        start = (et_now.date() - timedelta(days=lookback)).isoformat()
+        # تواريخ صريحة (شهر محدّد) أو نافذة افتراضية من الآن للخلف
+        if start is None or end is None:
+            lookback = (self.cfg.backtest_quick_days if quick
+                        else self.cfg.backtest_lookback_days)
+            end = (et_now.date() - timedelta(days=1)).isoformat()
+            start = (et_now.date() - timedelta(days=lookback)).isoformat()
         # عميل سريع الفشل للباكتيست (مهلة قصيرة، إعادة واحدة): النداء البطيء
         # يُتخطّى بسرعة بدل أن تضاعف الإعادات الطويلة الزمن (آلاف النداءات).
         bt_cfg = replace(self.cfg, http_timeout=self.cfg.backtest_http_timeout,

@@ -38,7 +38,7 @@ _HELP = (
     "/top — أقوى الأسهم الآن\n"
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
-    "/backtest — معاينة سريعة (أو «/backtest كامل» للشهر)\n"
+    "/backtest — معاينة سريعة (كامل: «/backtest كامل» · شهر: «/backtest 4»)\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
     "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
     "/diag RMZ — بيانات السهم الخام (تشخيص الفيد)\n"
@@ -269,10 +269,19 @@ class TelegramAssistant:
 
     def _handle_backtest(self, arg: str = "") -> None:
         """تشغيل الباكتيست الآن (يدويًا) — بلا انتظار السبت وبلا قفل التكرار.
-        افتراضيًا «معاينة سريعة»؛ «/backtest كامل» يشغّل الشهر كاملًا (متوازٍ،
-        دقائق). يشتغل في الخلفية والنتائج تصلك تباعًا مع مؤشّر تقدّم."""
+        - «/backtest» → معاينة سريعة (أيام قليلة).
+        - «/backtest كامل» → آخر ~شهر كامل.
+        - «/backtest 4 [2025]» → شهر تقويمي محدّد كاملًا (لتجميع عدّة شهور).
+        يشتغل في الخلفية والنتائج تصلك تباعًا مع مؤشّر تقدّم."""
         if not self.cfg.massive_api_key:
             self._reply("الباكتيست يحتاج MASSIVE_API_KEY.")
+            return
+        parts = arg.strip().split()
+        # «/backtest <شهر> [سنة]» → باكتيست شهر تقويمي محدّد
+        if parts and parts[0].isdigit() and 1 <= int(parts[0]) <= 12:
+            self._start_month_backtest(
+                int(parts[0]),
+                int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None)
             return
         full = arg.strip().lower() in ("كامل", "الكامل", "شهر", "الشهر", "full")
         if full:
@@ -285,6 +294,36 @@ class TelegramAssistant:
         threading.Thread(target=self.sc._run_backtest_bg, args=(now_et(),),
                          kwargs={"quick": not full, "with_grid": False},
                          daemon=True, name="backtest-manual").start()
+
+    _MONTHS_AR = ("", "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+                  "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر")
+
+    def _start_month_backtest(self, month: int, year: int | None) -> None:
+        """باكتيست شهر تقويمي كامل (1→آخر يوم). السنة الافتراضية = الحالية،
+        وإن كان الشهر لم يأتِ بعد هذا العام → العام الماضي. النهاية لا تتجاوز أمس."""
+        import calendar
+        from datetime import date, timedelta
+        now = now_et()
+        y = year or now.year
+        if year is None and date(y, month, 1) > now.date():
+            y -= 1
+        start = date(y, month, 1)
+        end = date(y, month, calendar.monthrange(y, month)[1])
+        yesterday = now.date() - timedelta(days=1)
+        if start > yesterday:
+            self._reply("هذا الشهر في المستقبل — لا توجد بيانات بعد.")
+            return
+        if end > yesterday:
+            end = yesterday   # شهر جارٍ: لا نتجاوز أمس
+        self._reply(
+            f"🚀 باكتيست <b>شهر {self._MONTHS_AR[month]} {y}</b> "
+            f"({start.isoformat()} → {end.isoformat()})…\n"
+            "<i>كامل، جلب متوازٍ، تصلك النتائج تباعًا مع مؤشّر تقدّم.</i>")
+        threading.Thread(
+            target=self.sc._run_backtest_bg, args=(now_et(),),
+            kwargs={"quick": False, "with_grid": False,
+                    "start": start.isoformat(), "end": end.isoformat()},
+            daemon=True, name="backtest-month").start()
 
     def _context_text(self) -> str:
         s = advisor._summarize_day(self.cfg, self.sc.store, now_et())
