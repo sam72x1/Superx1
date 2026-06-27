@@ -287,7 +287,7 @@ class Scanner:
 
     def _run_backtest_bg(self, et_now) -> None:
         from datetime import timedelta
-        from . import backtest, backtest_grid
+        from . import backtest, backtest_grid, backtest_notes
         end = (et_now.date() - timedelta(days=1)).isoformat()
         start = (et_now.date()
                  - timedelta(days=self.cfg.backtest_lookback_days)).isoformat()
@@ -301,10 +301,16 @@ class Scanner:
             self.telegram.send(backtest.format_report(res))
             logger.info("اكتمل الباكتيست التلقائي (%d صفقة)", len(res.trades))
             # ── معايرة العتبات A/B (اقتراح أفضل عتبات — لا تطبيق) ──
+            grid = None
             if self.cfg.backtest_grid_enabled:
                 grid = backtest_grid.run_grid(self.cfg, client, start, end)
                 self.telegram.send(backtest_grid.format_grid_report(grid))
                 logger.info("اكتملت معايرة العتبات A/B")
+            # ── ملاحظات تحليلية (تشرح الأرقام والقمع وتقترح — للمراجعة) ──
+            if self.cfg.backtest_notes_enabled:
+                self.telegram.send(backtest_notes.build_notes(
+                    self.cfg, res, grid=grid, client=self.claude))
+                logger.info("أُرسلت ملاحظات الباكتيست")
         except Exception as exc:  # noqa: BLE001
             logger.exception("الباكتيست التلقائي فشل")
             self.telegram.send(f"⚠️ تعذّر الباكتيست التلقائي: {exc}")
