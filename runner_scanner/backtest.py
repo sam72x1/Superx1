@@ -193,8 +193,32 @@ def _day_candidates(cfg: Config, grouped: list[dict],
     return cands[:cfg.top_n_runners]
 
 
+# ── قمع الترشيح (تشخيص: أين يموت المرشّحون؟) ──────────────────────
+# يجيب عن سؤال «ليش العدد قليل؟»: كم اعتُبر، كم فُقد لنقص بيانات تاريخية،
+# كم رُفض وبأي بوّابة. مب منطق تداول — تشخيص فقط (لا يغيّر النتائج).
+def new_funnel() -> dict:
+    return {"considered": 0, "no_5min": 0, "no_trigger": 0,
+            "bad_snapshot": 0, "error": 0, "rejected": 0, "alerts": 0,
+            "reject_reasons": {}}
+
+
+def _reject_bucket(reason: str) -> str:
+    """يصنّف سبب الرفض لفئة موجزة (لتجميع «أكثر بوّابة ترفض»)."""
+    r = reason or ""
+    pairs = [("فلوت", "فلوت"), ("RVol", "RVol"), ("بارابولِك", "بارابولِك"),
+             ("جاهزية", "جاهزية/درجة"), ("درجة", "جاهزية/درجة"),
+             ("نوع الورقة", "نوع/بورصة"), ("بورصة", "نوع/بورصة"),
+             ("سعر", "سعر"), ("حجم", "حجم"), ("الشموع", "نقص شموع"),
+             ("T12", "توقّف"), ("توقّف", "توقّف"),
+             ("تخفيف", "تخفيف SEC"), ("هبوطي", "محفّز هبوطي")]
+    for needle, label in pairs:
+        if needle in r:
+            return label
+    return "أخرى"
+
+
 def simulate_day(cfg: Config, base: MassiveClient, day: str,
-                 static_cache: dict) -> list[dict]:
+                 static_cache: dict, funnel: dict | None = None) -> list[dict]:
     """يحاكي يوم تداول كاملًا → قائمة صفقات (تنبيهات مُحاكاة) بنتائجها."""
     prev = _prev_trading_day(day)
     grouped = base.grouped_daily(day)
@@ -203,22 +227,32 @@ def simulate_day(cfg: Config, base: MassiveClient, day: str,
     prev_close = _prev_close_map(base.grouped_daily(prev))
     trades: list[dict] = []
 
-    for ticker, _chg in _day_candidates(cfg, grouped, prev_close):
+    def _bump(key: str):
+        if funnel is not None:
+            funnel[key] += 1
+
+    cands = _day_candidates(cfg, grouped, prev_close)
+    if funnel is not None:
+        funnel["considered"] += len(cands)
+    for ticker, _chg in cands:
         pc = prev_close[ticker]
         full5 = base.bars_5min(ticker, day, day)
         if not full5:
+            _bump("no_5min")
             continue
         # لحظة الزناد: أول شمعة 5د يعبر فيها السعر الحدّ عن إغلاق أمس
         trig = next((b for b in full5
                      if pc > 0 and (b.c - pc) / pc * 100.0 >= cfg.trigger_change_pct),
                     None)
         if trig is None:
+            _bump("no_trigger")
             continue
         asof = trig.t_ms
         up_to = [b for b in full5 if b.t_ms <= asof]
         post = [b for b in full5 if b.t_ms > asof]
         snap = _build_snapshot(ticker, pc, up_to)
         if snap is None or not snap.is_valid:
+            _bump("bad_snapshot")
             continue
         full1 = base.bars_1min(ticker, day, day)
         up_to_1 = [b for b in full1 if b.t_ms <= asof]
@@ -230,9 +264,16 @@ def simulate_day(cfg: Config, base: MassiveClient, day: str,
                 session=classify_session(cfg, asof_dt), et_now=asof_dt)
         except Exception as exc:  # noqa: BLE001 — سهم واحد لا يكسر اليوم
             logger.debug("باكتيست %s@%s فشل: %s", ticker, day, exc)
+            _bump("error")
             continue
         if cand.is_rejected:
+            _bump("rejected")
+            if funnel is not None:
+                bucket = _reject_bucket(cand.rejected_reason or "")
+                funnel["reject_reasons"][bucket] = \
+                    funnel["reject_reasons"].get(bucket, 0) + 1
             continue
+        _bump("alerts")
         result, gain, draw = simulate_outcome(
             snap.last_price, cand.risk, post, asof, cfg.outcome_window_min)
         trades.append({
@@ -254,6 +295,7 @@ class BacktestResult:
     end: str
     days: int = 0
     trades: list[dict] = field(default_factory=list)
+    funnel: dict = field(default_factory=dict)
 
     def stats(self) -> dict:
         n = len(self.trades)
@@ -307,6 +349,22 @@ def format_report(res: BacktestResult) -> str:
                                      "70-80" if t["readiness"] < 80 else "80+"))
         b("حسب الدرجة", lambda t: ("60-70" if t["score"] < 70 else
                                    "70-80" if t["score"] < 80 else "80+"))
+    # ── قمع الترشيح: يشرح «ليش العدد قليل؟» (أين مات المرشّحون) ──
+    f = res.funnel
+    if f and f.get("considered"):
+        lines.append(
+            f"\n🔎 قمع الترشيح (من {f['considered']} مرشّحًا اعتُبروا):")
+        lines.append(f"  • فُقدت شموع 5د تاريخية: {f['no_5min']}")
+        lines.append(f"  • ما عبرت الحدّ بإغلاق 5د: {f['no_trigger']}")
+        if f.get("bad_snapshot"):
+            lines.append(f"  • سنابشوت غير صالح: {f['bad_snapshot']}")
+        if f.get("error"):
+            lines.append(f"  • خطأ معالجة: {f['error']}")
+        lines.append(f"  • رُفضت بالبوّابات: {f['rejected']}")
+        for reason, cnt in sorted(f.get("reject_reasons", {}).items(),
+                                  key=lambda x: -x[1]):
+            lines.append(f"      ↳ {reason}: {cnt}")
+        lines.append(f"  ✅ نجت كتنبيه: {f['alerts']}")
     lines.append("\n⚠️ تقدير تاريخي (لا يضمن المستقبل؛ بلا انزلاق/دفتر أوامر).")
     return "\n".join(lines)
 
@@ -314,10 +372,11 @@ def format_report(res: BacktestResult) -> str:
 def run_backtest(cfg: Config, base: MassiveClient, start: str, end: str,
                  progress=None) -> BacktestResult:
     days = trading_days(start, end)
-    res = BacktestResult(start=start, end=end, days=len(days))
+    res = BacktestResult(start=start, end=end, days=len(days),
+                         funnel=new_funnel())
     static_cache: dict = {}
     for i, day in enumerate(days, 1):
-        res.trades.extend(simulate_day(cfg, base, day, static_cache))
+        res.trades.extend(simulate_day(cfg, base, day, static_cache, res.funnel))
         if progress:
             progress(i, len(days), day, len(res.trades))
     return res

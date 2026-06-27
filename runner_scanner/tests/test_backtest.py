@@ -137,3 +137,34 @@ def test_run_backtest_end_to_end():
     assert runr and runr[0]["result"] in ("win", "loss", "timeout")
     report = backtest.format_report(res)
     assert "باكتيست" in report
+
+
+# ── قمع الترشيح (تشخيص: أين يموت المرشّحون؟) ──────────────────────
+def test_funnel_counts_no_5min_skip():
+    """مرشّح بلا شموع 5د تاريخية يُعدّ في «فُقدت شموع» لا يختفي صامتًا."""
+
+    class NoBars(MockBase):
+        def bars_5min(self, t, s, e):
+            return []                    # لا شموع تاريخية لأي رمز
+
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest.run_backtest(cfg, NoBars(), "2026-06-26", "2026-06-26")
+    assert res.funnel["considered"] >= 1
+    assert res.funnel["no_5min"] >= 1
+    assert res.funnel["alerts"] == 0
+    # التقرير يبيّن القمع (يشرح ليش العدد قليل)
+    assert "قمع الترشيح" in backtest.format_report(res)
+
+
+def test_funnel_records_alert_path():
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest.run_backtest(cfg, MockBase(), "2026-06-26", "2026-06-26")
+    assert res.funnel["considered"] >= 1
+    assert res.funnel["alerts"] == len(res.trades)
+
+
+def test_reject_bucket_classifies():
+    assert backtest._reject_bucket("RVol 3.0x < 5x") == "RVol"
+    assert backtest._reject_bucket("فلوت 90,000,000 > 40,000,000") == "فلوت"
+    assert backtest._reject_bucket("جاهزية فنية 45 < 60") == "جاهزية/درجة"
+    assert backtest._reject_bucket("شيء غريب") == "أخرى"
