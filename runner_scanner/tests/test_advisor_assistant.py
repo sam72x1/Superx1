@@ -115,6 +115,22 @@ def test_assistant_backtest_month_tolerant_phrasing():
     sc.shutdown()
 
 
+def test_assistant_backtest_queue_runs_months_sequentially():
+    """«/backtest 3 4 2025» يشغّل شهرين بالتتابع (طابور ليلي)."""
+    sc = _scanner()
+    _capture(sc)
+    calls = []
+    sc._run_backtest_bg = (lambda et_now, quick=False, with_grid=True,
+                           start=None, end=None: calls.append((start, end)))
+    sc.assistant._dispatch("/backtest 3 4 2025")
+    import time
+    time.sleep(0.2)
+    # مارس ثم أبريل 2025 بالتتابع، بالترتيب
+    assert calls == [("2025-03-01", "2025-03-31"),
+                     ("2025-04-01", "2025-04-30")]
+    sc.shutdown()
+
+
 def test_assistant_backtest_needs_key():
     sc = _scanner()
     sc.cfg.massive_api_key = ""               # محاكاة غياب المفتاح

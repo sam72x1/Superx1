@@ -38,7 +38,7 @@ _HELP = (
     "/top — أقوى الأسهم الآن\n"
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
-    "/backtest — معاينة سريعة (كامل: «/backtest كامل» · شهر: «/backtest شهر 4»)\n"
+    "/backtest — معاينة (شهر: «/backtest شهر 4» · طابور: «/backtest 3 4 5»)\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
     "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
     "/diag RMZ — بيانات السهم الخام (تشخيص الفيد)\n"
@@ -280,10 +280,14 @@ class TelegramAssistant:
         # («شهر 4»، «شهر 4 كامل»، «4»، «4 2025») ونتجاهل الكلمات الزائدة.
         toks = arg.strip().split()
         nums = [int(t) for t in toks if t.isdigit()]
-        month = next((n for n in nums if 1 <= n <= 12), None)
+        months = [n for n in nums if 1 <= n <= 12]
         year = next((n for n in nums if n >= 2000), None)
-        if month is not None:
-            self._start_month_backtest(month, year)
+        if months:
+            # شهر واحد → فوري؛ عدّة أشهر → طابور متتابع (للتشغيل الليلي)
+            if len(months) == 1:
+                self._start_month_backtest(months[0], year)
+            else:
+                self._start_months_queue(months, year)
             return
         full = any(t.lower() in ("كامل", "الكامل", "شهر", "الشهر", "full")
                    for t in toks)
@@ -301,9 +305,9 @@ class TelegramAssistant:
     _MONTHS_AR = ("", "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
                   "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر")
 
-    def _start_month_backtest(self, month: int, year: int | None) -> None:
-        """باكتيست شهر تقويمي كامل (1→آخر يوم). السنة الافتراضية = الحالية،
-        وإن كان الشهر لم يأتِ بعد هذا العام → العام الماضي. النهاية لا تتجاوز أمس."""
+    def _month_range(self, month: int, year: int | None):
+        """يرجّع (start_iso, end_iso, label) لشهر تقويمي كامل، أو None لو مستقبلي.
+        السنة الافتراضية = الحالية، وإن لم يأتِ الشهر بعد → العام الماضي."""
         import calendar
         from datetime import date, timedelta
         now = now_et()
@@ -314,19 +318,49 @@ class TelegramAssistant:
         end = date(y, month, calendar.monthrange(y, month)[1])
         yesterday = now.date() - timedelta(days=1)
         if start > yesterday:
+            return None                       # شهر مستقبلي بالكامل
+        if end > yesterday:
+            end = yesterday                   # شهر جارٍ: لا نتجاوز أمس
+        return start.isoformat(), end.isoformat(), f"{self._MONTHS_AR[month]} {y}"
+
+    def _start_month_backtest(self, month: int, year: int | None) -> None:
+        """باكتيست شهر تقويمي واحد (فوري)."""
+        rng = self._month_range(month, year)
+        if rng is None:
             self._reply("هذا الشهر في المستقبل — لا توجد بيانات بعد.")
             return
-        if end > yesterday:
-            end = yesterday   # شهر جارٍ: لا نتجاوز أمس
+        start, end, label = rng
         self._reply(
-            f"🚀 باكتيست <b>شهر {self._MONTHS_AR[month]} {y}</b> "
-            f"({start.isoformat()} → {end.isoformat()})…\n"
+            f"🚀 باكتيست <b>شهر {label}</b> ({start} → {end})…\n"
             "<i>كامل، جلب متوازٍ، تصلك النتائج تباعًا مع مؤشّر تقدّم.</i>")
         threading.Thread(
             target=self.sc._run_backtest_bg, args=(now_et(),),
-            kwargs={"quick": False, "with_grid": False,
-                    "start": start.isoformat(), "end": end.isoformat()},
+            kwargs={"quick": False, "with_grid": False, "start": start, "end": end},
             daemon=True, name="backtest-month").start()
+
+    def _start_months_queue(self, months: list[int], year: int | None) -> None:
+        """طابور: عدّة أشهر **بالتتابع** (واحد ثم الذي يليه) — للتشغيل الليلي.
+        لا يشغّلها معًا (يتجنّب ازدحام الذاكرة/المعالج)؛ نتائج كل شهر فور انتهائه."""
+        ranges = [r for r in (self._month_range(m, year) for m in months) if r]
+        if not ranges:
+            self._reply("الأشهر المطلوبة كلها مستقبلية — لا بيانات.")
+            return
+        labels = "، ".join(r[2] for r in ranges)
+        self._reply(
+            f"🚀 <b>طابور باكتيست</b> ({len(ranges)} أشهر): {labels}\n"
+            "<i>تشتغل بالتتابع؛ نتائج كل شهر تصلك فور انتهائه. مناسب للنوم.</i>")
+
+        def _worker():
+            for start, end, label in ranges:
+                try:
+                    self.sc._run_backtest_bg(now_et(), quick=False,
+                                             with_grid=False, start=start, end=end)
+                except Exception as exc:  # noqa: BLE001 — شهر لا يكسر الطابور
+                    self.sc.telegram.send(f"⚠️ تعذّر باكتيست {label}: {exc}")
+            self.sc.telegram.send("✅ انتهى طابور الباكتيست — كل الأشهر اكتملت.")
+
+        threading.Thread(target=_worker, daemon=True,
+                         name="backtest-queue").start()
 
     def _context_text(self) -> str:
         s = advisor._summarize_day(self.cfg, self.sc.store, now_et())
