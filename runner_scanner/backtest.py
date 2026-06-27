@@ -240,51 +240,73 @@ def simulate_day(cfg: Config, base: MassiveClient, day: str,
         if not full5:
             _bump("no_5min")
             continue
-        # لحظة الزناد: أول شمعة 5د يعبر فيها السعر الحدّ عن إغلاق أمس
-        trig = next((b for b in full5
-                     if pc > 0 and (b.c - pc) / pc * 100.0 >= cfg.trigger_change_pct),
-                    None)
-        if trig is None:
+        full1 = base.bars_1min(ticker, day, day)
+        # شموع اليوم التي يكون فيها السهم «رنر» (تغيّره ≥ الحدّ) = دورات المسح
+        # التي يظهر فيها في أعلى-N حيًّا. نفحصه عند كلٍّ حتى **أول نجاح** (تنبيه
+        # واحد/سهم/يوم) — يطابق المسح المتكرّر للبوت الحي تمامًا: المرفوض يُعاد
+        # فحصه كل دورة (مع تراكم الحجم يرتفع RVol)، لا يُسقَط للأبد عند أول عبور.
+        runner_idx = [i for i, b in enumerate(full5)
+                      if pc > 0 and (b.c - pc) / pc * 100.0 >= cfg.trigger_change_pct]
+        if not runner_idx:
             _bump("no_trigger")
             continue
-        asof = trig.t_ms
-        up_to = [b for b in full5 if b.t_ms <= asof]
-        post = [b for b in full5 if b.t_ms > asof]
-        snap = _build_snapshot(ticker, pc, up_to)
-        if snap is None or not snap.is_valid:
-            _bump("bad_snapshot")
+        step = max(1, cfg.backtest_scan_step_bars)
+        alerted = evaluated = errored = False
+        last_reason = ""
+        for k in range(0, len(runner_idx), step):
+            asof = full5[runner_idx[k]].t_ms
+            up_to = [x for x in full5 if x.t_ms <= asof]
+            snap = _build_snapshot(ticker, pc, up_to)
+            if snap is None or not snap.is_valid:
+                continue
+            up_to_1 = [x for x in full1 if x.t_ms <= asof]
+            asof_dt = datetime.fromtimestamp(
+                asof / 1000, tz=timezone.utc).astimezone(ET)
+            client = AsOfClient(base, day, asof, up_to, up_to_1, static_cache)
+            try:
+                cand = process_candidate(
+                    cfg, client, snap, halts=None,
+                    session=classify_session(cfg, asof_dt), et_now=asof_dt)
+            except Exception as exc:  # noqa: BLE001 — سهم واحد لا يكسر اليوم
+                logger.debug("باكتيست %s@%s فشل: %s", ticker, day, exc)
+                errored = True
+                continue
+            evaluated = True
+            if not cand.is_rejected:
+                # ✅ نجح في هذه الدورة → تنبيه عند لحظتها (دخول = إغلاق الشمعة)
+                post = [x for x in full5 if x.t_ms > asof]
+                result, gain, draw = simulate_outcome(
+                    snap.last_price, cand.risk, post, asof, cfg.outcome_window_min)
+                _bump("alerts")
+                trades.append({
+                    "date": day, "ticker": ticker,
+                    "entry": round(snap.last_price, 4),
+                    "session": cand.session.value,
+                    "score": round(cand.final_score, 1),
+                    "readiness": round(cand.readiness.classic_score, 1)
+                    if cand.readiness else 0,
+                    "rvol": round(cand.momentum.rvol, 1) if cand.momentum else 0,
+                    "had_news": bool(cand.catalyst and cand.catalyst.has_news),
+                    "result": result, "max_gain_pct": round(gain, 1),
+                    "max_draw_pct": round(draw, 1),
+                })
+                alerted = True
+                break
+            last_reason = cand.rejected_reason or ""
+            # بوّابات لا تتغيّر خلال اليوم (فلوت/نوع/بورصة) → لا فائدة من إعادة الفحص
+            if _reject_bucket(last_reason) in ("فلوت", "نوع/بورصة"):
+                break
+        if alerted:
             continue
-        full1 = base.bars_1min(ticker, day, day)
-        up_to_1 = [b for b in full1 if b.t_ms <= asof]
-        asof_dt = datetime.fromtimestamp(asof / 1000, tz=timezone.utc).astimezone(ET)
-        client = AsOfClient(base, day, asof, up_to, up_to_1, static_cache)
-        try:
-            cand = process_candidate(
-                cfg, client, snap, halts=None,
-                session=classify_session(cfg, asof_dt), et_now=asof_dt)
-        except Exception as exc:  # noqa: BLE001 — سهم واحد لا يكسر اليوم
-            logger.debug("باكتيست %s@%s فشل: %s", ticker, day, exc)
-            _bump("error")
+        if not evaluated:
+            _bump("error" if errored else "bad_snapshot")
             continue
-        if cand.is_rejected:
-            _bump("rejected")
-            if funnel is not None:
-                bucket = _reject_bucket(cand.rejected_reason or "")
-                funnel["reject_reasons"][bucket] = \
-                    funnel["reject_reasons"].get(bucket, 0) + 1
-            continue
-        _bump("alerts")
-        result, gain, draw = simulate_outcome(
-            snap.last_price, cand.risk, post, asof, cfg.outcome_window_min)
-        trades.append({
-            "date": day, "ticker": ticker, "entry": round(snap.last_price, 4),
-            "session": cand.session.value, "score": round(cand.final_score, 1),
-            "readiness": round(cand.readiness.classic_score, 1) if cand.readiness else 0,
-            "rvol": round(cand.momentum.rvol, 1) if cand.momentum else 0,
-            "had_news": bool(cand.catalyst and cand.catalyst.has_news),
-            "result": result, "max_gain_pct": round(gain, 1),
-            "max_draw_pct": round(draw, 1),
-        })
+        # رُفض في كل الدورات → سببه من آخر محاولة (أكثر تمثيلًا لقيد نهاية اليوم)
+        _bump("rejected")
+        if funnel is not None:
+            bucket = _reject_bucket(last_reason)
+            funnel["reject_reasons"][bucket] = \
+                funnel["reject_reasons"].get(bucket, 0) + 1
     return trades
 
 

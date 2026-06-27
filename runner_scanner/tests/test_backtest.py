@@ -163,6 +163,43 @@ def test_funnel_records_alert_path():
     assert res.funnel["alerts"] == len(res.trades)
 
 
+# ── المسح المتكرّر مثل الحي: المرفوض مبكّرًا يُعاد فحصه ──────────────
+class RVolBuildBase(MockBase):
+    """سهم يفشل RVol عند أول عبور (حجم ضئيل) ثم ينجح بعد تراكم الحجم.
+
+    يثبت أن الباكتيست يعيد الفحص كل دورة مثل البوت الحي (لا فحص لمرة واحدة).
+    """
+
+    def grouped_daily(self, date):
+        if date == "2026-06-26":
+            return [{"T": "BUILD", "o": 2.1, "h": 3.0, "l": 2.0, "c": 2.6, "v": 5e6}]
+        return [{"T": "BUILD", "c": 2.0}]
+
+    def bars_5min(self, t, s, e):
+        from runner_scanner.models import Bar
+        return [
+            # 9:35 — +25% لكن الحجم ضئيل → RVol < 5 → رفض (هذه الدورة)
+            Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=2.4, h=2.55, l=2.35, c=2.5,
+                v=50_000, n=80),
+            # 11:00 — تراكم حجم ضخم → RVol ≥ 5 → ينجح (دورة لاحقة)
+            Bar(t_ms=_tms(2026, 6, 26, 11, 0), o=2.5, h=2.7, l=2.5, c=2.6,
+                v=4_000_000, n=300),
+        ]
+
+    def bars_1min(self, t, s, e):
+        return self.bars_5min(t, s, e)
+
+
+def test_reevaluates_until_pass_like_live():
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest.run_backtest(cfg, RVolBuildBase(), "2026-06-26", "2026-06-26")
+    # الفحص لمرة واحدة (القديم) كان يرفضه؛ المسح المتكرّر ينبّه عند الشمعة الثانية
+    assert len(res.trades) == 1
+    assert res.trades[0]["entry"] == 2.6          # دخول عند 11:00 لا 9:35
+    assert res.funnel["alerts"] == 1
+    assert res.funnel["rejected"] == 0            # نجا، لم يُرفض نهائيًا
+
+
 def test_reject_bucket_classifies():
     assert backtest._reject_bucket("RVol 3.0x < 5x") == "RVol"
     assert backtest._reject_bucket("فلوت 90,000,000 > 40,000,000") == "فلوت"
