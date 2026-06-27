@@ -26,10 +26,12 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from . import detector, market_calendar
+from .catalyst import NEGATIVE_NEWS
 from .config import Config
 from .massive_client import MassiveClient
 from .models import Bar, SnapshotEntry
 from .pipeline import process_candidate
+from .risk import build_risk_plan
 from .sessions import ET, classify_session
 
 logger = logging.getLogger(__name__)
@@ -204,7 +206,16 @@ def _day_candidates(cfg: Config, grouped: list[dict],
 def new_funnel() -> dict:
     return {"considered": 0, "no_5min": 0, "no_trigger": 0,
             "bad_snapshot": 0, "error": 0, "rejected": 0, "alerts": 0,
-            "reject_reasons": {}}
+            "reject_reasons": {}, "shadow": []}
+
+
+def _news_label(cand) -> str:
+    """تصنيف الخبر للباكتيست: «إيجابي» (مُكافأ) · «سلبي» (طرح/تخفيف) · «بلا».
+    مهمّ: المكافأة +8 تُمنح للإيجابي فقط، فالفصل يقيس أثرها الحقيقي لا «أي خبر»."""
+    cat = getattr(cand, "catalyst", None)
+    if not (cat and cat.has_news):
+        return "بلا"
+    return "سلبي" if cat.category == NEGATIVE_NEWS else "إيجابي"
 
 
 def _reject_bucket(reason: str) -> str:
@@ -246,6 +257,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     step = max(1, cfg.backtest_scan_step_bars)
     evaluated = errored = False
     last_reason = ""
+    max_rvol = 0.0          # أقصى RVol بلغه السهم (لقياس الظل عند رفض RVol)
+    last_asof = 0
+    last_snap = None
     # كاش الأطر الثابتة (يومي/أسبوعي/شهري) لهذا السهم/اليوم — يُعاد استخدامه عبر
     # شموع المسح المتكرّر بدل إعادة الحساب الثقيل كل شمعة. بلا أثر على النتيجة.
     rcache: dict = {}
@@ -269,6 +283,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             errored = True
             continue
         evaluated = True
+        if cand.momentum:
+            max_rvol = max(max_rvol, cand.momentum.rvol)
+        last_asof, last_snap = asof, snap
         if not cand.is_rejected:
             # ✅ نجح في هذه الدورة → تنبيه عند لحظتها (دخول = إغلاق الشمعة)
             post = [x for x in full5 if x.t_ms > asof]
@@ -282,7 +299,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "readiness": round(cand.readiness.classic_score, 1)
                 if cand.readiness else 0,
                 "rvol": round(cand.momentum.rvol, 1) if cand.momentum else 0,
-                "had_news": bool(cand.catalyst and cand.catalyst.has_news),
+                "news": _news_label(cand),
                 "result": result, "max_gain_pct": round(gain, 1),
                 "max_draw_pct": round(draw, 1),
             }}
@@ -292,8 +309,20 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             break
     if not evaluated:
         return {"kind": "error" if errored else "bad_snapshot"}
+    # قياس الظل: لو الرفض النهائي بسبب RVol، نحسب نتيجة افتراضية (لو دخلنا) +
+    # أقصى RVol بلغه — يكشف لاحقًا إن كانت عتبة RVol=5x تفوّت فرصًا (قياس فقط).
+    shadow = None
+    if (cfg.backtest_shadow_rvol and last_snap is not None
+            and _reject_bucket(last_reason) == "RVol"):
+        closed = [x for x in full5 if x.t_ms <= last_asof]
+        closed5 = closed[:-1] if len(closed) > 1 else closed
+        post = [x for x in full5 if x.t_ms > last_asof]
+        risk = build_risk_plan(cfg, last_snap.last_price, closed5)
+        sres, _, _ = simulate_outcome(last_snap.last_price, risk, post,
+                                      last_asof, cfg.outcome_window_min)
+        shadow = {"max_rvol": round(max_rvol, 1), "result": sres}
     # رُفض في كل الدورات → سببه من آخر محاولة (أكثر تمثيلًا لقيد نهاية اليوم)
-    return {"kind": "rejected", "reason": last_reason}
+    return {"kind": "rejected", "reason": last_reason, "shadow": shadow}
 
 
 def simulate_day(cfg: Config, base: MassiveClient, day: str,
@@ -338,6 +367,8 @@ def simulate_day(cfg: Config, base: MassiveClient, day: str,
                 bucket = _reject_bucket(r.get("reason", ""))
                 funnel["reject_reasons"][bucket] = \
                     funnel["reject_reasons"].get(bucket, 0) + 1
+                if r.get("shadow"):
+                    funnel["shadow"].append(r["shadow"])
             else:
                 funnel[kind] += 1   # no_5min · no_trigger · bad_snapshot · error
     return trades
@@ -361,6 +392,8 @@ class BacktestResult:
         return {
             "alerts": n, "wins": wins, "losses": losses, "timeouts": timeouts,
             "win_rate": (wins / decisive * 100.0) if decisive else None,
+            # نسبة متحفّظة: تعدّ ⏳ غير-فوز (الحدّ الأدنى الواقعي) — لمنع التفاؤل
+            "win_rate_conservative": (wins / n * 100.0) if n else None,
             "avg_gain": (sum(t["max_gain_pct"] for t in self.trades) / n) if n else 0.0,
             "per_day": n / self.days if self.days else 0.0,
         }
@@ -383,11 +416,14 @@ def _bucket_stats(trades: list[dict], keyfn) -> list[tuple]:
 def format_report(res: BacktestResult) -> str:
     s = res.stats()
     wr = f"{s['win_rate']:.0f}%" if s["win_rate"] is not None else "—"
+    wrc = f"{s['win_rate_conservative']:.0f}%" \
+        if s["win_rate_conservative"] is not None else "—"
     lines = [
         f"📈 باكتيست {res.start} → {res.end} ({res.days} يوم تداول)",
         f"تنبيهات مُحاكاة: {s['alerts']} (~{s['per_day']:.1f}/يوم)",
         f"النجاح: {wr} ({s['wins']}✅/{s['losses']}🛑/{s['timeouts']}⏳) · "
         f"متوسط أقصى ربح {s['avg_gain']:+.0f}%",
+        f"النجاح المتحفّظ (⏳=غير فوز): {wrc} ← الحدّ الأدنى الواقعي",
     ]
     if res.trades:
         def b(title, kf):
@@ -398,12 +434,13 @@ def format_report(res: BacktestResult) -> str:
             for k, cnt, w in rows:
                 lines.append(f"  • {k}: {w:.0f}% نجاح ({cnt})" if w is not None
                              else f"  • {k}: — ({cnt})")
-        b("حسب الجلسة", lambda t: t["session"])
-        b("حسب الخبر", lambda t: "بمحفّز" if t["had_news"] else "بلا محفّز")
-        b("حسب الجاهزية", lambda t: ("60-70" if t["readiness"] < 70 else
-                                     "70-80" if t["readiness"] < 80 else "80+"))
-        b("حسب الدرجة", lambda t: ("60-70" if t["score"] < 70 else
-                                   "70-80" if t["score"] < 80 else "80+"))
+        def _band(v):
+            return None if v is None else (
+                "60-70" if v < 70 else "70-80" if v < 80 else "80+")
+        b("حسب الجلسة", lambda t: t.get("session"))
+        b("حسب الخبر", lambda t: t.get("news"))
+        b("حسب الجاهزية", lambda t: _band(t.get("readiness")))
+        b("حسب الدرجة", lambda t: _band(t.get("score")))
     # ── قمع الترشيح: يشرح «ليش العدد قليل؟» (أين مات المرشّحون) ──
     f = res.funnel
     if f and f.get("considered"):
@@ -420,6 +457,28 @@ def format_report(res: BacktestResult) -> str:
                                   key=lambda x: -x[1]):
             lines.append(f"      ↳ {reason}: {cnt}")
         lines.append(f"  ✅ نجت كتنبيه: {f['alerts']}")
+    # ── قياس الظل: أداء افتراضي لمرفوضي RVol (هل العتبة 5x تفوّت فرصًا؟) ──
+    sh = (res.funnel or {}).get("shadow") or []
+    if sh:
+        lines.append(f"\n🌑 قياس الظل — مرفوضو RVol ({len(sh)}) لو دخلناهم:")
+
+        def _rv_bucket(mr):
+            return "أقل من 2x" if mr < 2 else "2–3x" if mr < 3 else "3–5x"
+        groups: dict = {}
+        for srec in sh:
+            groups.setdefault(_rv_bucket(srec["max_rvol"]), []).append(srec)
+        for key in ("3–5x", "2–3x", "أقل من 2x"):
+            g = groups.get(key)
+            if not g:
+                continue
+            dec = [x for x in g if x["result"] in ("win", "loss")]
+            w = (sum(1 for x in dec if x["result"] == "win") / len(dec) * 100.0
+                 if dec else None)
+            tail = f" · نجاح افتراضي {w:.0f}% ({len(dec)} محسومة)" \
+                if w is not None else " · بلا محسومة"
+            lines.append(f"  • أقصى RVol {key}: {len(g)} سهم{tail}")
+        lines.append("  <i>↳ لو شريحة 3–5x نجاحها يقارب الناجين، فخفض RVol "
+                     "لـ~3–4 يستحق الدراسة (قرارك بالبيانات).</i>")
     lines.append("\n⚠️ تقدير تاريخي (لا يضمن المستقبل؛ بلا انزلاق/دفتر أوامر).")
     return "\n".join(lines)
 

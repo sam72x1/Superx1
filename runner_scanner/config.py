@@ -189,6 +189,9 @@ class Config:
     # جلب متوازٍ: عدد الأسهم التي تُعالَج معًا (يسرّع الشهر من ساعة لدقائق).
     # محافظ كي لا يصطدم بحدّ معدّل Massive؛ ارفعه لو خطّتك تسمح.
     backtest_workers: int = 8
+    # قياس الظل: يسجّل لكل سهم مرفوض بـRVol نتيجة افتراضية + أقصى RVol بلغه،
+    # لنعرف هل عتبة RVol=5x تفوّت فرصًا (قياس فقط، لا يغيّر أي قرار حيّ).
+    backtest_shadow_rvol: bool = True
 
     # ── معايرة العتبات A/B (يقترح أفضل عتبات تاريخيًا — لا يطبّق) ───
     # يجرّب تغيير عتبة واحدة كل مرة على نفس البيانات (no-lookahead) ويرتّب
@@ -229,6 +232,9 @@ class Config:
     code_version: str = ""               # إصدار الكود (commit) — يُعرض بالبطاقة
     buy_zone_pct: float = 1.3            # عرض منطقة الشراء فوق السعر%
     short_warn_pct: float = 20.0         # شورت ≥ هذا = تحذير ضغط بيعي (يضرّ)
+    # تحذير البريماركت: الباكتيست أظهر نجاحه التاريخي أضعف بوضوح (≈53% مقابل
+    # ≈88% للرسمي). إعلام فقط على البطاقة + أولوية أخفض — لا حذف (دليل لا منفّذ).
+    premarket_caution_enabled: bool = True
 
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
@@ -301,6 +307,7 @@ class Config:
             backtest_quick_top_n=_i("BACKTEST_QUICK_TOP_N", 12),
             backtest_quick_step=_i("BACKTEST_QUICK_STEP", 2),
             backtest_workers=_i("BACKTEST_WORKERS", 8),
+            backtest_shadow_rvol=_b("BACKTEST_SHADOW_RVOL", True),
             backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", False),
             backtest_grid_readiness=_ftuple(
                 "BACKTEST_GRID_READINESS", (55.0, 60.0, 65.0, 70.0)),
@@ -324,6 +331,7 @@ class Config:
             code_version=_s("CODE_VERSION", _s("RENDER_GIT_COMMIT", ""))[:7],
             buy_zone_pct=_f("BUY_ZONE_PCT", 1.3),
             short_warn_pct=_f("SHORT_WARN_PCT", 20.0),
+            premarket_caution_enabled=_b("PREMARKET_CAUTION_ENABLED", True),
             top_n_runners=_i("TOP_N_RUNNERS", 15),
             outcome_window_min=_f("OUTCOME_WINDOW_MIN", 90.0),
             missed_rise_pct=_f("MISSED_RISE_PCT", 30.0),

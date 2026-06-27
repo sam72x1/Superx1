@@ -251,6 +251,64 @@ def test_parallel_matches_serial():
            {t["ticker"] for t in parallel.trades}
 
 
+def test_stats_conservative_winrate_counts_timeouts():
+    """النسبة المتحفّظة تعدّ ⏳ غير-فوز (أدنى من المحسومة)."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "max_gain_pct": 10}] * 8 + \
+                 [{"result": "loss", "max_gain_pct": 1}] * 2 + \
+                 [{"result": "timeout", "max_gain_pct": 3}] * 5
+    s = res.stats()
+    assert round(s["win_rate"]) == 80          # 8/(8+2) محسومة
+    assert round(s["win_rate_conservative"]) == 53   # 8/15 شامل ⏳
+    assert "المتحفّظ" in backtest.format_report(res)
+
+
+def test_news_label_splits_positive_negative_none():
+    from runner_scanner.models import Candidate, Catalyst, Session, SnapshotEntry
+    from runner_scanner.catalyst import NEGATIVE_NEWS
+
+    def _c(cat):
+        x = Candidate(snapshot=SnapshotEntry("T", 3, 2, 2, 3, 2, 1, 2.5, 25),
+                      session=Session.REGULAR)
+        x.catalyst = cat
+        return x
+    assert backtest._news_label(_c(None)) == "بلا"
+    assert backtest._news_label(_c(Catalyst(has_news=False))) == "بلا"
+    pos = Catalyst(has_news=True); pos.category = "💊 موافقة/تجارب سريرية"
+    assert backtest._news_label(_c(pos)) == "إيجابي"
+    neg = Catalyst(has_news=True); neg.category = NEGATIVE_NEWS
+    assert backtest._news_label(_c(neg)) == "سلبي"
+
+
+def test_shadow_eval_records_rvol_rejects():
+    """مرفوض RVol يُسجَّل في قياس الظل (نتيجة افتراضية + أقصى RVol)."""
+
+    class ThinBase(MockBase):
+        # حجم ضئيل دائمًا → RVol < 5 طوال اليوم → رفض RVol
+        def grouped_daily(self, date):
+            if date == "2026-06-26":
+                return [{"T": "THIN", "o": 2.1, "h": 3.0, "l": 2.0, "c": 2.9, "v": 5e6}]
+            return [{"T": "THIN", "c": 2.0}]
+
+        def bars_5min(self, t, s, e):
+            from runner_scanner.models import Bar
+            return [Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=2.4, h=2.6, l=2.3, c=2.5,
+                        v=200, n=5),
+                    Bar(t_ms=_tms(2026, 6, 26, 10, 0), o=2.5, h=2.8, l=2.5, c=2.7,
+                        v=300, n=6)]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_shadow_rvol=True)
+    res = backtest.run_backtest(cfg, ThinBase(), "2026-06-26", "2026-06-26")
+    assert res.funnel["reject_reasons"].get("RVol", 0) >= 1
+    assert len(res.funnel["shadow"]) >= 1
+    assert res.funnel["shadow"][0]["result"] in ("win", "loss", "timeout")
+    assert "قياس الظل" in backtest.format_report(res)
+
+
 def test_reject_bucket_classifies():
     assert backtest._reject_bucket("RVol 3.0x < 5x") == "RVol"
     assert backtest._reject_bucket("فلوت 90,000,000 > 40,000,000") == "فلوت"

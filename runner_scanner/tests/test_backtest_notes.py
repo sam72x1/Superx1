@@ -27,14 +27,16 @@ def test_notes_warns_small_sample():
     assert "العيّنة صغيرة" in note            # 2 محسومة < 8
 
 
-def test_notes_flags_rvol_methodological_bottleneck():
+def test_notes_flags_rvol_as_legitimate():
     res = _res_with_funnel(considered=200, no_5min=10, no_trigger=40,
                            rejected=145, alerts=5,
                            reject_reasons={"RVol": 120, "فلوت": 25})
     res.trades = [{"result": "win", "max_gain_pct": 10}] * 5
     note = backtest_notes.build_notes(CFG, res)
     assert "أكثر بوّابة ترفض" in note and "RVol" in note
-    assert "قيد منهجي" in note               # يشرح أنه عيب باكتيست لا عتبة
+    # بعد إصلاح المسح المتكرّر: الرفض مشروع لا artifact منهجي
+    assert "مشروع" in note and "قياس الظل" in note
+    assert "قيد منهجي" not in note           # النص القديم الخاطئ أُزيل
 
 
 def test_notes_reports_biggest_leak():

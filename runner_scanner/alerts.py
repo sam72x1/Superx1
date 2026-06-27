@@ -167,6 +167,9 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
     # تحذير خارج الجلسة الرسمية (LULD لا يحمي)
     if c.session in (Session.PREMARKET, Session.AFTERHOURS):
         lines.append("⚠️ خارج الجلسة الرسمية: LULD لا يحمي، احتمال فجوة.")
+    # تنبيه البريماركت: أداؤه التاريخي في الباكتيست أضعف بوضوح (إعلام لا حذف)
+    if c.session is Session.PREMARKET and cfg.premarket_caution_enabled:
+        lines.append("🔅 جلسة بريماركت — نجاحها التاريخي أضعف، تحقّق يدويًا قبل الدخول.")
 
     code = cfg.code_version or "dev"
     lines.append(f"⏰ {_local_time(cfg, now)} (الرياض) · {c.session.value}")
@@ -175,8 +178,12 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
 
 
 def prioritize(candidates: list[Candidate]) -> list[Candidate]:
-    """ترتيب أولوية: الأعلى درجة أولًا (لا يُغرق اليوم الحار)."""
-    return sorted(candidates, key=lambda c: c.final_score, reverse=True)
+    """ترتيب أولوية: غير-البريماركت أولًا (أقوى تاريخيًا)، ثم الأعلى درجة.
+    البريماركت يُدفَع لأسفل (أداؤه أضعف في الباكتيست) — إعلام لا حذف."""
+    return sorted(
+        candidates,
+        key=lambda c: (0 if c.session is Session.PREMARKET else 1, c.final_score),
+        reverse=True)
 
 
 def build_followup(cfg: Config, event: dict, now: datetime | None = None) -> str:

@@ -97,6 +97,30 @@ def test_card_extended_hours_warning():
     assert "خارج الجلسة الرسمية" in card
 
 
+def test_card_premarket_caution_line():
+    """البريماركت يحمل تحذير «نجاحه التاريخي أضعف» (إعلام لا حذف)."""
+    card = build_card(CFG, _card_candidate(session=Session.PREMARKET))
+    assert "بريماركت" in card and "أضعف" in card
+    # الرسمي بلا هذا التحذير
+    assert "نجاحها التاريخي أضعف" not in build_card(
+        CFG, _card_candidate(session=Session.REGULAR))
+
+
+def test_card_premarket_caution_can_disable():
+    cfg = Config(code_version="x", premarket_caution_enabled=False)
+    card = build_card(cfg, _card_candidate(session=Session.PREMARKET))
+    assert "نجاحها التاريخي أضعف" not in card
+
+
+def test_prioritize_demotes_premarket():
+    """الرسمي يسبق البريماركت حتى لو درجته أعلى قليلًا."""
+    from runner_scanner.alerts import prioritize
+    pm = _card_candidate(session=Session.PREMARKET); pm.final_score = 95
+    reg = _card_candidate(session=Session.REGULAR); reg.final_score = 80
+    order = prioritize([pm, reg])
+    assert order[0].session is Session.REGULAR     # الرسمي أولًا رغم درجة أقل
+
+
 def test_strength_bar_levels():
     bar, label = _strength_bar(100)
     assert bar == "██████████" and "قوي جدًا" in label
