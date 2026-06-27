@@ -138,6 +138,18 @@ def test_cycle_logs_tracking_for_all_processed():
     sc.shutdown()
 
 
+class TwoGainersClient(FakeClient):
+    """سهمان مؤهّلان بالسعر (لاختبار قصّ top_n على الأعلى صعودًا)."""
+
+    def full_snapshot(self):
+        return [
+            make_snapshot(ticker="HI", last=3.0, prev=2.0, vol=1_500_000,
+                          change_pct=40.0),     # الأعلى
+            make_snapshot(ticker="LO", last=4.0, prev=3.2, vol=1_500_000,
+                          change_pct=25.0),     # أقلّ صعودًا
+        ]
+
+
 def test_top_n_caps_to_highest_gainers():
     """top_n_runners يحصر التحليل بأعلى N صعودًا فقط."""
     db = os.path.join(tempfile.mkdtemp(), "topn.sqlite3")
@@ -145,12 +157,25 @@ def test_top_n_caps_to_highest_gainers():
                  telegram_chat_id="x", massive_api_key="x",
                  halts_enabled=False, top_n_runners=1)
     sc = Scanner(cfg)
-    sc.client = CycleClient()    # PENNY +33% أعلى من STRONG +25%
+    sc.client = TwoGainersClient()
     sc.short = None
     sc.run_cycle(et_now=ET_NOW)
     tickers = {r["ticker"] for r in
                sc.store._conn.execute("SELECT ticker FROM tracking").fetchall()}
-    # مع top_n=1: فقط الأعلى صعودًا (PENNY) يُعالَج، STRONG لا
-    assert "PENNY" in tickers
-    assert "STRONG" not in tickers
+    # مع top_n=1: فقط الأعلى صعودًا (HI) يُعالَج، LO لا
+    assert "HI" in tickers
+    assert "LO" not in tickers
     sc.shutdown()
+
+
+def test_detector_excludes_pennies_and_overrange_before_topn():
+    """السنتات/فوق-النطاق تُستبعد في الكشف فلا تأكل مقاعد أعلى-15."""
+    from runner_scanner import detector
+    snaps = [
+        make_snapshot("REAL", last=3.0, change_pct=30.0),
+        make_snapshot("PENNY", last=0.40, change_pct=80.0),   # صعوده الأعلى لكنه سنت
+        make_snapshot("HIGH", last=45.0, change_pct=50.0),    # فوق النطاق
+    ]
+    cfg = Config(massive_api_key="x")
+    out = detector.detect_runners(cfg, snaps)
+    assert [e.ticker for e in out] == ["REAL"]   # السنت لم يأخذ مقعد REAL
