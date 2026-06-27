@@ -200,6 +200,20 @@ def test_reevaluates_until_pass_like_live():
     assert res.funnel["rejected"] == 0            # نجا، لم يُرفض نهائيًا
 
 
+def test_day_candidates_pool_wider_than_live_top_n():
+    """مجمّع الباكتيست = backtest_top_n (أوسع من top_n_runners الحي = 15)."""
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 top_n_runners=15, backtest_top_n=45)
+    prev = {f"S{i}": 2.0 for i in range(30)}
+    grouped = [{"T": f"S{i}", "h": 2.0 * (1 + (0.20 + i * 0.01)),
+                "c": 2.5} for i in range(30)]   # 30 سهمًا فوق +20%
+    out = backtest._day_candidates(cfg, grouped, prev)
+    assert len(out) == 30          # كلها (≤45)، لا تُقصّ على 15 الحي
+    # لو كان السقف 15 الحي لظهر 15 فقط
+    cfg2 = Config(massive_api_key="x", trigger_change_pct=10.0, backtest_top_n=10)
+    assert len(backtest._day_candidates(cfg2, grouped, prev)) == 10
+
+
 def test_reject_bucket_classifies():
     assert backtest._reject_bucket("RVol 3.0x < 5x") == "RVol"
     assert backtest._reject_bucket("فلوت 90,000,000 > 40,000,000") == "فلوت"

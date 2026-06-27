@@ -170,6 +170,10 @@ class Config:
     # محاكاة المسح المتكرّر: يفحص كل مرشّح عند كل N شمعة 5د حتى أول نجاح (مثل
     # البوت الحي الذي يعيد فحص المرفوض كل دورة). 1 = كل شمعة (أدقّ مطابقة للحي).
     backtest_scan_step_bars: int = 1
+    # عدد المرشّحين/يوم في الباكتيست (منفصل عن top_n_runners الحي = 15). الحي
+    # يغطّي 3 جلسات (حتى 45 مختلفًا)؛ نوسّع المجمّع هنا ليقارب اتحاد قادتها.
+    # الترتيب بالقمة اليومية (تشمل الجلسات الممتدة) — تقريب أمين، رخيص الجلب.
+    backtest_top_n: int = 45
 
     # ── معايرة العتبات A/B (يقترح أفضل عتبات تاريخيًا — لا يطبّق) ───
     # يجرّب تغيير عتبة واحدة كل مرة على نفس البيانات (no-lookahead) ويرتّب
@@ -271,6 +275,7 @@ class Config:
             backtest_weekday=_i("BACKTEST_WEEKDAY", 5),
             backtest_hour=_i("BACKTEST_HOUR", 6),
             backtest_scan_step_bars=_i("BACKTEST_SCAN_STEP_BARS", 1),
+            backtest_top_n=_i("BACKTEST_TOP_N", 45),
             backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", True),
             backtest_grid_readiness=_ftuple(
                 "BACKTEST_GRID_READINESS", (55.0, 60.0, 65.0, 70.0)),

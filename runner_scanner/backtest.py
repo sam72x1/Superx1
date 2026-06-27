@@ -173,7 +173,11 @@ def _prev_close_map(grouped: list[dict]) -> dict[str, float]:
 
 def _day_candidates(cfg: Config, grouped: list[dict],
                     prev_close: dict[str, float]) -> list[tuple[str, float]]:
-    """أعلى N صعودًا في قمة اليوم (proxy لـ top-gainers) — مرشّحو الباكتيست."""
+    """أعلى N صعودًا في قمة اليوم (proxy لـ top-gainers) — مرشّحو الباكتيست.
+
+    N = backtest_top_n (منفصل عن top_n_runners الحي): الحي يغطّي 3 جلسات
+    فيوسّع المجمّع هنا ليقارب اتحاد قادتها (القمة اليومية تشمل الجلسات الممتدة).
+    """
     cands = []
     for r in grouped:
         t, h, c = r.get("T"), r.get("h"), r.get("c")
@@ -190,7 +194,7 @@ def _day_candidates(cfg: Config, grouped: list[dict],
             continue
         cands.append((t, chg_high))
     cands.sort(key=lambda x: -x[1])
-    return cands[:cfg.top_n_runners]
+    return cands[:cfg.backtest_top_n]
 
 
 # ── قمع الترشيح (تشخيص: أين يموت المرشّحون؟) ──────────────────────
