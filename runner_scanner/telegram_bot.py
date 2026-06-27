@@ -5,6 +5,7 @@
   /top      — أقوى الأسهم في آخر مسح
   /report   — تقرير التطوير + ملفات CSV الآن
   /briefing — بريفنغ المستشار الآن
+  /backtest — باكتيست + معايرة العتبات A/B الآن (يدويًا)
   /ask ...  — اسأل Claude عن بوتك (يستخدم بياناتك الحيّة)
   /restart  — إعادة تشغيل الخدمة على ريندر (يتطلّب: /restart confirm)
 
@@ -37,6 +38,7 @@ _HELP = (
     "/top — أقوى الأسهم الآن\n"
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
+    "/backtest — باكتيست + معايرة العتبات A/B الآن\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
     "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
     "/diag RMZ — بيانات السهم الخام (تشخيص الفيد)\n"
@@ -140,6 +142,8 @@ class TelegramAssistant:
                 render_summary=self.sc.render.summary(),
                 health_faults=self.sc.monitor.active_faults(),
                 client=self.sc.claude))
+        elif cmd == "backtest":
+            self._handle_backtest()
         elif cmd == "ask":
             self._handle_ask(arg)
         elif cmd == "why":
@@ -262,6 +266,17 @@ class TelegramAssistant:
             return
         self._reply("جاري إعادة التشغيل..." if self.sc.render.restart()
                     else "تعذّرت إعادة التشغيل.")
+
+    def _handle_backtest(self) -> None:
+        """تشغيل الباكتيست + معايرة العتبات A/B الآن (يدويًا) — بلا انتظار السبت
+        وبلا قفل التكرار الأسبوعي. يشتغل في الخلفية والنتائج تصلك تباعًا."""
+        if not self.cfg.massive_api_key:
+            self._reply("الباكتيست يحتاج MASSIVE_API_KEY.")
+            return
+        self._reply("🚀 بدء الباكتيست + معايرة العتبات الآن… "
+                    "(قد يأخذ دقائق، تصلك النتائج تباعًا)")
+        threading.Thread(target=self.sc._run_backtest_bg, args=(now_et(),),
+                         daemon=True, name="backtest-manual").start()
 
     def _context_text(self) -> str:
         s = advisor._summarize_day(self.cfg, self.sc.store, now_et())
