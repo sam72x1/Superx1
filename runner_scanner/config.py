@@ -235,6 +235,10 @@ class Config:
     # تحذير البريماركت: الباكتيست أظهر نجاحه التاريخي أضعف بوضوح (≈53% مقابل
     # ≈88% للرسمي). إعلام فقط على البطاقة + أولوية أخفض — لا حذف (دليل لا منفّذ).
     premarket_caution_enabled: bool = True
+    # تنبيهات البريماركت: **معطّلة** بقرار المستخدم بالبيانات (8 أشهر: بريماركت
+    # 59% مقابل رسمي 87%؛ تعطيله يرفع النجاح الكلي 81.6%→88%). مراقبة المفتوح
+    # تبقى شغّالة؛ بلا تنبيهات بريماركت جديدة. أرجِعها بـ PREMARKET_ALERTS_ENABLED=true.
+    premarket_alerts_enabled: bool = False
 
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
@@ -332,6 +336,7 @@ class Config:
             buy_zone_pct=_f("BUY_ZONE_PCT", 1.3),
             short_warn_pct=_f("SHORT_WARN_PCT", 20.0),
             premarket_caution_enabled=_b("PREMARKET_CAUTION_ENABLED", True),
+            premarket_alerts_enabled=_b("PREMARKET_ALERTS_ENABLED", False),
             top_n_runners=_i("TOP_N_RUNNERS", 15),
             outcome_window_min=_f("OUTCOME_WINDOW_MIN", 90.0),
             missed_rise_pct=_f("MISSED_RISE_PCT", 30.0),

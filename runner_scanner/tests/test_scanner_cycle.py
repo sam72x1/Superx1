@@ -59,6 +59,29 @@ def test_dedup_prevents_second_alert_same_day():
     sc.shutdown()
 
 
+def test_premarket_alerts_disabled_by_default():
+    """البريماركت معطّل افتراضيًا → لا تنبيهات جديدة في جلسة البريماركت."""
+    sc = _scanner()
+    et_pm = datetime(2026, 6, 25, 7, 0, tzinfo=ET)   # 7ص ET = بريماركت
+    assert sc.run_cycle(et_now=et_pm) == 0
+    assert sc.store.already_alerted("STRONG") is False
+    sc.shutdown()
+
+
+def test_premarket_alerts_when_explicitly_enabled():
+    """مع PREMARKET_ALERTS_ENABLED=true يعود البريماركت يُنبّه."""
+    db = os.path.join(tempfile.mkdtemp(), "pm.sqlite3")
+    cfg = Config(dry_run=True, db_path=db, telegram_bot_token="x",
+                 telegram_chat_id="x", massive_api_key="x", halts_enabled=False,
+                 premarket_alerts_enabled=True)
+    sc = Scanner(cfg)
+    sc.client = CycleClient()
+    sc.short = None
+    et_pm = datetime(2026, 6, 25, 7, 0, tzinfo=ET)
+    assert sc.run_cycle(et_now=et_pm) == 1            # STRONG يُنبّه في البريماركت
+    sc.shutdown()
+
+
 def test_champion_inherited_is_analyzed_below_threshold():
     from runner_scanner.models import Session
     from runner_scanner.state import trade_date_str

@@ -130,6 +130,13 @@ class Scanner:
         if events:
             logger.info("أُرسل %d تحديث متابعة", len(events))
 
+        # جلسة البريماركت معطّلة (قرار المستخدم بالبيانات: 8 أشهر → بريماركت 59%
+        # مقابل رسمي 87%؛ تعطيلها يرفع النجاح الكلي ~6 نقاط). نحدّث المفتوح فوق
+        # وننهي هنا بلا تنبيهات جديدة. /top لا يزال يعرض رنرات البريماركت (إعلام).
+        if session is Session.PREMARKET and not self.cfg.premarket_alerts_enabled:
+            logger.info("البريماركت معطّل — مراقبة المفتوح فقط، بلا تنبيهات جديدة")
+            return 0
+
         accepted: list[Candidate] = []
         # الأبطال الموروثون أولًا (أولوية متابعة)، ثم أعلى 15 صعودًا
         for snap in champ_entries + top:
