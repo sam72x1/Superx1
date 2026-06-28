@@ -251,6 +251,31 @@ def test_parallel_matches_serial():
            {t["ticker"] for t in parallel.trades}
 
 
+def test_trade_records_indicator_flags():
+    """كل صفقة تسجّل المؤشرات (لكشف أيها يتنبّأ بالنجاح)."""
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest.run_backtest(cfg, MockBase(), "2026-06-26", "2026-06-26")
+    assert res.trades, "متوقّع صفقة واحدة على الأقل"
+    t = res.trades[0]
+    for key in ("macd_bull", "golden_cross", "above_ma200", "above_vwap",
+                "volume_rising", "divergence", "trend", "adx"):
+        assert key in t, f"المؤشّر {key} غير مسجّل"
+
+
+def test_indicator_yes_no_section_in_report():
+    """تقرير المؤشرات الثنائية يظهر عند توفّر عيّنة كافية في كلا الجانبين."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    # 6 «نعم» (5 فوز) + 6 «لا» (2 فوز) لمؤشّر MACD
+    base = {"session": "رسمي", "readiness": 70, "score": 70}
+    res.trades = (
+        [{**base, "macd_bull": True, "result": "win", "max_gain_pct": 9}] * 5 +
+        [{**base, "macd_bull": True, "result": "loss", "max_gain_pct": 1}] * 1 +
+        [{**base, "macd_bull": False, "result": "win", "max_gain_pct": 9}] * 2 +
+        [{**base, "macd_bull": False, "result": "loss", "max_gain_pct": 1}] * 4)
+    rep = backtest.format_report(res)
+    assert "المؤشرات الثنائية" in rep and "MACD صاعد" in rep
+
+
 def test_stats_conservative_winrate_counts_timeouts():
     """النسبة المتحفّظة تعدّ ⏳ غير-فوز (أدنى من المحسومة)."""
     res = backtest.BacktestResult(start="x", end="y", days=1)

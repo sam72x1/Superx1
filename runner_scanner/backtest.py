@@ -300,6 +300,16 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 if cand.readiness else 0,
                 "rvol": round(cand.momentum.rvol, 1) if cand.momentum else 0,
                 "news": _news_label(cand),
+                # مؤشرات لكل صفقة — تكشف لاحقًا أيها يتنبّأ بالنجاح (نظام الفرز)
+                "macd_bull": cand.readiness.macd_bull if cand.readiness else None,
+                "golden_cross": cand.readiness.golden_cross if cand.readiness else None,
+                "above_ma200": cand.readiness.above_ma200 if cand.readiness else None,
+                "above_ma50": cand.readiness.above_ma50 if cand.readiness else None,
+                "divergence": cand.readiness.divergence if cand.readiness else None,
+                "trend": cand.readiness.trend if cand.readiness else None,
+                "adx": round(cand.readiness.adx, 1) if cand.readiness else None,
+                "above_vwap": cand.momentum.above_vwap if cand.momentum else None,
+                "volume_rising": cand.momentum.volume_rising if cand.momentum else None,
                 "result": result, "max_gain_pct": round(gain, 1),
                 "max_draw_pct": round(draw, 1),
             }}
@@ -441,6 +451,33 @@ def format_report(res: BacktestResult) -> str:
         b("حسب الخبر", lambda t: t.get("news"))
         b("حسب الجاهزية", lambda t: _band(t.get("readiness")))
         b("حسب الدرجة", lambda t: _band(t.get("score")))
+        b("الدايفرجنس", lambda t: t.get("divergence"))
+        b("الاتجاه اليومي", lambda t: t.get("trend"))
+        b("ADX", lambda t: None if t.get("adx") is None else
+          ("قوي ≥25" if t["adx"] >= 25 else "ضعيف <25"))
+        # ── المؤشرات الثنائية: نجاح «نعم» مقابل «لا» جنبًا لجنب (يكشف
+        # أيها يتنبّأ بالنجاح فعلًا → أساس ضبط أوزان نظام الفرز بالبيانات) ──
+        def _wr(g):
+            d = [t for t in g if t["result"] in ("win", "loss")]
+            return (sum(1 for t in d if t["result"] == "win") / len(d) * 100.0,
+                    len(d)) if d else (None, 0)
+        ind_specs = [
+            ("MACD صاعد", "macd_bull"), ("تقاطع ذهبي", "golden_cross"),
+            ("فوق MA200", "above_ma200"), ("فوق MA50", "above_ma50"),
+            ("فوق VWAP", "above_vwap"), ("حجم متصاعد", "volume_rising"),
+        ]
+        ind_lines = []
+        for name, key in ind_specs:
+            yes = [t for t in res.trades if t.get(key) is True]
+            no = [t for t in res.trades if t.get(key) is False]
+            wy, ny = _wr(yes)
+            wn, nn = _wr(no)
+            if wy is not None and wn is not None and ny >= 5 and nn >= 5:
+                ind_lines.append(
+                    f"  • {name}: نعم {wy:.0f}% ({ny}) · لا {wn:.0f}% ({nn})")
+        if ind_lines:
+            lines.append("\n📐 المؤشرات الثنائية (نجاح نعم/لا):")
+            lines.extend(ind_lines)
     # ── قمع الترشيح: يشرح «ليش العدد قليل؟» (أين مات المرشّحون) ──
     f = res.funnel
     if f and f.get("considered"):
