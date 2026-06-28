@@ -120,26 +120,41 @@ def _build_snapshot(ticker: str, prev_close: float,
 
 # ── محاكاة النتيجة من شموع ما بعد الدخول ──────────────────────────
 def simulate_outcome(entry: float, risk, post_bars: list[Bar],
-                     asof_ms: int, window_min: float) -> tuple[str, float, float]:
-    """يرجّع (result, max_gain%, max_draw%). تحفّظ: لمس الهدف+الوقف بنفس الشمعة=خسارة."""
+                     asof_ms: int, window_min: float
+                     ) -> tuple[str, float, float, int]:
+    """يرجّع (result, max_gain%, max_draw%, target_level).
+    - result: الخروج عند أول هدف1/وقف (تحفّظ: الهدف+الوقف بنفس الشمعة=خسارة).
+    - target_level: أعلى هدف (1..3) لمسه السعر دون أن يُوقَف قبله (0 لو لا شيء)
+      — لقياس «هل يستحق الإمساك للأهداف الأعلى؟». مستقل عن قرار الخروج."""
     if not risk or not risk.targets or entry <= 0:
-        return "timeout", 0.0, 0.0
-    t1 = risk.targets[0]
+        return "timeout", 0.0, 0.0, 0
+    targets = risk.targets
+    t1 = targets[0]
     stop = risk.stop_price
     deadline = asof_ms + window_min * 60_000
     high = low = entry
+    result = "timeout"
+    decided = False
+    tgt_level = 0
     for b in post_bars:
         if b.t_ms > deadline:
             break
         high = max(high, b.h)
         low = min(low, b.l)
-        hit_stop = stop and b.l <= stop
-        hit_t1 = b.h >= t1
-        if hit_stop:        # تحفّظ: الوقف أولًا حتى لو لمس الهدف بنفس الشمعة
-            return "loss", (high - entry) / entry * 100.0, (low - entry) / entry * 100.0
-        if hit_t1:
-            return "win", (high - entry) / entry * 100.0, (low - entry) / entry * 100.0
-    return "timeout", (high - entry) / entry * 100.0, (low - entry) / entry * 100.0
+        if not decided:
+            if stop and b.l <= stop:    # تحفّظ: الوقف أولًا حتى لو لمس الهدف
+                result = "loss"
+                decided = True
+                continue                # خرجنا بخسارة → لا نحسب أهدافًا بعدها
+            if b.h >= t1:
+                result = "win"
+                decided = True
+        if result != "loss":            # نحسب أعلى هدف لُمس (سيناريو الإمساك)
+            for i, tg in enumerate(targets, 1):
+                if b.h >= tg and i > tgt_level:
+                    tgt_level = i
+    return (result, (high - entry) / entry * 100.0,
+            (low - entry) / entry * 100.0, tgt_level)
 
 
 # ── تقويم أيام التداول ────────────────────────────────────────────
@@ -225,6 +240,7 @@ def _reject_bucket(reason: str) -> str:
              ("جاهزية", "جاهزية/درجة"), ("درجة", "جاهزية/درجة"),
              ("نوع الورقة", "نوع/بورصة"), ("بورصة", "نوع/بورصة"),
              ("سعر", "سعر"), ("حجم", "حجم"), ("الشموع", "نقص شموع"),
+             ("يستحق المخاطرة", "ربح صغير"),
              ("T12", "توقّف"), ("توقّف", "توقّف"),
              ("تخفيف", "تخفيف SEC"), ("هبوطي", "محفّز هبوطي")]
     for needle, label in pairs:
@@ -289,11 +305,21 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         if not cand.is_rejected:
             # ✅ نجح في هذه الدورة → تنبيه عند لحظتها (دخول = إغلاق الشمعة)
             post = [x for x in full5 if x.t_ms > asof]
-            result, gain, draw = simulate_outcome(
-                snap.last_price, cand.risk, post, asof, cfg.outcome_window_min)
+            entry = snap.last_price
+            result, gain, draw, tlevel = simulate_outcome(
+                entry, cand.risk, post, asof, cfg.outcome_window_min)
+            tgts = cand.risk.targets if cand.risk else []
+            # ربح الهدف1% (إمكانية الربح) + الربح المحقّق الفعلي عند الخروج
+            t1_pct = (tgts[0] - entry) / entry * 100.0 if tgts and entry else 0.0
+            if result == "win":
+                realized = t1_pct
+            elif result == "loss" and cand.risk:
+                realized = (cand.risk.stop_price - entry) / entry * 100.0
+            else:
+                realized = 0.0
             return {"kind": "alert", "trade": {
                 "date": day, "ticker": ticker,
-                "entry": round(snap.last_price, 4),
+                "entry": round(entry, 4),
                 "session": cand.session.value,
                 "score": round(cand.final_score, 1),
                 "readiness": round(cand.readiness.classic_score, 1)
@@ -310,6 +336,10 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "adx": round(cand.readiness.adx, 1) if cand.readiness else None,
                 "above_vwap": cand.momentum.above_vwap if cand.momentum else None,
                 "volume_rising": cand.momentum.volume_rising if cand.momentum else None,
+                # الربحية والأهداف
+                "target1_pct": round(t1_pct, 1),      # إمكانية الربح عند الهدف1
+                "realized_pct": round(realized, 1),    # الربح/الخسارة المحقّق
+                "target_hit": tlevel,                  # أعلى هدف لُمس (0..3)
                 "result": result, "max_gain_pct": round(gain, 1),
                 "max_draw_pct": round(draw, 1),
             }}
@@ -328,8 +358,8 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         closed5 = closed[:-1] if len(closed) > 1 else closed
         post = [x for x in full5 if x.t_ms > last_asof]
         risk = build_risk_plan(cfg, last_snap.last_price, closed5)
-        sres, _, _ = simulate_outcome(last_snap.last_price, risk, post,
-                                      last_asof, cfg.outcome_window_min)
+        sres, _, _, _ = simulate_outcome(last_snap.last_price, risk, post,
+                                         last_asof, cfg.outcome_window_min)
         shadow = {"max_rvol": round(max_rvol, 1), "result": sres}
     # رُفض في كل الدورات → سببه من آخر محاولة (أكثر تمثيلًا لقيد نهاية اليوم)
     return {"kind": "rejected", "reason": last_reason, "shadow": shadow}
@@ -435,6 +465,38 @@ def format_report(res: BacktestResult) -> str:
         f"متوسط أقصى ربح {s['avg_gain']:+.0f}%",
         f"النجاح المتحفّظ (⏳=غير فوز): {wrc} ← الحدّ الأدنى الواقعي",
     ]
+    # ── 💰 الربحية والأهداف (تفصيل مهم) ──
+    if res.trades:
+        n = len(res.trades)
+        wins = [t for t in res.trades if t["result"] == "win"]
+        losses = [t for t in res.trades if t["result"] == "loss"]
+        tos = [t for t in res.trades if t["result"] == "timeout"]
+
+        def _avg(g, key):
+            return sum(t.get(key, 0) or 0 for t in g) / len(g) if g else 0.0
+
+        def _pct(c):
+            return c / n * 100.0 if n else 0.0
+        avg_real = _avg(res.trades, "realized_pct")       # التوقّع المحقّق/صفقة
+        avg_t1pot = _avg(res.trades, "target1_pct")       # متوسط إمكانية الربح
+        avg_win = _avg(wins, "realized_pct")
+        avg_loss = _avg(losses, "realized_pct")
+        rr = (avg_win / abs(avg_loss)) if avg_loss else None
+        r_t2 = _pct(sum(1 for t in res.trades if (t.get("target_hit") or 0) >= 2))
+        r_t3 = _pct(sum(1 for t in res.trades if (t.get("target_hit") or 0) >= 3))
+        low10 = _pct(sum(1 for t in res.trades if (t.get("target1_pct") or 0) < 10))
+        avg_peak_win = _avg(wins, "max_gain_pct")
+        lines.append("\n💰 الربحية والأهداف:")
+        lines.append(f"  • التوقّع/صفقة (محقّق، ⏳=0): {avg_real:+.1f}% · "
+                     f"متوسط إمكانية الربح (هدف1): +{avg_t1pot:.1f}%")
+        lines.append(f"  • متوسط الفوز: {avg_win:+.1f}% · متوسط الخسارة: "
+                     f"{avg_loss:+.1f}%" + (f" · عائد/مخاطرة {rr:.1f}:1" if rr else ""))
+        lines.append(f"  • تحقيق الأهداف: هدف1 {_pct(len(wins)):.0f}% · "
+                     f"هدف2 {r_t2:.0f}% · هدف3 {r_t3:.0f}% (من كل التنبيهات)")
+        lines.append(f"  • كسر الوقف: {_pct(len(losses)):.0f}% · "
+                     f"بلا حسم ⏳: {_pct(len(tos)):.0f}%")
+        lines.append(f"  • متوسط قمة الفائز: +{avg_peak_win:.1f}% (مقابل خروج الهدف1)")
+        lines.append(f"  • ⚠️ صفقات هدفها الأول <10%: {low10:.0f}% من التنبيهات")
     if res.trades:
         def b(title, kf):
             rows = [r for r in _bucket_stats(res.trades, kf) if r[1] >= 3]

@@ -38,27 +38,27 @@ def _risk(stop, t1):
 
 def test_outcome_win():
     post = [Bar(t_ms=1000, o=3.0, h=3.7, l=3.0, c=3.6, v=1000)]
-    res, gain, _ = backtest.simulate_outcome(3.0, _risk(2.7, 3.6), post, 0, 90)
-    assert res == "win" and gain > 0
+    res, gain, _, lvl = backtest.simulate_outcome(3.0, _risk(2.7, 3.6), post, 0, 90)
+    assert res == "win" and gain > 0 and lvl >= 1
 
 
 def test_outcome_loss():
     post = [Bar(t_ms=1000, o=3.0, h=3.1, l=2.6, c=2.7, v=1000)]
-    res, _, draw = backtest.simulate_outcome(3.0, _risk(2.7, 3.6), post, 0, 90)
+    res, _, draw, _ = backtest.simulate_outcome(3.0, _risk(2.7, 3.6), post, 0, 90)
     assert res == "loss" and draw < 0
 
 
 def test_outcome_both_in_bar_is_loss_conservative():
     # شمعة لمست الهدف والوقف معًا → تحفّظ: خسارة
     post = [Bar(t_ms=1000, o=3.0, h=3.7, l=2.6, c=3.0, v=1000)]
-    res, _, _ = backtest.simulate_outcome(3.0, _risk(2.7, 3.6), post, 0, 90)
+    res, _, _, _ = backtest.simulate_outcome(3.0, _risk(2.7, 3.6), post, 0, 90)
     assert res == "loss"
 
 
 def test_outcome_timeout_after_window():
     # شمعة خارج النافذة لا تُحتسب
     post = [Bar(t_ms=10 * 60_000 + 1, o=3.0, h=3.7, l=3.0, c=3.6, v=1000)]
-    res, _, _ = backtest.simulate_outcome(3.0, _risk(2.7, 3.6), post, 0, 5)
+    res, _, _, _ = backtest.simulate_outcome(3.0, _risk(2.7, 3.6), post, 0, 5)
     assert res == "timeout"
 
 
@@ -260,6 +260,49 @@ def test_trade_records_indicator_flags():
     for key in ("macd_bull", "golden_cross", "above_ma200", "above_vwap",
                 "volume_rising", "divergence", "trend", "adx"):
         assert key in t, f"المؤشّر {key} غير مسجّل"
+
+
+def test_profit_section_in_report():
+    """قسم الربحية يعرض التوقّع/تحقيق الأهداف/كسر الوقف."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    base = {"session": "رسمي"}
+    res.trades = [
+        {**base, "result": "win", "realized_pct": 12, "target1_pct": 12,
+         "target_hit": 3, "max_gain_pct": 30},
+        {**base, "result": "win", "realized_pct": 8, "target1_pct": 8,
+         "target_hit": 1, "max_gain_pct": 9},
+        {**base, "result": "loss", "realized_pct": -6, "target1_pct": 10,
+         "target_hit": 0, "max_gain_pct": 2},
+    ]
+    rep = backtest.format_report(res)
+    assert "الربحية والأهداف" in rep
+    assert "تحقيق الأهداف" in rep and "كسر الوقف" in rep
+    assert "هدفها الأول <10%" in rep
+
+
+def test_min_target_profit_gate_rejects_small_reward():
+    """بوّابة الحد الأدنى للربح ترفض صفقة هدفها الأول < العتبة (مع تعطيل بقية
+    البوّابات لعزل البوّابة محل الاختبار)."""
+    from runner_scanner import pipeline
+    from runner_scanner.tests.fixtures import FakeClient, make_snapshot
+    from runner_scanner.models import Session
+    snap = make_snapshot("SMALL", last=10.0, prev=8.0, vol=2_000_000,
+                         change_pct=25.0)
+    client = FakeClient(float_shares=5_000_000)
+    common = dict(massive_api_key="x", tech_readiness_min=0.0,
+                  alert_score_min=0.0, rvol_min=0.0, momentum_min_floor=0.0,
+                  parabolic_vwap_ext_pct=10_000.0,
+                  parabolic_day_change_pct=10_000.0)
+    # عتبة ربح ضخمة (999%) → أي هدف واقعي يُرفض بهذه البوّابة تحديدًا
+    cand = pipeline.process_candidate(
+        Config(min_target_profit_pct=999.0, **common), client, snap,
+        session=Session.REGULAR)
+    assert cand.is_rejected and "يستحق المخاطرة" in (cand.rejected_reason or "")
+    # عتبة 0 (معطّلة) → لا ترفض بسبب الربح
+    cand2 = pipeline.process_candidate(
+        Config(min_target_profit_pct=0.0, **common), client, snap,
+        session=Session.REGULAR)
+    assert "يستحق المخاطرة" not in (cand2.rejected_reason or "")
 
 
 def test_indicator_yes_no_section_in_report():

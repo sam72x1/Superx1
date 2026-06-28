@@ -208,6 +208,17 @@ def process_candidate(
     c.risk = risk.build_risk_plan(cfg, snap.last_price, closed_5min,
                                   daily_resistances=daily_res)
 
+    # ── 9.5) بوّابة الحد الأدنى للربح (قرار المستخدم) ────────────────
+    # صفقة ربح هدفها الأول < العتبة = «لا تستحق المخاطرة» → رفض. معطّلة افتراضيًا
+    # (min_target_profit_pct=0)؛ تُفعَّل بقيمة (مثل 10).
+    if cfg.min_target_profit_pct > 0 and c.risk and c.risk.targets \
+            and snap.last_price > 0:
+        t1_gain = (c.risk.targets[0] - snap.last_price) / snap.last_price * 100.0
+        if t1_gain < cfg.min_target_profit_pct:
+            return c.reject(
+                f"ربح الهدف1 {t1_gain:.0f}% < {cfg.min_target_profit_pct:.0f}%"
+                " — لا يستحق المخاطرة")
+
     # ── 10) الشورت (يضرّ السهم) — للمقبولين فقط (تجنّب تعليق الحلقة) ─
     # عرض فقط لا يؤثّر على الفرز؛ best-effort، تعذّر ≠ صفر. كاش يومي.
     if short_provider is not None:
