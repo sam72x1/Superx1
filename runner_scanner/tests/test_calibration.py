@@ -61,6 +61,40 @@ def test_raises_float_max_on_missed_opportunities():
     assert fl and fl[0].proposed > Config().float_max
 
 
+def test_lowers_catalyst_bonus_when_news_underperforms():
+    # «بلا محفّز» يتفوّق على «بمحفّز» بفارق واضح → اقترح خفض وزن الخبر
+    # (8 بخبر نصفها خسارة = 50% مقابل 8 بلا خبر كلها نجاح = 100%).
+    alerts = ([_row(result="win", had_news=1) for _ in range(4)]
+              + [_row(result="loss", had_news=1) for _ in range(4)]
+              + [_row(result="win", had_news=0) for _ in range(8)])
+    cfg = Config(catalyst_score_bonus=8.0)
+    props = propose_calibrations(_FakeStore(alerts), cfg)
+    cat = [p for p in props if p.env == "CATALYST_SCORE_BONUS"]
+    assert cat and cat[0].current == 8.0 and cat[0].proposed == 4
+
+
+def test_raises_catalyst_bonus_when_news_outperforms():
+    # «بمحفّز» يتفوّق بوضوح → اقترح رفع وزن الخبر (الاتجاه المقابل)
+    alerts = ([_row(result="win", had_news=1) for _ in range(8)]
+              + [_row(result="loss", had_news=0) for _ in range(4)]
+              + [_row(result="win", had_news=0) for _ in range(4)])
+    cfg = Config(catalyst_score_bonus=8.0)
+    props = propose_calibrations(_FakeStore(alerts), cfg)
+    cat = [p for p in props if p.env == "CATALYST_SCORE_BONUS"]
+    assert cat and cat[0].proposed == 12
+
+
+def test_no_catalyst_proposal_when_news_neutral():
+    # فارق ضئيل بين الفئتين (< 10 نقاط) → لا اقتراح في أي اتجاه
+    # بمحفّز: 19/20 = 95% · بلا محفّز: 18/20 = 90% → الفارق 5 نقاط فقط.
+    alerts = ([_row(result="win", had_news=1) for _ in range(19)]
+              + [_row(result="loss", had_news=1) for _ in range(1)]
+              + [_row(result="win", had_news=0) for _ in range(18)]
+              + [_row(result="loss", had_news=0) for _ in range(2)])
+    props = propose_calibrations(_FakeStore(alerts), Config(catalyst_score_bonus=8.0))
+    assert not [p for p in props if p.env == "CATALYST_SCORE_BONUS"]
+
+
 def test_format_proposals_renders_numbers():
     alerts = ([_row(result="loss", rvol=6.0) for _ in range(8)]
               + [_row(result="win", rvol=12.0) for _ in range(8)])

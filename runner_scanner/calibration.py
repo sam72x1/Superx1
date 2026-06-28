@@ -142,20 +142,32 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
                     "النافذة قد تكون أقصر من زمن وصول الأهداف."),
             confidence="عالية" if total >= 12 else "متوسطة"))
 
-    # ── 6) CATALYST_SCORE_BONUS: «بمحفّز» يتفوّق بوضوح → ارفع وزنه ─
+    # ── 6) CATALYST_SCORE_BONUS: وزن الخبر يتحرّك في الاتجاهين ────
+    # يُرفع لو «بمحفّز» يتفوّق بوضوح، ويُخفَّض لو «بلا محفّز» يتفوّق (الخبر
+    # لا يكسب مكافأته). الاتجاهان متماثلان عمدًا بعتبتين مختلفتين: منح وزن
+    # جديد يتطلّب دليلًا أقوى (20 نقطة) من سحب مكافأة قائمة غير مُثبتة
+    # (10 نقاط) — يخطئ لصالح عدم مكافأة إشارة لا تنفع.
     with_news = [r for r in alerts if r["had_news"]]
     no_news = [r for r in alerts if not r["had_news"]]
     wn_wr, wn_n = _win_rate(with_news)
     nn_wr, nn_n = _win_rate(no_news)
     if (wn_wr is not None and nn_wr is not None
-            and wn_n >= _MIN_MEDIUM and nn_n >= _MIN_MEDIUM
-            and wn_wr - nn_wr >= 20):
-        props.append(CalibrationProposal(
-            env="CATALYST_SCORE_BONUS", current=cfg.catalyst_score_bonus,
-            proposed=round(cfg.catalyst_score_bonus + 4),
-            reason=(f"«بمحفّز» ينجح {wn_wr:.0f}% مقابل {nn_wr:.0f}% «بلا محفّز» "
-                    f"— رفع وزن الخبر يقدّم الأقوى."),
-            confidence=_conf(min(wn_n, nn_n)) or "متوسطة"))
+            and wn_n >= _MIN_MEDIUM and nn_n >= _MIN_MEDIUM):
+        conf = _conf(min(wn_n, nn_n)) or "متوسطة"
+        if wn_wr - nn_wr >= 20:
+            props.append(CalibrationProposal(
+                env="CATALYST_SCORE_BONUS", current=cfg.catalyst_score_bonus,
+                proposed=round(cfg.catalyst_score_bonus + 4),
+                reason=(f"«بمحفّز» ينجح {wn_wr:.0f}% مقابل {nn_wr:.0f}% «بلا محفّز» "
+                        f"— رفع وزن الخبر يقدّم الأقوى."),
+                confidence=conf))
+        elif nn_wr - wn_wr >= 10 and cfg.catalyst_score_bonus > 0:
+            props.append(CalibrationProposal(
+                env="CATALYST_SCORE_BONUS", current=cfg.catalyst_score_bonus,
+                proposed=max(0.0, round(cfg.catalyst_score_bonus - 4)),
+                reason=(f"«بلا محفّز» ينجح {nn_wr:.0f}% مقابل {wn_wr:.0f}% «بمحفّز» "
+                        f"— الخبر لا يكسب مكافأته؛ خفض وزنه يرفع جودة الفرز."),
+                confidence=conf))
 
     return props
 
