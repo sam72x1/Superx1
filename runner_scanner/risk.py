@@ -1,27 +1,28 @@
 """الوقف الهجين والأهداف (القسم 8).
 
-- الوقف = max(تحت أقرب دعم داخل-جلسة من شموع 5د **مغلقة**، سقف نسبة%)
-  بحدّ أدنى لمسافة الوقف ~3–4% (ضوضاء LULD)، وسقف أعلى ~20%.
+- الوقف = max(تحت أقرب دعم داخل-جلسة من شموع 5د مغلقة، سقف نسبة%)
+  بحد أدنى لمسافة الوقف ~3–4% (ضوضاء LULD)، وسقف أعلى ~20%.
 - الدعم من شمعة 5د مغلقة لا الجارية، ومن داخل الجلسة لا الدعم اليومي البعيد.
-- **الأهداف = مقاومات حقيقية فقط** (قمم 5د + قمة اليوم + قمم يومية +
+- الأهداف = مقاومات حقيقية فقط (قمم 5د + قمة اليوم + قمم يومية +
   أرقام مستديرة) — لا مضاعفات حسابية عشوائية.
 """
 
 from __future__ import annotations
 
+import math
 from .config import Config
 from .indicators import pivots
 from .models import Bar, RiskPlan
 
 
 def _support_levels(closed_bars: list[Bar], entry: float) -> list[float]:
-    """مستويات الدعم تحت الدخول من قيعان شموع 5د المغلقة، الأقرب أولًا."""
+    """مستويات الدعم تحت الدخول من قيعان شموع 5د المغلقة، الأقرب أولاً."""
     if len(closed_bars) < 3:
         return []
     lows = [b.l for b in closed_bars]
     _, low_idx = pivots(lows)
     candidates = sorted({lows[i] for i in low_idx if lows[i] < entry},
-                        reverse=True)  # الأقرب (الأعلى) أولًا
+                        reverse=True)  # الأقرب (الأعلى) أولاً
     if not candidates:
         below = sorted({lo for lo in lows if lo < entry}, reverse=True)
         return below
@@ -45,7 +46,6 @@ def _round_step(price: float) -> float:
 
 def _round_levels_above(entry: float, n: int) -> list[float]:
     """أرقام مستديرة فوق الدخول (تُعامَل كمقاومات نفسية حقيقية)."""
-    import math
     step = _round_step(entry)
     out: list[float] = []
     lvl = (math.floor(entry / step) + 1) * step
@@ -62,7 +62,7 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
                        extra: list[float] | None = None,
                        count: int = 3, max_pct: float = 80.0,
                        min_bar_trades: int = 0) -> list[float]:
-    """أهداف = **مقاومات حقيقية** فقط (لا مضاعفات حسابية):
+    """أهداف = مقاومات حقيقية فقط (لا مضاعفات حسابية):
     قمم 5د المحورية · قمة اليوم داخل-الجلسة · قمم يومية مُمرَّرة (أمس/الأسبوع)
     · أرقام مستديرة. تُدمج المتقاربة (~1.5%) وتُؤخذ الأقرب فوق الدخول، وضمن
     سقف مسافة معقول (max_pct) كي لا تدخل قمة بعيدة جدًا (سهم انهار من فوق).
@@ -71,14 +71,17 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
         return []   # سعر غير صالح → لا أهداف (حارس للاستدعاء المباشر)
     ceiling = entry * (1 + max_pct / 100.0)
     cands: set[float] = set()
+
     # قمم 5د المحورية فوق الدخول — من شموع ذات سيولة فعلية فقط (لا طبعة رقيقة)
     def _liquid(b: Bar) -> bool:
         return b.v > 0 and (b.n == 0 or b.n >= min_bar_trades)
+
     if len(closed_bars) >= 3:
         highs = [b.h for b in closed_bars]
         hi_idx, _ = pivots(highs)
         cands |= {highs[i] for i in hi_idx
                   if entry < highs[i] <= ceiling and _liquid(closed_bars[i])}
+
     # قمة اليوم داخل-الجلسة — من شموع ذات سيولة فعلية فقط (لا طبعة رقيقة)
     if closed_bars:
         liquid = [b for b in closed_bars if _liquid(b)]
@@ -86,6 +89,7 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
             day_hi = max(b.h for b in liquid)
             if entry < day_hi <= ceiling:
                 cands.add(day_hi)
+
     # مقاومات يومية مُمرَّرة (قمة أمس، قمة 10 أيام...) — ضمن السقف فقط
     for r in (extra or []):
         if r and entry < r <= ceiling:
@@ -113,16 +117,17 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
 def build_risk_plan(cfg: Config, entry: float,
                     closed_bars_5min: list[Bar],
                     daily_resistances: list[float] | None = None) -> RiskPlan:
-    """يبني الوقف (دعم 5د) والأهداف (**مقاومات حقيقية**) من الشارت.
+    """يبني الوقف (دعم 5د) والأهداف (مقاومات حقيقية) من الشارت.
     daily_resistances: مقاومات يومية اختيارية (قمة أمس/الأسبوع) تُدمج كأهداف."""
     if entry <= 0:   # حارس: سعر غير صالح → خطة فارغة بدل أرقام عبثية
         return RiskPlan(stop_price=0.0, stop_pct=0.0, entry_ref=0.0, targets=[],
                         stop_basis="سعر غير صالح")
+
     # ── الوقف: هجين ──────────────────────────────────────────────
     # الأساس = الدعم داخل-الجلسة (تحته بهامش بسيط). لو ما فيه دعم،
     # نستخدم الحد الأدنى للنسبة. ثم نقصّ المسافة بين [min%, max%]:
-    #   مسافة أقرب من الحد الأدنى → ندفعها للحد الأدنى (ضوضاء LULD).
-    #   مسافة أبعد من السقف → نقصّها للسقف.
+    # مسافة أقرب من الحد الأدنى → ندفعها للحد الأدنى (ضوضاء LULD).
+    # مسافة أبعد من السقف → نقصّها للسقف.
     support = _intraday_support(closed_bars_5min, entry)
     if support is not None and support < entry:
         stop_price = support * 0.997   # تحت الدعم بهامش بسيط
