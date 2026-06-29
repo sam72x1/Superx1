@@ -12,6 +12,7 @@ from typing import Optional
 import requests
 
 from .config import Config
+from .textutil import esc
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +90,12 @@ class RenderClient:
             return "Render: غير مربوط (لا API key)"
         svc = self.service_status()
         dep = self.latest_deploy()
-        name = svc.get("name", self.cfg.render_service_id)
+        # اسم الخدمة ورسالة الـ commit نصّان خارجيان من Render API → يُهرَّبان
+        name = esc(svc.get("name", self.cfg.render_service_id))
         suspended = svc.get("suspended", "")
         state = "موقوفة ⚠️" if suspended == "suspended" else "شغّالة ✅"
         out = f"Render «{name}»: {state}"
         if dep:
             out += (f" · آخر نشر {dep['commit_id']} ({dep['status']})"
-                    f" {dep['commit_message']}")
+                    f" {esc(dep['commit_message'])}")
         return out

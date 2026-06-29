@@ -113,7 +113,7 @@ class TelegramAssistant:
             self._dispatch(text)
         except Exception as exc:  # noqa: BLE001
             logger.warning("أمر فشل: %s", exc)
-            self._reply(f"تعذّر تنفيذ الأمر: {exc}")
+            self._reply(f"تعذّر تنفيذ الأمر: {esc(exc)}")
 
     def _dispatch(self, text: str) -> None:
         # رسالة عادية (لا تبدأ بـ /) = سؤال مباشر للمساعد الذكي.
@@ -251,7 +251,7 @@ class TelegramAssistant:
             return
         row = self.sc.store.fetch_row(tkr)
         if row is None:
-            self._reply(f"ما لقيت تتبّعًا لـ ${tkr} (لم يُنبَّه عنه أو لم يُعالَج).")
+            self._reply(f"ما لقيت تتبّعًا لـ ${esc(tkr)} (لم يُنبَّه عنه أو لم يُعالَج).")
             return
         self._reply(postmortem.build_why_message(
             self.cfg, row, client=self.sc.claude))
@@ -356,7 +356,7 @@ class TelegramAssistant:
                     self.sc._run_backtest_bg(now_et(), quick=False,
                                              with_grid=False, start=start, end=end)
                 except Exception as exc:  # noqa: BLE001 — شهر لا يكسر الطابور
-                    self.sc.telegram.send(f"⚠️ تعذّر باكتيست {label}: {exc}")
+                    self.sc.telegram.send(f"⚠️ تعذّر باكتيست {label}: {esc(exc)}")
             self.sc.telegram.send("✅ انتهى طابور الباكتيست — كل الأشهر اكتملت.")
 
         threading.Thread(target=_worker, daemon=True,

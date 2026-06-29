@@ -277,7 +277,7 @@ def test_profit_section_in_report():
     rep = backtest.format_report(res)
     assert "الربحية والأهداف" in rep
     assert "تحقيق الأهداف" in rep and "كسر الوقف" in rep
-    assert "هدفها الأول <10%" in rep
+    assert "هدفها الأول أقل من 10%" in rep
 
 
 def test_min_target_profit_gate_rejects_small_reward():

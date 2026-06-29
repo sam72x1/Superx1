@@ -77,7 +77,7 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
         props.append(CalibrationProposal(
             env="RVOL_MIN", current=cfg.rvol_min,
             proposed=round(cfg.rvol_min + 2),
-            reason=(f"شريحة RVol المنخفضة (<{cfg.rvol_min + 3:g}x) نجاحها "
+            reason=(f"شريحة RVol المنخفضة (دون {cfg.rvol_min + 3:g}x) نجاحها "
                     f"{low_wr:.0f}% مقابل {base_wr:.0f}% للكل ({low_n} محسوم)."),
             confidence=conf))
     else:

@@ -496,7 +496,7 @@ def format_report(res: BacktestResult) -> str:
         lines.append(f"  • كسر الوقف: {_pct(len(losses)):.0f}% · "
                      f"بلا حسم ⏳: {_pct(len(tos)):.0f}%")
         lines.append(f"  • متوسط قمة الفائز: +{avg_peak_win:.1f}% (مقابل خروج الهدف1)")
-        lines.append(f"  • ⚠️ صفقات هدفها الأول <10%: {low10:.0f}% من التنبيهات")
+        lines.append(f"  • ⚠️ صفقات هدفها الأول أقل من 10%: {low10:.0f}% من التنبيهات")
     if res.trades:
         def b(title, kf):
             rows = [r for r in _bucket_stats(res.trades, kf) if r[1] >= 3]
@@ -516,7 +516,7 @@ def format_report(res: BacktestResult) -> str:
         b("الدايفرجنس", lambda t: t.get("divergence"))
         b("الاتجاه اليومي", lambda t: t.get("trend"))
         b("ADX", lambda t: None if t.get("adx") is None else
-          ("قوي ≥25" if t["adx"] >= 25 else "ضعيف <25"))
+          ("قوي ≥25" if t["adx"] >= 25 else "ضعيف تحت 25"))
         # ── المؤشرات الثنائية: نجاح «نعم» مقابل «لا» جنبًا لجنب (يكشف
         # أيها يتنبّأ بالنجاح فعلًا → أساس ضبط أوزان نظام الفرز بالبيانات) ──
         def _wr(g):

@@ -93,7 +93,7 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
 
     # كل مؤشر في سطر مستقل (مثل أعمدة الـ scanner)
     lines = [
-        f"🟢 <b>${c.ticker}</b>  +{s.change_pct:.1f}%",
+        f"🟢 <b>${esc(c.ticker)}</b>  +{s.change_pct:.1f}%",
     ]
     if c.is_champion:
         lines.append("🏆 بطل الفترة السابقة (متابعة بأولوية)")
@@ -188,7 +188,7 @@ def prioritize(candidates: list[Candidate]) -> list[Candidate]:
 
 def build_followup(cfg: Config, event: dict, now: datetime | None = None) -> str:
     """يبني رسالة تحديث متابعة لحدث (🎯 هدف · ⛔ وقف · 🚀 قفزة)."""
-    tkr = event.get("ticker", "")
+    tkr = esc(event.get("ticker", ""))   # رمز من الفيد → يُهرَّب (يدخل كل الفروع)
     price = event.get("price")
     gain = event.get("gain_pct", 0.0)
     etype = event.get("type")
