@@ -49,6 +49,17 @@ def _closed_daily(daily: list, et_now: datetime) -> list:
     return out
 
 
+def _targets_top_gain(risk, last_price: float) -> float | None:
+    """نسبة ربح **أبعد هدف**% (سقف الصفقة)، أو None لو لا أهداف/سعر غير صالح.
+
+    نقيس الأبعد لا الأقرب: مقاومة قريبة لا تعني انعدام المجال — الرنر يقمّ أبعد
+    بكثير (بيانات 5 أشهر: قمة الفائز ~+15% مقابل هدف أول ~+4%)، فقياس الأقرب
+    كان يرفض رنرات جيدة سقفها مرتفع لمجرّد قرب مقاومتها الأولى."""
+    if not risk or not risk.targets or last_price <= 0:
+        return None
+    return (risk.targets[-1] - last_price) / last_price * 100.0
+
+
 def process_candidate(
     cfg: Config,
     client: MassiveClient,
@@ -209,14 +220,12 @@ def process_candidate(
                                   daily_resistances=daily_res)
 
     # ── 9.5) بوّابة الحد الأدنى للربح (قرار المستخدم) ────────────────
-    # صفقة ربح هدفها الأول < العتبة = «لا تستحق المخاطرة» → رفض. معطّلة افتراضيًا
-    # (min_target_profit_pct=0)؛ تُفعَّل بقيمة (مثل 10).
-    if cfg.min_target_profit_pct > 0 and c.risk and c.risk.targets \
-            and snap.last_price > 0:
-        t1_gain = (c.risk.targets[0] - snap.last_price) / snap.last_price * 100.0
-        if t1_gain < cfg.min_target_profit_pct:
+    # سقف ربح الصفقة (أبعد هدف) < العتبة = «لا تستحق المخاطرة» → رفض.
+    if cfg.min_target_profit_pct > 0:
+        top_gain = _targets_top_gain(c.risk, snap.last_price)
+        if top_gain is not None and top_gain < cfg.min_target_profit_pct:
             return c.reject(
-                f"ربح الهدف1 {t1_gain:.0f}% < {cfg.min_target_profit_pct:.0f}%"
+                f"سقف ربح الأهداف {top_gain:.0f}% < {cfg.min_target_profit_pct:.0f}%"
                 " — لا يستحق المخاطرة")
 
     # ── 10) الشورت (يضرّ السهم) — للمقبولين فقط (تجنّب تعليق الحلقة) ─

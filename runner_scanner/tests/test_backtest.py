@@ -305,6 +305,23 @@ def test_min_target_profit_gate_rejects_small_reward():
     assert "يستحق المخاطرة" not in (cand2.rejected_reason or "")
 
 
+def test_reward_gate_measures_top_target_not_first():
+    """البوّابة تقيس **سقف** الأهداف (أبعد) لا الأقرب: هدف أول قريب لا يرفض
+    الصفقة ما دام السقف مرتفعًا (الرنر يقمّ أبعد من مقاومته الأولى)."""
+    from runner_scanner.pipeline import _targets_top_gain
+    from runner_scanner.models import RiskPlan
+    rp = RiskPlan(stop_price=9.0, stop_pct=10.0, entry_ref=10.0,
+                  targets=[10.4, 11.0, 11.8], stop_basis="دعم 5د")
+    # يقيس أبعد هدف (+18%) لا الأول (+4%)
+    assert round(_targets_top_gain(rp, 10.0)) == 18
+    # عتبة 10%: يمرّ (السقف 18 ≥ 10) رغم أن الهدف الأول +4% فقط
+    assert _targets_top_gain(rp, 10.0) >= 10.0
+    # سعر غير صالح / بلا أهداف → None (لا رفض)
+    assert _targets_top_gain(rp, 0.0) is None
+    assert _targets_top_gain(RiskPlan(stop_price=0, stop_pct=0, entry_ref=0,
+                                      targets=[], stop_basis="x"), 10.0) is None
+
+
 def test_indicator_yes_no_section_in_report():
     """تقرير المؤشرات الثنائية يظهر عند توفّر عيّنة كافية في كلا الجانبين."""
     res = backtest.BacktestResult(start="x", end="y", days=1)

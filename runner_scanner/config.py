@@ -129,9 +129,9 @@ class Config:
     stop_min_pct: float = 4.0            # حد أدنى لمسافة الوقف (ضوضاء LULD)
     stop_max_pct: float = 20.0           # سقف أعلى لمسافة الوقف
     target_max_pct: float = 80.0         # سقف مسافة الهدف (يمنع أهدافًا بعيدة سخيفة)
-    # حد أدنى لربح الهدف الأول%: صفقة هدفها أقل = «لا تستحق المخاطرة» (قرار المستخدم).
-    # 0 = معطّل (لا يرفض). فعّله بقيمة (مثل 10) لتصفية الصفقات صغيرة الربح.
-    min_target_profit_pct: float = 0.0
+    # حد أدنى لسقف ربح الأهداف%: صفقة سقفها (أبعد هدف) أقل = «لا تستحق المخاطرة».
+    # قرار المستخدم على 5 أشهر: تحت 10% لا يستحق المخاطرة. 0 = معطّل.
+    min_target_profit_pct: float = 10.0
     min_bar_trades: int = 3              # أقل عدد صفقات لاعتبار قمة الشمعة مقاومة حقيقية
     target_r_multiples: tuple[float, ...] = (1.0, 2.0, 3.0)  # أهداف كمضاعفات R
 
@@ -287,7 +287,7 @@ class Config:
             stop_min_pct=_f("STOP_MIN_PCT", 4.0),
             stop_max_pct=_f("STOP_MAX_PCT", 20.0),
             target_max_pct=_f("TARGET_MAX_PCT", 80.0),
-            min_target_profit_pct=_f("MIN_TARGET_PROFIT_PCT", 0.0),
+            min_target_profit_pct=_f("MIN_TARGET_PROFIT_PCT", 10.0),
             min_bar_trades=_i("MIN_BAR_TRADES", 3),
             premarket_start_hour=_f("PREMARKET_START_HOUR", 4.0),
             regular_start_hour=_f("REGULAR_START_HOUR", 9.5),
