@@ -496,7 +496,8 @@ def format_report(res: BacktestResult) -> str:
         lines.append(f"  • كسر الوقف: {_pct(len(losses)):.0f}% · "
                      f"بلا حسم ⏳: {_pct(len(tos)):.0f}%")
         lines.append(f"  • متوسط قمة الفائز: +{avg_peak_win:.1f}% (مقابل خروج الهدف1)")
-        lines.append(f"  • ⚠️ صفقات هدفها الأول أقل من 10%: {low10:.0f}% من التنبيهات")
+        lines.append(f"  • ℹ️ هدفها الأول (الأقرب) أقل من 10%: {low10:.0f}% "
+                     "— للعلم فقط؛ الرفض يكون على سقف الأهداف لا الأقرب")
     if res.trades:
         def b(title, kf):
             rows = [r for r in _bucket_stats(res.trades, kf) if r[1] >= 3]

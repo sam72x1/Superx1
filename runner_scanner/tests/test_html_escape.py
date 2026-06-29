@@ -89,6 +89,27 @@ def test_render_summary_html_safe_with_hostile_commit():
     _assert_html_safe(rc.summary())
 
 
+# ── 🌙 بريفنغ fallback: لا هروب مزدوج لملخّص Render (مُهرَّب أصلًا) ──
+def test_briefing_fallback_no_double_escape():
+    """summary() يُهرّب داخليًا، فبريفنغ fallback يجب ألّا يهرّبه ثانيةً
+    (وإلا يرى المستخدم &amp;amp; / &amp;lt; حرفيًا)."""
+    from runner_scanner.advisor import build_briefing
+
+    class _Store:
+        def fetch_day(self, day):
+            return []
+
+        def fetch_missed(self, pct):
+            return []
+
+    summary_pre_escaped = "Render «svc &amp; co»: شغّالة ✅ · آخر نشر abc (live) fix &lt;x&gt;"
+    # بلا مفتاح Claude → فرع fallback (يدمج render_summary المُهرَّب أصلًا)
+    out = build_briefing(Config(), _Store(), render_summary=summary_pre_escaped)
+    _assert_html_safe(out)
+    assert "&amp;amp;" not in out and "&amp;lt;" not in out   # لا هروب مزدوج
+    assert "&amp; co" in out and "&lt;x&gt;" in out           # الكيانات الأصلية سليمة
+
+
 # ── ⚙️ معايرة: سبب شريحة RVol كان فيه < حرفي ──────────────────────
 def test_calibration_proposals_html_safe():
     from runner_scanner.calibration import format_proposals, propose_calibrations

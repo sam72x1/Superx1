@@ -177,7 +177,7 @@ class TelegramAssistant:
             return "ما فيه أسهم في آخر مسح (أو ما بدأ بعد)."
         lines = ["🔝 <b>أقوى الأسهم (آخر مسح)</b>"]
         for tkr, chg in runners[:15]:
-            lines.append(f"  • {tkr}: +{chg:.1f}%")
+            lines.append(f"  • {esc(tkr)}: +{chg:.1f}%")
         return "\n".join(lines)
 
     def _handle_ask(self, question: str) -> None:

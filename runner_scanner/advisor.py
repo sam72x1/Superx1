@@ -103,6 +103,6 @@ def build_briefing(cfg: Config, store, render_summary: str = "",
         f"🌙 <b>بريفنغ نهاية الجلسة — {s['day']}</b>\n"
         f"تنبيهات: {len(s['alerts'])} ({len(s['wins'])}✅/{len(s['losses'])}🛑/"
         f"{len(s['timeouts'])}⏳) · فرص فائتة: {len(s['missed'])}\n"
-        f"{esc(render_summary)}\n"
+        f"{render_summary}\n"   # مُهرَّب أصلًا داخل summary() — لا تُهرّبه ثانيةً
         "<i>(فعّل ANTHROPIC_API_KEY لبريفنغ ذكي مفصّل.)</i>"
     )
