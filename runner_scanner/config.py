@@ -130,8 +130,9 @@ class Config:
     catalyst_score_bonus: float = 8.0       # تُضاف للدرجة عند وجود خبر
 
     # ── الوقف والأهداف (القسم 8) ──────────────────────────────────
-    stop_min_pct: float = 4.0            # حد أدنى لمسافة الوقف (ضوضاء LULD)
-    stop_max_pct: float = 20.0           # سقف أعلى لمسافة الوقف
+    stop_fixed_pct: float = 7.0          # الوقف = الدخول − هذه النسبة% بالضبط (قرار المستخدم)
+    stop_min_pct: float = 4.0            # (غير مستخدَم للوقف الثابت؛ مُبقى للتوافق)
+    stop_max_pct: float = 20.0           # (غير مستخدَم للوقف الثابت؛ مُبقى للتوافق)
     target_max_pct: float = 80.0         # سقف مسافة الهدف (يمنع أهدافًا بعيدة سخيفة)
     # حد أدنى لسقف ربح الأهداف%: صفقة سقفها (أبعد هدف) أقل = «لا تستحق المخاطرة».
     # قرار المستخدم على 5 أشهر: تحت 10% لا يستحق المخاطرة. 0 = معطّل.
@@ -292,6 +293,7 @@ class Config:
             alert_score_min=_f("ALERT_SCORE_MIN", 60.0),
             catalyst_lookback_hours=_f("CATALYST_LOOKBACK_HOURS", 48.0),
             catalyst_score_bonus=_f("CATALYST_SCORE_BONUS", 8.0),
+            stop_fixed_pct=_f("STOP_FIXED_PCT", 7.0),
             stop_min_pct=_f("STOP_MIN_PCT", 4.0),
             stop_max_pct=_f("STOP_MAX_PCT", 20.0),
             target_max_pct=_f("TARGET_MAX_PCT", 80.0),

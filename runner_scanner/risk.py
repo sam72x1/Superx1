@@ -117,34 +117,17 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
 def build_risk_plan(cfg: Config, entry: float,
                     closed_bars_5min: list[Bar],
                     daily_resistances: list[float] | None = None) -> RiskPlan:
-    """يبني الوقف (دعم 5د) والأهداف (مقاومات حقيقية) من الشارت.
+    """يبني الوقف (نسبة ثابتة من الدخول) والأهداف (مقاومات حقيقية) من الشارت.
     daily_resistances: مقاومات يومية اختيارية (قمة أمس/الأسبوع) تُدمج كأهداف."""
     if entry <= 0:   # حارس: سعر غير صالح → خطة فارغة بدل أرقام عبثية
         return RiskPlan(stop_price=0.0, stop_pct=0.0, entry_ref=0.0, targets=[],
                         stop_basis="سعر غير صالح")
 
-    # ── الوقف: هجين ──────────────────────────────────────────────
-    # الأساس = الدعم داخل-الجلسة (تحته بهامش بسيط). لو ما فيه دعم،
-    # نستخدم الحد الأدنى للنسبة. ثم نقصّ المسافة بين [min%, max%]:
-    # مسافة أقرب من الحد الأدنى → ندفعها للحد الأدنى (ضوضاء LULD).
-    # مسافة أبعد من السقف → نقصّها للسقف.
-    support = _intraday_support(closed_bars_5min, entry)
-    if support is not None and support < entry:
-        stop_price = support * 0.997   # تحت الدعم بهامش بسيط
-        basis = "دعم 5د"
-    else:
-        stop_price = entry * (1 - cfg.stop_min_pct / 100.0)
-        basis = "حد أدنى"
-
-    stop_pct = (entry - stop_price) / entry * 100.0 if entry > 0 else 0.0
-    if stop_pct < cfg.stop_min_pct:
-        stop_pct = cfg.stop_min_pct
-        stop_price = entry * (1 - stop_pct / 100.0)
-        basis = "حد أدنى" if basis == "دعم 5د" else basis
-    elif stop_pct > cfg.stop_max_pct:
-        stop_pct = cfg.stop_max_pct
-        stop_price = entry * (1 - stop_pct / 100.0)
-        basis = "سقف أقصى"
+    # ── الوقف: نسبة ثابتة من الدخول (قرار المستخدم) ──────────────
+    # الوقف = الدخول − stop_fixed_pct% بالضبط، لا دعم ولا قصّ.
+    stop_pct = cfg.stop_fixed_pct
+    stop_price = entry * (1 - stop_pct / 100.0)
+    basis = f"ثابت {stop_pct:g}%"
 
     # ── الأهداف: مقاومات حقيقية فقط (لا مضاعفات حسابية) ──────────
     targets = resistance_targets(entry, closed_bars_5min,

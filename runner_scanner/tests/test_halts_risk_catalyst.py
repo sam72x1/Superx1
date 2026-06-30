@@ -60,20 +60,22 @@ def test_unknown_ticker_is_normal():
 
 
 # ── الوقف والأهداف ────────────────────────────────────────────────
-def test_stop_respects_min_distance():
-    # دعم قريب جدًا → الوقف يُدفع للحد الأدنى
+def test_stop_is_fixed_pct_from_entry():
+    """الوقف = الدخول − نسبة ثابتة% بالضبط (لا دعم ولا قصّ) — قرار المستخدم."""
     bars = [Bar(t_ms=i, o=2.48, h=2.5, l=2.47, c=2.49, v=10000)
             for i in range(6)]
     rp = risk.build_risk_plan(CFG, entry=2.5, closed_bars_5min=bars)
-    assert rp.stop_pct >= CFG.stop_min_pct
+    assert rp.stop_pct == CFG.stop_fixed_pct                       # 7% بالضبط
+    assert abs(rp.stop_price - 2.5 * (1 - CFG.stop_fixed_pct / 100.0)) < 1e-6
+    assert "ثابت" in rp.stop_basis
 
 
-def test_stop_respects_max_distance():
-    # دعم بعيد جدًا → الوقف يُقصّ للسقف
-    bars = [Bar(t_ms=i, o=2.0, h=2.1, l=1.0, c=1.5, v=10000)
-            for i in range(6)]
-    rp = risk.build_risk_plan(CFG, entry=3.0, closed_bars_5min=bars)
-    assert rp.stop_pct <= CFG.stop_max_pct
+def test_stop_fixed_regardless_of_support_distance():
+    """نفس النسبة سواء الدعم قريب أو بعيد (الوقف ثابت لا هجين)."""
+    far = [Bar(t_ms=i, o=2.0, h=2.1, l=1.0, c=1.5, v=10000) for i in range(6)]
+    rp = risk.build_risk_plan(CFG, entry=3.0, closed_bars_5min=far)
+    assert rp.stop_pct == CFG.stop_fixed_pct                       # 7% ولو الدعم بعيد
+    assert abs(rp.stop_price - 3.0 * (1 - CFG.stop_fixed_pct / 100.0)) < 1e-6
 
 
 def test_targets_are_above_entry():
