@@ -62,6 +62,31 @@ def test_outcome_timeout_after_window():
     assert res == "timeout"
 
 
+# ── الخروج الجزئي (قياس محاكى-المسار) ─────────────────────────────
+def test_partial_exit_held_half_runs_to_t2():
+    """نصف عند هدف1 (+20%) + النصف الثاني يبلغ هدف2 (+32%) دون تعادل."""
+    # دخول 3.0 · أهداف [3.6, 3.96, 4.32] · t1=+20%
+    post = [Bar(t_ms=1000, o=3.0, h=3.7, l=3.0, c=3.6, v=1000),   # بلغ هدف1
+            Bar(t_ms=2000, o=3.6, h=4.0, l=3.7, c=3.95, v=1000)]  # بلغ هدف2، لا تعادل
+    r = backtest.partial_exit_realized(3.0, _risk(2.7, 3.6), post, 0, 90, 0.5)
+    assert round(r) == 26   # 0.5*20 + 0.5*32 = 26 (أفضل من خروج كامل +20)
+
+
+def test_partial_exit_held_half_retraces_to_breakeven():
+    """نصف عند هدف1 + النصف الثاني يرجع للتعادل قبل هدف2 → 0% للنصف (متحفّظ)."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.7, l=3.0, c=3.6, v=1000),   # بلغ هدف1
+            Bar(t_ms=2000, o=3.6, h=3.7, l=2.9, c=3.0, v=1000)]   # رجع للتعادل
+    r = backtest.partial_exit_realized(3.0, _risk(2.7, 3.6), post, 0, 90, 0.5)
+    assert round(r) == 10   # 0.5*20 + 0.5*0 = 10 (أسوأ من خروج كامل +20 — مكشوف)
+
+
+def test_partial_exit_stop_before_t1_is_full_loss():
+    """الوقف قبل الهدف1 → خسارة كاملة (لا خروج جزئي)."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.1, l=2.6, c=2.7, v=1000)]   # ضرب الوقف 2.7
+    r = backtest.partial_exit_realized(3.0, _risk(2.7, 3.6), post, 0, 90, 0.5)
+    assert round(r) == -10  # (2.7-3)/3 = -10%
+
+
 # ── AsOfClient: لا تسرّب مستقبل ───────────────────────────────────
 class _Base:
     def bars_daily(self, t, s, e):

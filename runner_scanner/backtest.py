@@ -157,6 +157,50 @@ def simulate_outcome(entry: float, risk, post_bars: list[Bar],
             (low - entry) / entry * 100.0, tgt_level)
 
 
+def partial_exit_realized(entry: float, risk, post_bars: list[Bar],
+                          asof_ms: int, window_min: float,
+                          fraction: float = 0.5) -> float:
+    """ربح **الخروج الجزئي** المحاكى-المسار (للقياس فقط، لا يغيّر الفرز ولا الحيّ):
+    بيع نسبة `fraction` عند الهدف1، رفع الوقف للتعادل (الدخول)، وإمساك الباقي حتى
+    أول هدف أعلى (t2/t3) ربحًا أو الرجوع للتعادل. يحاكي **المسار فعليًّا** لا «هل
+    لُمست القمة» — تحفّظ يمنع المبالغة: داخل الشمعة الواحدة التعادل يسبق الهدف الأعلى،
+    والوقف قبل الهدف1 = خسارة كاملة (لا خروج جزئي). نفس قاعدة لا-تسرّب-المستقبل."""
+    if not risk or not risk.targets or entry <= 0:
+        return 0.0
+    targets = risk.targets
+    t1 = targets[0]
+    higher = targets[1:]
+    stop = risk.stop_price
+    deadline = asof_ms + window_min * 60_000
+    t1_pct = (t1 - entry) / entry * 100.0
+    phase1 = True                     # قبل بلوغ الهدف1
+    held_pct: float | None = None     # ربح النصف المُمسَك بعد الهدف1
+    for b in post_bars:
+        if b.t_ms > deadline:
+            break
+        if phase1:
+            if stop and b.l <= stop:          # وقف قبل الهدف1 → خسارة كاملة
+                return (stop - entry) / entry * 100.0
+            if b.h >= t1:                      # بلغ الهدف1 → مرحلة الإمساك
+                phase1 = False
+            continue                           # شمعة الاختراق: لا نقيس أعلى داخلها (تحفّظ)
+        # مرحلة 2: النصف مُمسَك، الوقف = التعادل (الدخول)
+        if b.l <= entry:                       # رجع للتعادل → النصف الثاني 0%
+            held_pct = 0.0
+            break
+        for tg in reversed(higher):            # أعلى هدف بلغه (الأبعد أولًا)
+            if b.h >= tg:
+                held_pct = (tg - entry) / entry * 100.0
+                break
+        if held_pct is not None:
+            break
+    if phase1:                                 # لم يبلغ الهدف1 ولا الوقف → ⏳=0
+        return 0.0
+    if held_pct is None:                       # بلغ الهدف1 لكن النصف لم يُحسم → تحفّظ 0
+        held_pct = 0.0
+    return fraction * t1_pct + (1.0 - fraction) * held_pct
+
+
 # ── تقويم أيام التداول ────────────────────────────────────────────
 def _is_trading_day(d: date) -> bool:
     return d.weekday() < 5 and not market_calendar.is_holiday(d)
@@ -317,6 +361,10 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 realized = (cand.risk.stop_price - entry) / entry * 100.0
             else:
                 realized = 0.0
+            # قياس الخروج الجزئي (ظل — لا يغيّر القرار): مقارنة التوقّع لاحقًا
+            realized_partial = partial_exit_realized(
+                entry, cand.risk, post, asof, cfg.outcome_window_min,
+                cfg.partial_exit_fraction)
             return {"kind": "alert", "trade": {
                 "date": day, "ticker": ticker,
                 "entry": round(entry, 4),
@@ -339,6 +387,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 # الربحية والأهداف
                 "target1_pct": round(t1_pct, 1),      # إمكانية الربح عند الهدف1
                 "realized_pct": round(realized, 1),    # الربح/الخسارة المحقّق
+                "realized_partial_pct": round(realized_partial, 1),  # لو خروج جزئي
                 "target_hit": tlevel,                  # أعلى هدف لُمس (0..3)
                 "result": result, "max_gain_pct": round(gain, 1),
                 "max_draw_pct": round(draw, 1),
@@ -498,6 +547,19 @@ def format_report(res: BacktestResult) -> str:
         lines.append(f"  • متوسط قمة الفائز: +{avg_peak_win:.1f}% (مقابل خروج الهدف1)")
         lines.append(f"  • ℹ️ هدفها الأول (الأقرب) أقل من 10%: {low10:.0f}% "
                      "— للعلم فقط؛ الرفض يكون على سقف الأهداف لا الأقرب")
+        # ── 🔀 قياس الخروج الجزئي (ظل — لا يُطبَّق): هل يرفع التوقّع؟ ──
+        rps = [t["realized_partial_pct"] for t in res.trades
+               if t.get("realized_partial_pct") is not None]
+        if rps:
+            avg_part = sum(rps) / len(rps)
+            delta = avg_part - avg_real
+            tag = ("🟢 أفضل" if delta > 0.05 else
+                   "🔴 أسوأ" if delta < -0.05 else "≈ مماثل")
+            lines.append("\n🔀 قياس الخروج الجزئي (ظل — لا يُطبَّق على الحيّ):")
+            lines.append(f"  • التوقّع/صفقة: حالي {avg_real:+.1f}% ← خروج جزئي "
+                         f"{avg_part:+.1f}% ({tag} {delta:+.1f}%)")
+            lines.append("  <i>↳ بيع نصف عند هدف1 + رفع الوقف للتعادل + إمساك "
+                         "النصف للأهداف الأعلى (محاكى-المسار، متحفّظ).</i>")
     if res.trades:
         def b(title, kf):
             rows = [r for r in _bucket_stats(res.trades, kf) if r[1] >= 3]

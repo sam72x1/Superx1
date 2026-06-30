@@ -136,6 +136,8 @@ class Config:
     # حد أدنى لسقف ربح الأهداف%: صفقة سقفها (أبعد هدف) أقل = «لا تستحق المخاطرة».
     # قرار المستخدم على 5 أشهر: تحت 10% لا يستحق المخاطرة. 0 = معطّل.
     min_target_profit_pct: float = 10.0
+    # نسبة البيع عند الهدف1 في **قياس** الخروج الجزئي بالباكتيست (ظل، لا يغيّر الحيّ).
+    partial_exit_fraction: float = 0.5
     min_bar_trades: int = 3              # أقل عدد صفقات لاعتبار قمة الشمعة مقاومة حقيقية
     target_r_multiples: tuple[float, ...] = (1.0, 2.0, 3.0)  # أهداف كمضاعفات R
 
@@ -293,6 +295,7 @@ class Config:
             stop_max_pct=_f("STOP_MAX_PCT", 20.0),
             target_max_pct=_f("TARGET_MAX_PCT", 80.0),
             min_target_profit_pct=_f("MIN_TARGET_PROFIT_PCT", 10.0),
+            partial_exit_fraction=_f("PARTIAL_EXIT_FRACTION", 0.5),
             min_bar_trades=_i("MIN_BAR_TRADES", 3),
             premarket_start_hour=_f("PREMARKET_START_HOUR", 4.0),
             regular_start_hour=_f("REGULAR_START_HOUR", 9.5),
