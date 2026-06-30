@@ -223,6 +223,26 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
     return "\n".join(parts + tail)
 
 
+def top_action(store, cfg: Config) -> str:
+    """**أهم إجراء واحد الآن** — يلخّص اقتراحات المعايرة الكمّية في سطر قابل
+    للتنفيذ («المساعد يقول لك وش تسوي»). يختار الأعلى ثقة (عيّنة أكبر) أولًا.
+    اقتراح لا تنفيذ (هوية البوت): يعرض الرقم الجاهز، والمستخدم يقرّر.
+    """
+    props = calibration.propose_calibrations(store, cfg)
+    if not props:
+        return ("🎯 <b>أهم إجراء الآن</b>\n"
+                "   • لا إجراء عاجل — البيانات متّسقة أو العيّنة غير كافية بعد. "
+                "اجمع نتائج أكثر ثم راجِع /report.")
+    # الأعلى ثقة أولًا (عالية > متوسطة)، مع الحفاظ على ترتيب الأولوية القائم
+    top = sorted(props, key=lambda p: 0 if p.confidence == "عالية" else 1)[0]
+    extra = (f"\n   <i>↳ يوجد {len(props) - 1} اقتراح آخر — /report للكل.</i>"
+             if len(props) > 1 else "")
+    return ("🎯 <b>أهم إجراء الآن (للمراجعة — لا يُطبَّق تلقائيًا)</b>\n"
+            + top.line() + "\n"
+            "   <i>↳ غيّره في Render → Environment إن اقتنعت، ثم /sha للتأكّد.</i>"
+            + extra)
+
+
 # ── تصدير CSV (ملفات الصفقات والفرص الفائتة) ─────────────────────
 def _write_csv(rows: list, path: str) -> str | None:
     """يكتب صفوف sqlite3.Row إلى CSV ويرجّع المسار (أو None لو فاضي)."""

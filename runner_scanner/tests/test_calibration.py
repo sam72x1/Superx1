@@ -100,3 +100,20 @@ def test_format_proposals_renders_numbers():
               + [_row(result="win", rvol=12.0) for _ in range(8)])
     text = format_proposals(propose_calibrations(_FakeStore(alerts), Config()))
     assert "RVOL_MIN" in text and "→" in text
+
+
+def test_top_action_picks_single_priority():
+    """/improve يلخّص أهم إجراء واحد جاهز من اقتراحات المعايرة."""
+    from runner_scanner.dev_assistant import top_action
+    alerts = ([_row(result="loss", rvol=6.0) for _ in range(8)]
+              + [_row(result="win", rvol=12.0) for _ in range(8)])
+    txt = top_action(_FakeStore(alerts), Config())
+    assert "أهم إجراء" in txt and "RVOL_MIN" in txt
+    assert "<" not in txt.replace("<b>", "").replace("</b>", "").replace(
+        "<i>", "").replace("</i>", "")   # HTML-آمن
+
+
+def test_top_action_empty_when_no_data():
+    from runner_scanner.dev_assistant import top_action
+    txt = top_action(_FakeStore([]), Config())
+    assert "لا إجراء عاجل" in txt

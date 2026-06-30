@@ -23,7 +23,7 @@ import requests
 
 from . import advisor, postmortem
 from .alerts import TelegramSender
-from .dev_assistant import send_report_and_files
+from .dev_assistant import send_report_and_files, top_action
 from .sessions import classify_session, now_et
 from .state import trade_date_str
 from .textutil import esc
@@ -36,6 +36,7 @@ _HELP = (
     "أو استخدم الأوامر:\n"
     "/status — حالة البوت وريندر\n"
     "/top — أقوى الأسهم الآن\n"
+    "/improve — أهم إجراء تحسين الآن (سطر واحد جاهز)\n"
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
     "/backtest — معاينة (شهر: «/backtest شهر 4» · طابور: «/backtest 3 4 5»)\n"
@@ -133,6 +134,8 @@ class TelegramAssistant:
             self._reply(self._status_text())
         elif cmd == "top":
             self._reply(self._top_text())
+        elif cmd in ("improve", "تطوير", "حسّن", "حسن"):
+            self._reply(top_action(self.sc.store, self.cfg))
         elif cmd == "report":
             self._reply("جاري تجهيز تقرير التطوير...")
             send_report_and_files(self.sc.store, self.cfg, self.sc.telegram)
