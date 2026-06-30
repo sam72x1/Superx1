@@ -27,6 +27,22 @@ def test_readiness_downtrend_scores_low():
     assert r.trend == "هابط"
 
 
+def test_adx_weight_is_configurable_and_directional():
+    """رفع adx_weight يرفع درجة اتجاه صاعد قوي (ADX يكافئ القوة الصاعدة)."""
+    daily = uptrend_daily_bars(260)   # تاريخ كافٍ لحساب ADX (≥29 شمعة)
+    low = classic_ta.compute_readiness(Config(adx_weight=2.0), daily)
+    high = classic_ta.compute_readiness(Config(adx_weight=12.0), daily)
+    assert high.classic_score > low.classic_score   # وزن أعلى → درجة أعلى للصاعد القوي
+
+
+def test_adx_weight_best_effort_when_adx_none():
+    """تاريخ قصير → ADX=None → تغيير الوزن بلا أثر (best-effort §3، لا كسر)."""
+    short = uptrend_daily_bars(10)    # < 29 شمعة → adx_dmi يرجّع None
+    a = classic_ta.score_timeframe(short, adx_weight=2.0)[0]
+    b = classic_ta.score_timeframe(short, adx_weight=20.0)[0]
+    assert a == b                     # ADX غير محسوب → الوزن لا يؤثّر
+
+
 def test_readiness_limited_history_flagged():
     r = classic_ta.compute_readiness(CFG, uptrend_daily_bars(30))
     assert r.limited_history is True

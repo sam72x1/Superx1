@@ -34,9 +34,9 @@ def test_frame_cache_reuses_constant_frames(monkeypatch):
     calls = {"n": 0}
     orig = classic_ta.score_timeframe
 
-    def counting(bars):
+    def counting(bars, *a, **kw):
         calls["n"] += 1
-        return orig(bars)
+        return orig(bars, *a, **kw)
 
     monkeypatch.setattr(classic_ta, "score_timeframe", counting)
     daily = uptrend_daily_bars(260)

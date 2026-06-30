@@ -117,6 +117,10 @@ class Config:
     # ── حدود ركيزتي الدرجة ────────────────────────────────────────
     momentum_pillar_max: float = 50.0
     readiness_pillar_max: float = 50.0
+    # وزن ADX/DMI داخل درجة الفريم (قوة الاتجاه). ADX≥25 هو **المؤشر الوحيد
+    # المتّسق** عبر 5 أشهر (يفوز أكثر 4/4)، ووزنه الفعلي على الدرجة كان ضئيلًا
+    # (~0.4–2.1/100)، فرُفع من 5 إلى 7 (بزيادة محافظة). قابل للمعايرة/الباكتيست.
+    adx_weight: float = 7.0
     momentum_min_floor: float = 25.0     # الزخم لازم فوق هذا (من 50)
     # عتبة الأولوية للتنبيه (الدرجة النهائية من 100)
     alert_score_min: float = 60.0
@@ -280,6 +284,7 @@ class Config:
             min_history_bars=_i("MIN_HISTORY_BARS", 50),
             momentum_pillar_max=_f("MOMENTUM_PILLAR_MAX", 50.0),
             readiness_pillar_max=_f("READINESS_PILLAR_MAX", 50.0),
+            adx_weight=_f("ADX_WEIGHT", 7.0),
             momentum_min_floor=_f("MOMENTUM_MIN_FLOOR", 25.0),
             alert_score_min=_f("ALERT_SCORE_MIN", 60.0),
             catalyst_lookback_hours=_f("CATALYST_LOOKBACK_HOURS", 48.0),

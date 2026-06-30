@@ -56,8 +56,9 @@ def resample(daily: list[Bar], group: int) -> list[Bar]:
     return out
 
 
-def score_timeframe(bars: list[Bar]) -> tuple[float, dict]:
-    """درجة فريم واحد [-100,100] + تفاصيل. None-آمنة للتاريخ القصير."""
+def score_timeframe(bars: list[Bar], adx_weight: float = 7.0) -> tuple[float, dict]:
+    """درجة فريم واحد [-100,100] + تفاصيل. None-آمنة للتاريخ القصير.
+    adx_weight: وزن مساهمة ADX/DMI (قوة الاتجاه) — قابل للمعايرة من Config."""
     detail: dict = {}
     if len(bars) < 5:
         return 0.0, {"insufficient": True}
@@ -123,19 +124,19 @@ def score_timeframe(bars: list[Bar]) -> tuple[float, dict]:
     elif div == "هابط":
         score -= 8.0
 
-    # ── ADX / DMI ±5 (قوة + وجهة) ───────────────────────────────
+    # ── ADX / DMI ±adx_weight (قوة + وجهة) — المؤشر الوحيد المتّسق بالبيانات ─
     adx_res = adx_dmi(highs, lows, closes)
     if adx_res is not None:
         adx_val, plus_di, minus_di = adx_res
         detail["adx"] = round(adx_val, 1)
         strength = min(1.0, adx_val / 30.0)
         if plus_di > minus_di:
-            contrib = 5.0 * strength
+            contrib = adx_weight * strength
             if adx_val > 45:      # قوي جدًا → قرب إنهاك
                 contrib -= 1.5
             score += contrib
         else:
-            score -= 5.0 * strength
+            score -= adx_weight * strength
 
     # ── بولينجر %B ±4 ────────────────────────────────────────────
     pb = bollinger_pct_b(closes)
@@ -211,11 +212,11 @@ def compute_readiness(cfg: Config, daily: list[Bar],
         if frame_cache is not None and name != "hourly":
             cached = frame_cache.get(name)
             if cached is None:
-                cached = score_timeframe(bars)
+                cached = score_timeframe(bars, cfg.adx_weight)
                 frame_cache[name] = cached
             part, detail = cached
         else:
-            part, detail = score_timeframe(bars)
+            part, detail = score_timeframe(bars, cfg.adx_weight)
         if name == "daily":
             daily_detail = detail
         weighted_sum += part * w
