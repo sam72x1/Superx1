@@ -62,3 +62,41 @@ def test_fetch_row_latest_when_no_day():
     assert row is not None and row["ticker"] == "DILX"
     assert st.fetch_row("NOPE") is None
     st.close()
+
+
+def test_first_session_immutable_across_relogs():
+    """first_session تُثبَّت عند أول رصد ولا تُمسّ بإعادة التقييم — بينما session
+    تتحدّث (يعتمد عليها منطق إعادة-التأسيس). كان 33% من الصفوف الحيّة بجلسة غلط."""
+    st = _store()
+    t0 = datetime(2026, 6, 26, 9, 0, tzinfo=timezone.utc)    # 5ص ET = بريماركت
+    day = trade_date_str(t0)
+    c = _cand()
+    c.session = Session.PREMARKET
+    st.log_candidate(c, t0)
+    # إعادة تقييم في الرسمي ثم الأفترهاوس (نفس السهم/اليوم)
+    c.session = Session.REGULAR
+    st.log_candidate(c, datetime(2026, 6, 26, 15, 0, tzinfo=timezone.utc))
+    c.session = Session.AFTERHOURS
+    st.log_candidate(c, datetime(2026, 6, 26, 21, 0, tzinfo=timezone.utc))
+    row = st.fetch_row("DILX", day)
+    assert row["first_session"] == Session.PREMARKET.value   # ثابتة
+    assert row["session"] == Session.AFTERHOURS.value        # الأخيرة (مقصود)
+    st.close()
+
+
+def test_relog_rebaseline_still_works_with_first_session():
+    """إعادة تأسيس السعر المرجعي عند دخول الرسمي (لغير المُنبَّه) لم تنكسر."""
+    st = _store()
+    t0 = datetime(2026, 6, 26, 9, 0, tzinfo=timezone.utc)    # بريماركت
+    day = trade_date_str(t0)
+    c = _cand()
+    c.session = Session.PREMARKET
+    c.snapshot.last_price = 3.0
+    st.log_candidate(c, t0)
+    c.session = Session.REGULAR                               # دخل الرسمي
+    c.snapshot.last_price = 3.5
+    st.log_candidate(c, datetime(2026, 6, 26, 14, 0, tzinfo=timezone.utc))
+    row = st.fetch_row("DILX", day)
+    assert row["first_price"] == 3.5      # أُعيد التأسيس على سعر الرسمي
+    assert row["first_session"] == Session.PREMARKET.value   # التحليل يبقى صادقًا
+    st.close()

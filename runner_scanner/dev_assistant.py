@@ -99,25 +99,39 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
         return out
 
     # ── الفرص الفائتة (مستقلة عن حجم العيّنة — تظهر فورًا) ─────────
+    # القمة وحدها تخدع (FOMO): نعرض معها القاع وكم سهمًا لمس **مسافة الوقف**
+    # خلال النافذة — «فائتة» قاعها أعمق من الوقف كانت غالبًا ستُوقَف لا تُربَح.
     def missed_block():
         if not missed:
             return []
+        stop_d = cfg.stop_fixed_pct   # مسافة الوقف الثابتة (نفس وقف البطاقة)
         out = [f"\n👻 <b>فرص فائتة (مرفوض صعد ≥{int(cfg.missed_rise_pct)}%)</b>: "
                f"<b>{len(missed)}</b>"]
-        # تجميع حسب سبب الرفض = أي بوّابة فوّتت أسهم صاعدة
+        # تجميع حسب سبب الرفض = أي بوّابة فوّتت أسهم صاعدة (قمة + قاع معًا)
         by_reason: dict = {}
         for m in missed:
             reason = (m["reject_reason"] or "غير معروف").split("(")[0].strip()
             by_reason.setdefault(reason, []).append(m)
-        out.append("   أكثر البوابات تفويتًا:")
+        out.append("   أكثر البوابات تفويتًا (القمة لا تكفي — انظر القاع):")
+
+        def _med(vals):
+            s = sorted(vals)
+            return s[len(s) // 2] if s else 0.0
         for reason, items in sorted(by_reason.items(),
                                     key=lambda x: -len(x[1]))[:4]:
-            out.append(f"   • {esc(reason)}: {len(items)} سهم")
-        out.append("   أقوى الفائتة:")
+            g = _med([m["max_gain_pct"] or 0 for m in items])
+            d = _med([m["max_draw_pct"] or 0 for m in items])
+            hit = sum(1 for m in items if (m["max_draw_pct"] or 0) <= -stop_d)
+            out.append(f"   • {esc(reason)}: {len(items)} سهم · وسيط القمة "
+                       f"+{g:.0f}% · وسيط القاع {d:.0f}% · "
+                       f"لمس مسافة الوقف ({stop_d:g}%): {hit}/{len(items)}")
+        out.append("   أقوى الفائتة (قمة/قاع):")
         for m in missed[:6]:
-            out.append(f"   • {esc(m['ticker'])}: +{m['max_gain_pct']:.0f}% "
+            out.append(f"   • {esc(m['ticker'])}: +{m['max_gain_pct']:.0f}% / "
+                       f"{(m['max_draw_pct'] or 0):.0f}% "
                        f"(رُفض: {esc((m['reject_reason'] or '')[:40])})")
-        out.append("   ↳ راجِع هذي البوابات — قد تكون متشدّدة.")
+        out.append("   ↳ قاع أعمق من الوقف = كانت غالبًا سُتوقَف قبل القمة "
+                   "(الترتيب غير مسجّل) — لا تفتح بوّابة على القمم وحدها.")
         return out
 
     if len(alerts) < cfg.dev_min_sample:

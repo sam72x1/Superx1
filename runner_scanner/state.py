@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS tracking (
     first_seen_at   TEXT,
     logged_at       TEXT,
     session         TEXT,
+    -- جلسة أول رصد (لا تُحدَّث أبدًا). session تتغيّر مع كل إعادة تقييم لأن
+    -- منطق إعادة-التأسيس يعتمد عليها — فتحليل «حسب الجلسة» يعتمد هذا العمود.
+    first_session   TEXT,
     change_pct      REAL,
     score           REAL,
     momentum        REAL,
@@ -138,7 +141,8 @@ class Store:
             for col, typ in (("short_pct", "REAL"), ("dilution_risk", "TEXT"),
                              ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT"),
                              ("notified_missed", "INTEGER DEFAULT 0"),
-                             ("first_volume", "REAL")):
+                             ("first_volume", "REAL"),
+                             ("first_session", "TEXT")):
                 try:
                     self._conn.execute(
                         f"ALTER TABLE tracking ADD COLUMN {col} {typ}")
@@ -188,15 +192,19 @@ class Store:
                 """
                 INSERT INTO tracking (
                     ticker, trade_date, first_seen_at, logged_at, session,
+                    first_session,
                     change_pct, score, momentum, readiness, rvol, rvol_5min,
                     float_shares, float_source, halt_state, had_news, rejected,
                     reject_reason, short_pct, dilution_risk, analyst_dir,
                     catalyst_head, first_price, first_volume, stop_price, target1,
                     target2, target3, high_after, low_after, max_gain_pct,
                     notified_high, outcome)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
                 ON CONFLICT(ticker, trade_date) DO UPDATE SET
                     logged_at=excluded.logged_at, session=excluded.session,
+                    -- جلسة أول رصد لا تُمسّ (COALESCE يملأ صفوف ما قبل الترحيل فقط)
+                    first_session=COALESCE(tracking.first_session,
+                                           excluded.first_session),
                     change_pct=excluded.change_pct, score=excluded.score,
                     momentum=excluded.momentum, readiness=excluded.readiness,
                     rvol=excluded.rvol, rvol_5min=excluded.rvol_5min,
@@ -233,6 +241,7 @@ class Store:
                 """,
                 (
                     c.ticker, day, ts, ts, c.session.value,
+                    c.session.value,   # first_session (يُثبَّت عند أول إدراج)
                     c.snapshot.change_pct, c.final_score,
                     c.momentum.score if c.momentum else None,
                     c.readiness.classic_score if c.readiness else None,

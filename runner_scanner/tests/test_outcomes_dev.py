@@ -117,6 +117,24 @@ def test_missed_event_for_rejected_runner():
     st.close()
 
 
+def test_missed_block_shows_draw_and_stop_touch():
+    """قسم الفرص الفائتة يعرض القاع ولمس مسافة الوقف بجانب القمة —
+    القمة وحدها تخدع (سهم +40% قاعه -15% كان غالبًا سيُوقَف)."""
+    st = _store()
+    c = _cand("FOMO", 2.0, rejected=True, reason="جاهزية فنية 45 < 60")
+    st.log_candidate(c, T0)
+    # هبط -15% (أعمق من مسافة الوقف 7%) ثم قمّ +40%
+    st.update_outcomes({"FOMO": 1.7},
+                       datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc))
+    st.update_outcomes({"FOMO": 2.8},
+                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    rep = build_dev_report(st, CFG)
+    assert "وسيط القمة" in rep and "وسيط القاع" in rep
+    assert "لمس مسافة الوقف" in rep and "1/1" in rep
+    assert "+40% / -15%" in rep          # قمة/قاع معًا للسهم الفائت
+    st.close()
+
+
 def test_missed_disabled_by_default_threshold():
     st = _store()
     c = _cand("QUIET", 2.0, rejected=True, reason="فلوت كبير")
