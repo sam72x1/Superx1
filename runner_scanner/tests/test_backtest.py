@@ -347,6 +347,28 @@ def test_reward_gate_measures_top_target_not_first():
                                       targets=[], stop_basis="x"), 10.0) is None
 
 
+def test_pyxs_measurement_buckets_in_report():
+    """قياس فرضيتَي PYXS: شرائح 5min RVol و R/R الهدف1 تظهر في التقرير."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    base = {"session": "رسمي", "max_gain_pct": 5}
+    # منطفئ (5min RVol <2) يخسر · نشط (≥2) يفوز — عيّنة ≥3 لكل شريحة
+    res.trades = (
+        [{**base, "rvol_5min": 1.1, "t1_rr": 0.4, "result": "loss"}] * 3 +
+        [{**base, "rvol_5min": 8.0, "t1_rr": 1.2, "result": "win"}] * 3)
+    rep = backtest.format_report(res)
+    assert "حسب 5min RVol" in rep and "منطفئ تحت 2x" in rep and "نشط ≥2x" in rep
+    assert "حسب R/R الهدف1" in rep and "<0.5" in rep
+
+
+def test_trade_records_pyxs_measurement_fields():
+    """كل صفقة تسجّل rvol_5min و t1_rr (قياس فرضيتَي PYXS)."""
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest.run_backtest(cfg, MockBase(), "2026-06-26", "2026-06-26")
+    assert res.trades, "متوقّع صفقة"
+    t = res.trades[0]
+    assert "rvol_5min" in t and "t1_rr" in t
+
+
 def test_indicator_yes_no_section_in_report():
     """تقرير المؤشرات الثنائية يظهر عند توفّر عيّنة كافية في كلا الجانبين."""
     res = backtest.BacktestResult(start="x", end="y", days=1)

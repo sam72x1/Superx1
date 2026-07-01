@@ -373,6 +373,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "readiness": round(cand.readiness.classic_score, 1)
                 if cand.readiness else 0,
                 "rvol": round(cand.momentum.rvol, 1) if cand.momentum else 0,
+                # RVol اللحظي 5د: منخفض = زخم منطفئ (الحركة صارت، قياس فقط)
+                "rvol_5min": round(cand.momentum.rvol_5min, 1)
+                if cand.momentum else None,
                 "news": _news_label(cand),
                 # مؤشرات لكل صفقة — تكشف لاحقًا أيها يتنبّأ بالنجاح (نظام الفرز)
                 "macd_bull": cand.readiness.macd_bull if cand.readiness else None,
@@ -386,6 +389,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "volume_rising": cand.momentum.volume_rising if cand.momentum else None,
                 # الربحية والأهداف
                 "target1_pct": round(t1_pct, 1),      # إمكانية الربح عند الهدف1
+                # عائد/مخاطرة الهدف1 = ربح الهدف1 ÷ مسافة الوقف (قياس فقط)
+                "t1_rr": round(t1_pct / cand.risk.stop_pct, 2)
+                if cand.risk and cand.risk.stop_pct else None,
                 "realized_pct": round(realized, 1),    # الربح/الخسارة المحقّق
                 "realized_partial_pct": round(realized_partial, 1),  # لو خروج جزئي
                 "target_hit": tlevel,                  # أعلى هدف لُمس (0..3)
@@ -580,6 +586,12 @@ def format_report(res: BacktestResult) -> str:
         b("الاتجاه اليومي", lambda t: t.get("trend"))
         b("ADX", lambda t: None if t.get("adx") is None else
           ("قوي ≥25" if t["adx"] >= 25 else "ضعيف تحت 25"))
+        # فرضية PYXS (أ): الرنر المنطفئ — 5min RVol منخفض = الحركة صارت وتطارد
+        b("حسب 5min RVol", lambda t: None if t.get("rvol_5min") is None else
+          ("نشط ≥2x" if t["rvol_5min"] >= 2 else "منطفئ تحت 2x"))
+        # فرضية PYXS (ب): تمييز R/R الهدف1 — هل منخفضو العائد/المخاطرة يخسرون أكثر؟
+        b("حسب R/R الهدف1", lambda t: None if t.get("t1_rr") is None else
+          ("<0.5" if t["t1_rr"] < 0.5 else "0.5–1" if t["t1_rr"] < 1 else "≥1"))
         # ── المؤشرات الثنائية: نجاح «نعم» مقابل «لا» جنبًا لجنب (يكشف
         # أيها يتنبّأ بالنجاح فعلًا → أساس ضبط أوزان نظام الفرز بالبيانات) ──
         def _wr(g):
