@@ -357,7 +357,12 @@ def test_pyxs_measurement_buckets_in_report():
         [{**base, "rvol_5min": 8.0, "t1_rr": 1.2, "result": "win"}] * 3)
     rep = backtest.format_report(res)
     assert "حسب 5min RVol" in rep and "منطفئ تحت 2x" in rep and "نشط ≥2x" in rep
-    assert "حسب R/R الهدف1" in rep and "<0.5" in rep
+    assert "حسب R/R الهدف1" in rep and "دون 0.5" in rep
+    # HTML-آمن: لا < أو > شارد خارج الوسوم المقصودة (وإلا يُسقط تيليجرام التقرير)
+    stripped = rep
+    for tag in ("<b>", "</b>", "<i>", "</i>"):
+        stripped = stripped.replace(tag, "")
+    assert "<" not in stripped and ">" not in stripped
 
 
 def test_trade_records_pyxs_measurement_fields():
