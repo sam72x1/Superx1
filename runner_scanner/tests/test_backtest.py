@@ -321,6 +321,28 @@ def test_day_candidates_pool_wider_than_live_top_n():
     assert len(backtest._day_candidates(cfg2, grouped, prev)) == 10
 
 
+def test_day_candidates_no_lookahead_on_close_or_dayhigh():
+    """م4: مجمّع اليوم لا يستبعد بسعر الإغلاق (مستقبلي) ولا بسقف قمة اليوم
+    (مستقبلي) — البوّابتان (السعر/سقف التشوّه) لحظيّتان داخل التقييم كالحي.
+    استبعادهما هنا على بيانات اليوم يحذف أكبر الرابحين بأثر رجعي."""
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 max_change_pct=400.0, price_min=1.0, price_max=30.0,
+                 backtest_top_n=50)
+    prev_close = {"LATE": 2.0, "SPIKE": 2.0, "QUIET": 2.0}
+    grouped = [
+        # عبر الحدّ لحظةً ($2→$2.5) لكنه أغلق فوق سقف السعر ($45) — يجب أن يبقى
+        {"T": "LATE", "h": 46.0, "c": 45.0},
+        # قمة اليوم +500% (فوق سقف التشوّه) لكنه عبر الحدّ مبكّرًا — يجب أن يبقى
+        {"T": "SPIKE", "h": 12.0, "c": 11.0},
+        # قمته اليومية لم تبلغ الحدّ إطلاقًا (+5%) — يُستبعد (شرط لازم غير-تسرّب)
+        {"T": "QUIET", "h": 2.1, "c": 2.05},
+    ]
+    tickers = [t for t, _ in backtest._day_candidates(cfg, grouped, prev_close)]
+    assert "LATE" in tickers        # لا استبعاد بإغلاق مستقبلي
+    assert "SPIKE" in tickers       # لا استبعاد بقمة يوم مستقبلية
+    assert "QUIET" not in tickers   # لم يبلغ الحدّ يومًا → لا يمكن أن يكون رنرًا
+
+
 def test_parallel_matches_serial():
     """الجلب المتوازي يعطي نفس نتيجة التسلسلي (آمن، بلا تسابق)."""
     snaps = {f"S{i}": 2.0 for i in range(8)}

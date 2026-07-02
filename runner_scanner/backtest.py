@@ -269,15 +269,17 @@ def _day_candidates(cfg: Config, grouped: list[dict],
     """
     cands = []
     for r in grouped:
-        t, h, c = r.get("T"), r.get("h"), r.get("c")
+        t, h = r.get("T"), r.get("h")
         pc = prev_close.get(t)
         if not t or not pc or pc <= 0 or not h:
             continue
         chg_high = (float(h) - pc) / pc * 100.0
-        if chg_high < cfg.trigger_change_pct or chg_high > cfg.max_change_pct:
-            continue
-        last = float(c or h)
-        if last < cfg.price_min or last > cfg.price_max:
+        # حدّ أدنى فقط (شرط لازم غير-تسرّب: سهم لم تبلغ قمته اليومية الحدّ لا يمكن
+        # أن يعبره أيّ إغلاق شمعة). السقف (max_change_pct) وبوّابة السعر يُطبَّقان
+        # **لحظيًّا** داخل _eval_candidate (detector + gates) على سعر اللحظة كالحي —
+        # تطبيقهما هنا على قمة/إغلاق اليوم تسرّبٌ يستبعد أكبر الرابحين بأثر رجعي
+        # (سهم نبّه عليه الحي عند +60% ثم تجاوزت قمته السقف لاحقًا، أو أغلق فوق $30).
+        if chg_high < cfg.trigger_change_pct:
             continue
         if cfg.filter_derivatives and detector.looks_like_derivative(t):
             continue
@@ -338,8 +340,11 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         return {"kind": "error"}
     if not full5:
         return {"kind": "no_5min"}
+    # لحظات الرنر: إغلاق الشمعة ضمن [trigger, max_change_pct] — مطابقة detector
+    # الحي الذي يشترط الحدّين معًا على التغيّر اللحظي (لا الحدّ الأدنى فقط).
     runner_idx = [i for i, b in enumerate(full5)
-                  if pc > 0 and (b.c - pc) / pc * 100.0 >= cfg.trigger_change_pct]
+                  if pc > 0 and cfg.trigger_change_pct
+                  <= (b.c - pc) / pc * 100.0 <= cfg.max_change_pct]
     if not runner_idx:
         return {"kind": "no_trigger"}
     step = max(1, cfg.backtest_scan_step_bars)
