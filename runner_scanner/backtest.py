@@ -282,7 +282,8 @@ def _day_candidates(cfg: Config, grouped: list[dict],
 # كم رُفض وبأي بوّابة. مب منطق تداول — تشخيص فقط (لا يغيّر النتائج).
 def new_funnel() -> dict:
     return {"considered": 0, "no_5min": 0, "no_trigger": 0,
-            "bad_snapshot": 0, "error": 0, "rejected": 0, "alerts": 0,
+            "bad_snapshot": 0, "premarket_only": 0, "error": 0,
+            "rejected": 0, "alerts": 0,
             "reject_reasons": {}, "shadow": []}
 
 
@@ -334,6 +335,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         return {"kind": "no_trigger"}
     step = max(1, cfg.backtest_scan_step_bars)
     evaluated = errored = False
+    premarket_skipped = False   # تخطّى الحارس شمعةً واحدة على الأقل (رنر بريماركت)
     last_reason = ""
     max_rvol = 0.0          # أقصى RVol بلغه السهم (لقياس الظل عند رفض RVol)
     last_asof = 0
@@ -350,6 +352,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         # تنبيه في شموع البريماركت؛ يُعاد فحص السهم في الجلسات التالية كالحي.
         # بدون هذا الحارس يقيس الباكتيست بوتًا غير البوت المنشور.
         if session is Session.PREMARKET and not cfg.premarket_alerts_enabled:
+            premarket_skipped = True
             continue
         up_to = [x for x in full5 if x.t_ms <= asof]
         snap = _build_snapshot(ticker, pc, up_to)
@@ -427,7 +430,13 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         if _reject_bucket(last_reason) in ("فلوت", "نوع/بورصة"):
             break
     if not evaluated:
-        return {"kind": "error" if errored else "bad_snapshot"}
+        if errored:
+            return {"kind": "error"}
+        # كل شموع رنره في البريماركت وتخطّاها الحارس (مطابقة الحي) — ليس سنابشوت
+        # فاسدًا؛ السهم صالح لكنه خارج ساعات التنبيه. تصنيف منفصل كي لا يلوّث القمع.
+        if premarket_skipped:
+            return {"kind": "premarket_only"}
+        return {"kind": "bad_snapshot"}
     # قياس الظل: لو الرفض النهائي بسبب RVol، نحسب نتيجة افتراضية (لو دخلنا) +
     # أقصى RVol بلغه — يكشف لاحقًا إن كانت عتبة RVol=5x تفوّت فرصًا (قياس فقط).
     shadow = None
@@ -648,6 +657,10 @@ def format_report(res: BacktestResult) -> str:
         lines.append(f"  • ما عبرت الحدّ بإغلاق 5د: {f['no_trigger']}")
         if f.get("bad_snapshot"):
             lines.append(f"  • سنابشوت غير صالح: {f['bad_snapshot']}")
+        if f.get("premarket_only"):
+            lines.append(
+                f"  • تخطّاها حارس البريماركت (رنر بريماركت فقط): "
+                f"{f['premarket_only']}")
         if f.get("error"):
             lines.append(f"  • خطأ معالجة: {f['error']}")
         lines.append(f"  • رُفضت بالبوّابات: {f['rejected']}")

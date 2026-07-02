@@ -498,6 +498,10 @@ def test_backtest_premarket_parity_with_live_guard():
                                 "2026-06-26", "2026-06-26")
     assert all(t["session"] != "بريماركت" for t in off.trades)
     assert not off.trades          # كل الشموع بريماركت → لا تنبيه إطلاقًا
+    # م1: رنر كل شموعه بريماركت يُصنَّف «premarket_only» لا «bad_snapshot»
+    # (سنابشوته صالح؛ خرج فقط لأنه خارج ساعات التنبيه — لا يلوّث القمع)
+    assert off.funnel["premarket_only"] == 1
+    assert off.funnel["bad_snapshot"] == 0
     # مفعّل صراحةً → التنبيه يرجع (يثبت أن الحارس هو الفارق لا البوّابات)
     on = backtest.run_backtest(Config(premarket_alerts_enabled=True, **common),
                                PreBase(), "2026-06-26", "2026-06-26")
