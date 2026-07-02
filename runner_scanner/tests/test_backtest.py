@@ -484,6 +484,21 @@ def test_pyxs_measurement_buckets_in_report():
     assert "<" not in stripped and ">" not in stripped
 
 
+def test_report_discloses_simulation_limits_html_safe():
+    """الإفصاح يذكر الطبقات الغائبة (محلّل/شورت/SEC/أبطال/توقّفات) وحبيبية 5د،
+    وخالٍ من محارف < أو > الحرفية (وإلا يُسقط تيليجرام التقرير كاملًا — §5)."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "max_gain_pct": 10}] * 3
+    rep = backtest.format_report(res)
+    assert "تقدير تاريخي" in rep
+    for token in ("محلّل", "SEC", "الأبطال", "LULD", "5د"):
+        assert token in rep, token
+    stripped = rep
+    for tag in ("<b>", "</b>", "<i>", "</i>"):
+        stripped = stripped.replace(tag, "")
+    assert "<" not in stripped and ">" not in stripped
+
+
 def test_trade_records_pyxs_measurement_fields():
     """كل صفقة تسجّل rvol_5min و t1_rr (قياس فرضيتَي PYXS)."""
     cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
