@@ -112,6 +112,29 @@ def test_asof_client_intraday_sliced():
     assert len(c.bars_5min("X", "", "")) == 1      # فقط ما قبل asof
 
 
+def test_asof_client_hourly_excludes_unfinished_window():
+    """t_ms هو **بداية** نافذة الشمعة: شمعة الساعة الجارية (بدأت قبل asof
+    وتنتهي بعده) مجلوبة تاريخيًّا **مكتملة** — تمريرها كاملة يسرّب حتى ~ساعة
+    من المستقبل لإطار الساعة في الجاهزية. المتوقّع: المكتملة قبل asof تبقى،
+    والجارية تُعاد **جزئيًّا** من شموع 5د المقصوصة (كما يراها البوت الحي)."""
+    class _HourBase:
+        def aggregates(self, t, mult, span, s, e, **kw):
+            return [
+                Bar(t_ms=_tms(2026, 6, 26, 9, 0), o=2.0, h=2.2, l=1.9, c=2.1, v=1e5),
+                # الشمعة الجارية: قمّتها/إغلاقها «مستقبليان» بعد asof (10:35)
+                Bar(t_ms=_tms(2026, 6, 26, 10, 0), o=2.1, h=9.9, l=2.0, c=9.5, v=9e5),
+            ]
+    asof = _tms(2026, 6, 26, 10, 35)
+    five = [Bar(t_ms=_tms(2026, 6, 26, 10, 0), o=2.1, h=2.3, l=2.05, c=2.2, v=1e4),
+            Bar(t_ms=_tms(2026, 6, 26, 10, 35), o=2.2, h=2.4, l=2.15, c=2.35, v=1e4)]
+    c = backtest.AsOfClient(_HourBase(), "2026-06-26", asof, five, five, {})
+    hourly = c.aggregates("X", 1, "hour", "2026-04-26", "2026-06-26")
+    assert hourly[0].t_ms == _tms(2026, 6, 26, 9, 0) and hourly[0].h == 2.2
+    cur = [b for b in hourly if b.t_ms == _tms(2026, 6, 26, 10, 0)]
+    # لا تمرّ الشمعة المكتملة (h=9.9/c=9.5) — بل الجزئية المعاد بناؤها من 5د
+    assert cur and cur[0].h == 2.4 and cur[0].c == 2.35 and cur[0].v == 2e4
+
+
 # ── تشغيل كامل end-to-end بمحاكاة ─────────────────────────────────
 class MockBase:
     """عميل أساس وهمي: يوم واحد فيه رنر واحد (RUNR) يحقّق هدفه."""

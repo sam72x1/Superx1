@@ -79,12 +79,30 @@ class AsOfClient:
             lambda: self._base.bars_daily(ticker, start, self._date))
         return [b for b in bars if _bar_date(b) < self._date]
 
+    # مدة نافذة الشمعة بالمللي ثانية لكل timespan (لفلترة اكتمال النافذة)
+    _SPAN_MS = {"minute": 60_000, "hour": 3_600_000, "day": 86_400_000}
+
     def aggregates(self, ticker, multiplier, timespan, start, end, **kw):
         bars = self._cached(
-            f"h:{ticker}:{self._date}",
+            f"agg:{ticker}:{multiplier}:{timespan}:{self._date}",
             lambda: self._base.aggregates(ticker, multiplier, timespan,
                                           start, self._date, **kw))
-        return [b for b in bars if b.t_ms <= self._asof]
+        # t_ms هو **بداية** النافذة لا نهايتها: الشمعة الجارية (بدأت قبل asof
+        # وتنتهي بعده) مجلوبة تاريخيًّا **مكتملة** — تمريرها كما هي يسرّب حتى
+        # ~ساعة من المستقبل لإطار الساعة في الجاهزية. نُبقي فقط ما اكتملت
+        # نافذته قبل asof، ونعيد بناء الشمعة الجارية **جزئيًّا** من شموع 5د
+        # المقصوصة — كما يراها البوت الحي لحظتها تمامًا.
+        span_ms = self._SPAN_MS.get(timespan, 3_600_000) * max(1, multiplier)
+        out = [b for b in bars if b.t_ms + span_ms <= self._asof]
+        ws = self._asof - (self._asof % span_ms)   # بداية النافذة الجارية
+        part = [x for x in self._5 if x.t_ms >= ws]
+        if part:
+            out.append(Bar(
+                t_ms=ws, o=part[0].o,
+                h=max(x.h for x in part), l=min(x.l for x in part),
+                c=part[-1].c, v=sum(x.v for x in part), vw=0.0,
+                n=sum(x.n for x in part)))
+        return out
 
     def latest_news(self, ticker, published_gte_utc, limit=5):
         lte = _iso_utc(datetime.fromtimestamp(self._asof / 1000, tz=timezone.utc))
