@@ -446,6 +446,56 @@ def test_shadow_eval_records_rvol_rejects():
     assert "قياس الظل" in backtest.format_report(res)
 
 
+def test_backtest_premarket_parity_with_live_guard():
+    """مطابقة الحي: البريماركت معطّل → الباكتيست لا يقيّم/ينبّه في شموع البريماركت
+    (كان يحاكي تنبيهات بريماركت لا ينتجها البوت المنشور — يقيس بوتًا آخر)."""
+
+    class PreBase(MockBase):
+        # الشموع كلها في البريماركت (8:00–8:10 ET) ويعبر الحدّ فيها
+        def bars_5min(self, t, s, e):
+            if t != "RUNR":
+                return []
+            return [Bar(t_ms=_tms(2026, 6, 26, 8, 0), o=2.4, h=2.55, l=2.35,
+                        c=2.5, v=3e5, n=80),
+                    Bar(t_ms=_tms(2026, 6, 26, 8, 5), o=2.5, h=2.7, l=2.5,
+                        c=2.65, v=3e5, n=80),
+                    Bar(t_ms=_tms(2026, 6, 26, 8, 10), o=2.65, h=3.2, l=2.6,
+                        c=3.1, v=4e5, n=90)]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+    # بوّابات متساهلة لعزل الحارس (لولاه لنجح المرشّح في البريماركت)
+    common = dict(massive_api_key="x", trigger_change_pct=10.0,
+                  tech_readiness_min=0.0, alert_score_min=0.0, rvol_min=0.0,
+                  momentum_min_floor=0.0, parabolic_vwap_ext_pct=10_000.0,
+                  parabolic_day_change_pct=10_000.0, min_target_profit_pct=0.0)
+    # معطّل (الافتراضي، مثل الحي) → صفر صفقات بريماركت
+    off = backtest.run_backtest(Config(**common), PreBase(),
+                                "2026-06-26", "2026-06-26")
+    assert all(t["session"] != "بريماركت" for t in off.trades)
+    assert not off.trades          # كل الشموع بريماركت → لا تنبيه إطلاقًا
+    # مفعّل صراحةً → التنبيه يرجع (يثبت أن الحارس هو الفارق لا البوّابات)
+    on = backtest.run_backtest(Config(premarket_alerts_enabled=True, **common),
+                               PreBase(), "2026-06-26", "2026-06-26")
+    assert on.trades and on.trades[0]["session"] == "بريماركت"
+
+
+def test_shadow_verdict_is_data_driven():
+    """حكم الظل يُحسب من الأرقام: شريحة 3–5x خاسرة → «مثبتة؛ لا تُخفَّض»،
+    وعيّنة صغيرة → «غير كافية» (لا اقتراح خفض أزلي)."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "max_gain_pct": 10}] * 8 + \
+                 [{"result": "loss", "max_gain_pct": 1}] * 2      # أساس 80%
+    res.funnel = backtest.new_funnel()
+    res.funnel["shadow"] = [{"max_rvol": 4.0, "result": "loss"}] * 10
+    rep = backtest.format_report(res)
+    assert "مثبتة؛ لا تُخفَّض" in rep
+    # عيّنة ظل صغيرة (3 محسومة فقط) → لا حكم
+    res.funnel["shadow"] = [{"max_rvol": 4.0, "result": "loss"}] * 3
+    assert "غير كافية للحكم" in backtest.format_report(res)
+
+
 def test_reject_bucket_classifies():
     assert backtest._reject_bucket("RVol 3.0x < 5x") == "RVol"
     assert backtest._reject_bucket("فلوت 90,000,000 > 40,000,000") == "فلوت"

@@ -29,7 +29,7 @@ from . import detector, market_calendar
 from .catalyst import NEGATIVE_NEWS
 from .config import Config
 from .massive_client import MassiveClient
-from .models import Bar, SnapshotEntry
+from .models import Bar, Session, SnapshotEntry
 from .pipeline import process_candidate
 from .risk import build_risk_plan
 from .sessions import ET, classify_session
@@ -325,18 +325,24 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     rcache: dict = {}
     for k in range(0, len(runner_idx), step):
         asof = full5[runner_idx[k]].t_ms
+        asof_dt = datetime.fromtimestamp(
+            asof / 1000, tz=timezone.utc).astimezone(ET)
+        session = classify_session(cfg, asof_dt)
+        # مطابقة الحي (run_cycle): تنبيهات البريماركت معطّلة → لا تقييم ولا
+        # تنبيه في شموع البريماركت؛ يُعاد فحص السهم في الجلسات التالية كالحي.
+        # بدون هذا الحارس يقيس الباكتيست بوتًا غير البوت المنشور.
+        if session is Session.PREMARKET and not cfg.premarket_alerts_enabled:
+            continue
         up_to = [x for x in full5 if x.t_ms <= asof]
         snap = _build_snapshot(ticker, pc, up_to)
         if snap is None or not snap.is_valid:
             continue
         up_to_1 = [x for x in full1 if x.t_ms <= asof]
-        asof_dt = datetime.fromtimestamp(
-            asof / 1000, tz=timezone.utc).astimezone(ET)
         client = AsOfClient(base, day, asof, up_to, up_to_1, static_cache)
         try:
             cand = process_candidate(
                 cfg, client, snap, halts=None,
-                session=classify_session(cfg, asof_dt), et_now=asof_dt,
+                session=session, et_now=asof_dt,
                 readiness_cache=rcache)
         except Exception as exc:  # noqa: BLE001 — سهم واحد لا يكسر اليوم
             logger.debug("باكتيست %s@%s فشل: %s", ticker, day, exc)
@@ -651,8 +657,21 @@ def format_report(res: BacktestResult) -> str:
             tail = f" · نجاح افتراضي {w:.0f}% ({len(dec)} محسومة)" \
                 if w is not None else " · بلا محسومة"
             lines.append(f"  • أقصى RVol {key}: {len(g)} سهم{tail}")
-        lines.append("  <i>↳ لو شريحة 3–5x نجاحها يقارب الناجين، فخفض RVol "
-                     "لـ~3–4 يستحق الدراسة (قرارك بالبيانات).</i>")
+        # حكم حيّ من الأرقام (لا اقتراح أزلي): شريحة 3–5x مقابل الناجين الفعليين
+        dec35 = [x for x in (groups.get("3–5x") or [])
+                 if x["result"] in ("win", "loss")]
+        w35 = (sum(1 for x in dec35 if x["result"] == "win")
+               / len(dec35) * 100.0) if dec35 else None
+        if w35 is None or len(dec35) < 8 or s["win_rate"] is None:
+            verdict = "عيّنة الظل غير كافية للحكم بعد."
+        elif w35 >= s["win_rate"] - 15:
+            verdict = (f"شريحة 3–5x ({w35:.0f}%) تقارب الناجين "
+                       f"({s['win_rate']:.0f}%) — خفض RVol يستحق الدراسة "
+                       "(قرارك بالبيانات).")
+        else:
+            verdict = (f"شريحة 3–5x ({w35:.0f}%) أدنى بكثير من الناجين "
+                       f"({s['win_rate']:.0f}%) — عتبة RVol مثبتة؛ لا تُخفَّض.")
+        lines.append(f"  <i>↳ {verdict}</i>")
     lines.append("\n⚠️ تقدير تاريخي (لا يضمن المستقبل؛ بلا انزلاق/دفتر أوامر).")
     return "\n".join(lines)
 
