@@ -75,11 +75,26 @@ class AsOfClient:
         return list(self._1)
 
     def bars_daily(self, ticker, start, end):
-        # يومي قبل يوم الباكتيست حصرًا (لا شمعة اليوم) — مكاش لكل (سهم/تاريخ)
+        # يومي قبل يوم الباكتيست حصرًا (مكاش لكل سهم/تاريخ) ثم نُلحق شمعة اليوم
+        # **الجزئية** المعاد بناؤها «حتى T» من شموع 5د المقصوصة — لأن الحي يمرّر
+        # اليومي شاملًا شمعة اليوم الجزئية إلى compute_readiness (الاستبعاد بعُمر
+        # الطابع في _closed_daily يطال المتوسطات/المقاومات فقط). بلا هذه الشمعة
+        # كانت جاهزية الباكتيست أشدّ من الحي فترفض «جاهزية/درجة» أكثر.
+        # بلا تسرّب: كل قيمها من شموع ≤ asof. عُمرها <20h (طابعها = أول 5د اليوم)
+        # فيستبعدها _closed_daily في الـ pipeline من المتوسطات/المقاومات كما مع
+        # الحي — يبقى السلوكان متطابقين في الموضعين.
         bars = self._cached(
             f"d:{ticker}:{self._date}",
             lambda: self._base.bars_daily(ticker, start, self._date))
-        return [b for b in bars if _bar_date(b) < self._date]
+        out = [b for b in bars if _bar_date(b) < self._date]
+        if self._5:
+            five = self._5
+            out.append(Bar(
+                t_ms=five[0].t_ms, o=five[0].o,
+                h=max(x.h for x in five), l=min(x.l for x in five),
+                c=five[-1].c, v=sum(x.v for x in five), vw=0.0,
+                n=sum(x.n for x in five)))
+        return out
 
     # مدة نافذة الشمعة بالمللي ثانية لكل timespan (لفلترة اكتمال النافذة)
     _SPAN_MS = {"minute": 60_000, "hour": 3_600_000, "day": 86_400_000}

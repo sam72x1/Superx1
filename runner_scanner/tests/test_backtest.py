@@ -115,6 +115,24 @@ def test_asof_client_daily_excludes_today():
     assert "2026-06-24" in dates
 
 
+def test_asof_client_daily_appends_partial_today_from_5min():
+    """م5: اليومي يُلحق شمعة اليوم **الجزئية** المعاد بناؤها من شموع 5د المقصوصة
+    (كالحي الذي يمرّرها لـ compute_readiness) — بلا تسرّب (كل قيمها ≤ asof)."""
+    asof = _tms(2026, 6, 26, 10, 0)
+    five = [Bar(t_ms=_tms(2026, 6, 26, 9, 30), o=2.0, h=2.3, l=1.95, c=2.2,
+                v=1e5, n=50),
+            Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=2.2, h=2.6, l=2.15, c=2.5,
+                v=2e5, n=70)]
+    c = backtest.AsOfClient(_Base(), "2026-06-26", asof, five, five, {})
+    daily = c.bars_daily("X", "2026-01-01", "2026-06-26")
+    today = [b for b in daily if backtest._bar_date(b) == "2026-06-26"]
+    assert today, "شمعة اليوم الجزئية مُلحقة"
+    t = today[0]
+    assert t.o == 2.0 and t.c == 2.5           # فتح أول 5د · إغلاق آخر 5د ≤ asof
+    assert t.h == 2.6 and t.l == 1.95          # قمة/قاع تراكمي حتى asof
+    assert t.v == 3e5                          # مجموع الحجم (لا شيء بعد asof)
+
+
 def test_asof_client_intraday_sliced():
     full = [Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=3, h=3.1, l=3, c=3.05, v=1e4),
             Bar(t_ms=_tms(2026, 6, 26, 11, 0), o=3.1, h=3.2, l=3.1, c=3.15, v=1e4)]
@@ -148,6 +166,16 @@ def test_asof_client_hourly_excludes_unfinished_window():
 
 
 # ── تشغيل كامل end-to-end بمحاكاة ─────────────────────────────────
+def _daily_on_runner_scale(n=260, end_close=2.3):
+    """سلسلة يومية صاعدة مُعاد تحجيمها لتنتهي قرب سعر الرنر (~$2.3) — كي تتّصل
+    شمعة اليوم الجزئية المعاد بناؤها من 5د (م5) بلا قفزة سعرية مصطنعة تخدع
+    الجاهزية. (الفيكسترة الأصلية على مقياس ~$13، أعلى بكثير من شموع الرنر.)"""
+    base = uptrend_daily_bars(n)
+    scale = end_close / base[-1].c
+    return [Bar(t_ms=b.t_ms, o=b.o * scale, h=b.h * scale, l=b.l * scale,
+                c=b.c * scale, v=b.v, n=b.n) for b in base]
+
+
 class MockBase:
     """عميل أساس وهمي: يوم واحد فيه رنر واحد (RUNR) يحقّق هدفه."""
 
@@ -171,10 +199,10 @@ class MockBase:
         return self.bars_5min(t, s, e)
 
     def bars_daily(self, t, s, e):
-        return uptrend_daily_bars(260)
+        return _daily_on_runner_scale(260)
 
     def aggregates(self, t, mult, span, s, e, **kw):
-        return uptrend_daily_bars(260)
+        return _daily_on_runner_scale(260)
 
     def ticker_overview(self, t):
         return {"type": "CS", "primary_exchange": "XNAS",
