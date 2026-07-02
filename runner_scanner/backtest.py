@@ -142,8 +142,9 @@ def simulate_outcome(entry: float, risk, post_bars: list[Bar],
                      ) -> tuple[str, float, float, int]:
     """يرجّع (result, max_gain%, max_draw%, target_level).
     - result: الخروج عند أول هدف1/وقف (تحفّظ: الهدف+الوقف بنفس الشمعة=خسارة).
-    - target_level: أعلى هدف (1..3) لمسه السعر دون أن يُوقَف قبله (0 لو لا شيء)
-      — لقياس «هل يستحق الإمساك للأهداف الأعلى؟». مستقل عن قرار الخروج."""
+    - target_level: أعلى هدف (1..3) لمسه السعر دون أن يُكسر الوقف قبله (0 لو
+      لا شيء) — لقياس «هل يستحق الإمساك للأهداف الأعلى؟». سيناريو الإمساك
+      يفترض وقفًا واقيًا؛ فبعد كسر الوقف يتجمّد العدّ ولا يُنسب هدف أعلى لاحق."""
     if not risk or not risk.targets or entry <= 0:
         return "timeout", 0.0, 0.0, 0
     targets = risk.targets
@@ -154,11 +155,17 @@ def simulate_outcome(entry: float, risk, post_bars: list[Bar],
     result = "timeout"
     decided = False
     tgt_level = 0
+    frozen = False                      # بعد فوزٍ كُسر وقفه: جمّد القمة وعدّ الأهداف
     for b in post_bars:
         if b.t_ms > deadline:
             break
-        high = max(high, b.h)
-        low = min(low, b.l)
+        low = min(low, b.l)             # القاع يتحدّث دائمًا (لقياس أقصى سحب)
+        # سيناريو الإمساك يفترض وقفًا واقيًا؛ أول شمعة تكسر الوقف بعد الفوز تُجمّد
+        # القمة وعدّ الأهداف ابتداءً منها (لا هدف أعلى يُنسب بعد كسر الوقف).
+        if decided and result == "win" and stop and b.l <= stop:
+            frozen = True
+        if not frozen:
+            high = max(high, b.h)
         if not decided:
             if stop and b.l <= stop:    # تحفّظ: الوقف أولًا حتى لو لمس الهدف
                 result = "loss"
@@ -167,7 +174,7 @@ def simulate_outcome(entry: float, risk, post_bars: list[Bar],
             if b.h >= t1:
                 result = "win"
                 decided = True
-        if result != "loss":            # نحسب أعلى هدف لُمس (سيناريو الإمساك)
+        if result != "loss" and not frozen:   # أعلى هدف لُمس (سيناريو الإمساك)
             for i, tg in enumerate(targets, 1):
                 if b.h >= tg and i > tgt_level:
                     tgt_level = i
