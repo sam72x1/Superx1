@@ -30,7 +30,7 @@ from .catalyst import NEGATIVE_NEWS
 from .config import Config
 from .massive_client import MassiveClient
 from .models import Bar, Session, SnapshotEntry
-from .pipeline import process_candidate
+from .pipeline import _closed_daily, daily_resistance_targets, process_candidate
 from .risk import build_risk_plan
 from .sessions import ET, classify_session
 
@@ -477,7 +477,16 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         closed = [x for x in full5 if x.t_ms <= last_asof]
         closed5 = closed[:-1] if len(closed) > 1 else closed
         post = [x for x in full5 if x.t_ms > last_asof]
-        risk = build_risk_plan(cfg, last_snap.last_price, closed5)
+        # مقاومات يومية مطابقة للخط الفعلي (وإلا أهداف الظل تختلف فيَختلّ حكم
+        # «العتبة مثبتة/تستحق الدراسة» المبنيّ عليها). نفس _closed_daily الحي.
+        last_dt = datetime.fromtimestamp(
+            last_asof / 1000, tz=timezone.utc).astimezone(ET)
+        daily = AsOfClient(base, day, last_asof, closed, [],
+                           static_cache).bars_daily(ticker, "", "")
+        daily_res = daily_resistance_targets(
+            _closed_daily(daily, last_dt), last_snap.last_price)
+        risk = build_risk_plan(cfg, last_snap.last_price, closed5,
+                               daily_resistances=daily_res)
         sres, _, _, _ = simulate_outcome(last_snap.last_price, risk, post,
                                          last_asof, cfg.outcome_window_min)
         shadow = {"max_rvol": round(max_rvol, 1), "result": sres}

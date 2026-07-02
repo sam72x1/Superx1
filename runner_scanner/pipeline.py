@@ -49,6 +49,17 @@ def _closed_daily(daily: list, et_now: datetime) -> list:
     return out
 
 
+def daily_resistance_targets(daily_closed: list, last_price: float) -> list[float]:
+    """مقاومات يومية كأهداف محتملة: قمة أمس + قمة 10 أيام، ضمن سقف +30% فقط.
+    قمة بعيدة جدًا فوق السعر (سهم منهار) ليست هدفًا واقعيًا داخل-الجلسة (تجنّب
+    فئة بق +474%). مشتركة بين الخط الفعلي وقياس الظل في الباكتيست كي تتطابق."""
+    if not daily_closed:
+        return []
+    res = [daily_closed[-1].h, max(b.h for b in daily_closed[-10:])]
+    cap = last_price * 1.30
+    return [r for r in res if r and r <= cap]
+
+
 def _targets_top_gain(risk, last_price: float) -> float | None:
     """نسبة ربح **أبعد هدف**% (سقف الصفقة)، أو None لو لا أهداف/سعر غير صالح.
 
@@ -210,12 +221,7 @@ def process_candidate(
     # مقاومات يومية كأهداف محتملة — من الأيام **المغلقة** فقط (لا شمعة اليوم
     # الجزئية)، وبسقف اتجاهي قريب: قمة بعيدة جدًا فوق السعر (سهم منهار) ليست
     # هدفًا واقعيًا داخل-الجلسة (تجنّب فئة بق +474%).
-    daily_res: list[float] = []
-    if daily_closed:
-        daily_res.append(daily_closed[-1].h)                      # قمة أمس
-        daily_res.append(max(b.h for b in daily_closed[-10:]))    # قمة 10 أيام
-    daily_cap = snap.last_price * 1.30   # المقاومة اليومية كهدف ضمن +30% فقط
-    daily_res = [r for r in daily_res if r and r <= daily_cap]
+    daily_res = daily_resistance_targets(daily_closed, snap.last_price)
     c.risk = risk.build_risk_plan(cfg, snap.last_price, closed_5min,
                                   daily_resistances=daily_res)
 

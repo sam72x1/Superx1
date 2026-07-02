@@ -565,6 +565,46 @@ def test_shadow_eval_records_rvol_rejects():
     assert "قياس الظل" in backtest.format_report(res)
 
 
+def test_shadow_risk_plan_uses_daily_resistances_like_live():
+    """م7: قياس الظل يبني خطة المخاطر بنفس المقاومات اليومية كالخط الفعلي —
+    وإلا أهدافه تختلف فيَختلّ حكم «العتبة مثبتة/تستحق الدراسة» المبنيّ عليها."""
+
+    class ThinBase(MockBase):
+        def grouped_daily(self, date):
+            if date == "2026-06-26":
+                return [{"T": "THIN", "o": 2.1, "h": 3.0, "l": 2.0, "c": 2.9,
+                         "v": 5e6}]
+            return [{"T": "THIN", "c": 2.0}]
+
+        def bars_5min(self, t, s, e):
+            return [Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=2.4, h=2.6, l=2.3,
+                        c=2.5, v=200, n=5),
+                    Bar(t_ms=_tms(2026, 6, 26, 10, 0), o=2.5, h=2.8, l=2.5,
+                        c=2.7, v=300, n=6)]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+    captured = {}
+    orig = backtest.build_risk_plan
+
+    def spy(cfg, entry, closed5, daily_resistances=None):
+        captured["dr"] = daily_resistances       # نداء الظل الوحيد لهذا المرجع
+        return orig(cfg, entry, closed5, daily_resistances=daily_resistances)
+
+    backtest.build_risk_plan = spy
+    try:
+        cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                     backtest_shadow_rvol=True)
+        backtest.run_backtest(cfg, ThinBase(), "2026-06-26", "2026-06-26")
+    finally:
+        backtest.build_risk_plan = orig
+
+    # قبل الإصلاح: الظل ينادي build_risk_plan بلا daily_resistances (None)
+    assert "dr" in captured, "قياس الظل نادى build_risk_plan"
+    assert captured["dr"] is not None and len(captured["dr"]) >= 1
+
+
 def test_backtest_premarket_parity_with_live_guard():
     """مطابقة الحي: البريماركت معطّل → الباكتيست لا يقيّم/ينبّه في شموع البريماركت
     (كان يحاكي تنبيهات بريماركت لا ينتجها البوت المنشور — يقيس بوتًا آخر)."""
