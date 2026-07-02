@@ -260,6 +260,40 @@ def test_reevaluates_until_pass_like_live():
     assert res.funnel["rejected"] == 0            # نجا، لم يُرفض نهائيًا
 
 
+def test_1min_slice_extends_to_trigger_bar_close():
+    """م3: قصّ شموع 1د يمتد حتى إغلاق شمعة الزناد 5د لا بدايتها — كي يُحسب
+    VWAP الجلسة على لحظة القرار (إغلاق الزناد = الدخول) لا أقدم بأربع دقائق."""
+    captured = {}
+
+    class MinBase(MockBase):
+        def bars_1min(self, t, s, e):
+            if t != "RUNR":
+                return []
+            # خمس شموع 1د داخل نافذة الزناد (9:35–9:39) + شمعة لاحقة (9:40)
+            return [Bar(t_ms=_tms(2026, 6, 26, 9, 35 + i), o=2.4, h=2.5,
+                        l=2.35, c=2.45, v=6e4, n=20) for i in range(5)] + \
+                   [Bar(t_ms=_tms(2026, 6, 26, 9, 40), o=2.5, h=2.7, l=2.5,
+                        c=2.65, v=3e5, n=80)]
+
+    orig = backtest.process_candidate
+
+    def spy(cfg, client, *a, **k):
+        captured.setdefault("t1", [b.t_ms for b in client.bars_1min("RUNR", "", "")])
+        return orig(cfg, client, *a, **k)
+
+    backtest.process_candidate = spy
+    try:
+        cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+        backtest.run_backtest(cfg, MinBase(), "2026-06-26", "2026-06-26")
+    finally:
+        backtest.process_candidate = orig
+
+    assert captured.get("t1"), "process_candidate استُدعي عند الزناد"
+    # الزناد عند 9:35؛ القصّ يمتد حتى 9:39 (نهاية النافذة) لا يقف عند 9:35
+    assert min(captured["t1"]) == _tms(2026, 6, 26, 9, 35)
+    assert max(captured["t1"]) == _tms(2026, 6, 26, 9, 39)
+
+
 def test_backtest_survives_fetch_failure():
     """فشل شبكي لسهم لا يكسر الباكتيست (best-effort) — يتخطّاه ويكمل."""
 

@@ -36,6 +36,8 @@ from .sessions import ET, classify_session
 
 logger = logging.getLogger(__name__)
 
+_BAR5_MS = 5 * 60_000   # طول شمعة 5 دقائق بالمللي (لمدّ قصّ 1د حتى إغلاقها)
+
 
 # ── محوّل «حتى لحظة T» (يمنع تسرّب المستقبل) ──────────────────────
 class AsOfClient:
@@ -365,7 +367,10 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         snap = _build_snapshot(ticker, pc, up_to)
         if snap is None or not snap.is_valid:
             continue
-        up_to_1 = [x for x in full1 if x.t_ms <= asof]
+        # asof = بداية شمعة الزناد 5د؛ القرار عند إغلاقها (سعر الدخول = إغلاقها).
+        # نمدّ شموع 1د حتى نهاية نافذة الزناد (لا بدايتها) كي يُحسب VWAP الجلسة
+        # ومشتقاته على لحظة القرار نفسها كالحي — ليس تسرّبًا (نفس نافذة السنابشوت).
+        up_to_1 = [x for x in full1 if x.t_ms < asof + _BAR5_MS]
         client = AsOfClient(base, day, asof, up_to, up_to_1, static_cache)
         try:
             cand = process_candidate(
