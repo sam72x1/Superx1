@@ -99,6 +99,50 @@ def test_partial_exit_stop_before_t1_is_full_loss():
     assert round(r) == -10  # (2.7-3)/3 = -10%
 
 
+# ── م5: الوقف المتعقّب (قياس محاكى-المسار) ────────────────────────
+def _trail(entry, stop, t1, post, trail_pct=5.0, window=90):
+    return backtest.trailing_exit_realized(
+        entry, _risk(stop, t1), post, 0, window, trail_pct)
+
+
+def test_trailing_locks_gain_from_peak():
+    """م5: هدف1 ثم قمّة عالية ثم نزول يلمس المتعقّب → المحقّق = المتعقّب من القمة."""
+    # دخول 100 · هدف1 105 · وقف 93 · متعقّب 5%
+    post = [Bar(t_ms=1000, o=100, h=106, l=100, c=105, v=1),   # بلغ هدف1 (قمة=105)
+            Bar(t_ms=2000, o=105, h=120, l=104, c=118, v=1),   # قمة ترتفع 120، لا لمس
+            Bar(t_ms=3000, o=118, h=118, l=110, c=112, v=1)]   # 110≤114=120×0.95 → خروج
+    r = _trail(100, 93, 105, post)
+    assert round(r, 1) == 14.0    # (120×0.95−100)/100 = +14%
+
+
+def test_trailing_stop_before_t1_is_full_loss():
+    """م5: كسر الوقف قبل الهدف1 → خسارة كاملة (لا تعقّب)."""
+    post = [Bar(t_ms=1000, o=100, h=104, l=92, c=95, v=1)]     # 92≤93 قبل هدف1
+    assert round(_trail(100, 93, 105, post), 1) == -7.0        # (93−100)/100
+
+
+def test_trailing_no_target1_is_zero():
+    """م5: لم يبلغ الهدف1 ولا الوقف خلال النافذة → 0 (⏳)."""
+    post = [Bar(t_ms=1000, o=100, h=104, l=98, c=102, v=1)]    # لا هدف1 ولا وقف
+    assert _trail(100, 93, 105, post) == 0.0
+
+
+def test_trailing_held_to_window_end_returns_locked_trail():
+    """م5: النافذة تنتهي والصفقة ممسوكة → المحقّق = الوقف المتعقّب المقفول لا آخر سعر."""
+    post = [Bar(t_ms=1000, o=100, h=106, l=100, c=105, v=1),   # هدف1، قمة 105
+            Bar(t_ms=2000, o=105, h=130, l=108, c=125, v=1)]   # قمة 130، لا لمس ثم انتهت
+    r = _trail(100, 93, 105, post)
+    assert round(r, 1) == 23.5    # (130×0.95−100)/100 = +23.5% (المقفول لا 125)
+
+
+def test_trailing_intracandle_low_checked_before_raising_peak():
+    """م5: داخل الشمعة القاع يُفحص ضد الوقف الحالي قبل رفع الوقف من قمتها (تحفّظ)."""
+    post = [Bar(t_ms=1000, o=100, h=106, l=100, c=105, v=1),   # هدف1، قمة 105
+            Bar(t_ms=2000, o=105, h=200, l=99, c=150, v=1)]    # قفزت 200 لكن قاعها 99
+    # الوقف الحالي=max(100,105×0.95=99.75)=100؛ 99≤100 → خروج بالتعادل، لا نُنسب قفزة 200
+    assert round(_trail(100, 93, 105, post), 1) == 0.0
+
+
 # ── AsOfClient: لا تسرّب مستقبل ───────────────────────────────────
 class _Base:
     def bars_daily(self, t, s, e):
@@ -821,6 +865,22 @@ def test_report_realized_expectancy_by_rr_and_vwap():
     assert "≥1: توقّع -7.0%/صفقة (3)" in rep
     assert "فوق VWAP: توقّع +2.8%/صفقة (3)" in rep
     assert "تحت VWAP: توقّع -7.0%/صفقة (3)" in rep
+    stripped = rep
+    for tag in ("<b>", "</b>", "<i>", "</i>"):
+        stripped = stripped.replace(tag, "")
+    assert "<" not in stripped and ">" not in stripped
+
+
+def test_report_shows_trailing_exit_measurement():
+    """م5: قسم بدائل الخروج يعرض «متعقّب» بجانب «جزئي»، وآمن HTML (§5)."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "max_gain_pct": 10, "realized_pct": 3.0,
+                   "realized_partial_pct": 3.5, "realized_trail_pct": 8.0}] * 4
+    res.funnel = backtest.new_funnel()
+    rep = backtest.format_report(res)
+    assert "قياس بدائل الخروج" in rep
+    assert "متعقّب" in rep and "جزئي" in rep
+    assert "← متعقّب +8.0%" in rep
     stripped = rep
     for tag in ("<b>", "</b>", "<i>", "</i>"):
         stripped = stripped.replace(tag, "")

@@ -246,6 +246,43 @@ def partial_exit_realized(entry: float, risk, post_bars: list[Bar],
     return fraction * t1_pct + (1.0 - fraction) * held_pct
 
 
+def trailing_exit_realized(entry: float, risk, post_bars: list[Bar],
+                           asof_ms: int, window_min: float,
+                           trail_pct: float = 5.0) -> float:
+    """ربح **الوقف المتعقّب** المحاكى-المسار (للقياس فقط، لا يغيّر الفرز ولا الحيّ):
+    قبل الهدف1 الوقف الأصلي (كسره = خسارة كاملة)؛ بعد بلوغ الهدف1 يتبع الوقف
+    القمة: `max(الدخول, القمة×(1−trail%))`. يقيس هل يلتقط فجوة «قمة الفائز مقابل
+    خروج الهدف1». تحفّظ يمنع المبالغة: (1) شمعة الاختراق لا تُقاس قمتها؛ (2) داخل
+    كل شمعة نفحص القاع ضد الوقف الحالي **قبل** رفع الوقف من قمتها (نفترض الهبوط
+    أولًا)؛ (3) عند انتهاء النافذة والصفقة ممسوكة، المحقّق = مستوى الوقف المتعقّب
+    المقفول (مضمون ≤ آخر سعر) لا آخر سعر. نفس قاعدة لا-تسرّب-المستقبل."""
+    if not risk or not risk.targets or entry <= 0:
+        return 0.0
+    t1 = risk.targets[0]
+    stop = risk.stop_price
+    deadline = asof_ms + window_min * 60_000
+    phase1 = True
+    peak = t1                          # يُضبط عند بلوغ الهدف1 (لا نقيس شمعة الاختراق)
+    for b in post_bars:
+        if b.t_ms > deadline:
+            break
+        if phase1:
+            if stop and b.l <= stop:               # وقف قبل الهدف1 → خسارة كاملة
+                return (stop - entry) / entry * 100.0
+            if b.h >= t1:                           # بلغ الهدف1 → مرحلة التعقّب
+                phase1 = False
+                peak = t1
+            continue                                # شمعة الاختراق: لا نقيس قمتها (تحفّظ)
+        trail = max(entry, peak * (1.0 - trail_pct / 100.0))
+        if b.l <= trail:                            # لمس الوقف المتعقّب → خروج مقفول
+            return (trail - entry) / entry * 100.0
+        peak = max(peak, b.h)                        # ارفع القمة للشمعة التالية فقط
+    if phase1:                                       # لم يبلغ الهدف1 ولا الوقف → ⏳=0
+        return 0.0
+    # النافذة انتهت والصفقة ممسوكة → الوقف المتعقّب الحالي (المقفول، ≤ آخر سعر)
+    return (max(entry, peak * (1.0 - trail_pct / 100.0)) - entry) / entry * 100.0
+
+
 # ── تقويم أيام التداول ────────────────────────────────────────────
 def _is_trading_day(d: date) -> bool:
     return d.weekday() < 5 and not market_calendar.is_holiday(d)
@@ -430,6 +467,10 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             realized_partial = partial_exit_realized(
                 entry, cand.risk, post, asof, cfg.outcome_window_min,
                 cfg.partial_exit_fraction)
+            # قياس الوقف المتعقّب (ظل — لا يغيّر القرار): هل يلتقط فجوة القمة؟
+            realized_trail = trailing_exit_realized(
+                entry, cand.risk, post, asof, cfg.outcome_window_min,
+                cfg.backtest_trail_pct)
             return {"kind": "alert", "trade": {
                 "date": day, "ticker": ticker,
                 "entry": round(entry, 4),
@@ -459,6 +500,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 if cand.risk and cand.risk.stop_pct else None,
                 "realized_pct": round(realized, 1),    # الربح/الخسارة المحقّق
                 "realized_partial_pct": round(realized_partial, 1),  # لو خروج جزئي
+                "realized_trail_pct": round(realized_trail, 1),  # لو وقف متعقّب
                 "target_hit": tlevel,                  # أعلى هدف لُمس (0..3)
                 "result": result, "max_gain_pct": round(gain, 1),
                 "max_draw_pct": round(draw, 1),
@@ -730,19 +772,29 @@ def format_report(res: BacktestResult) -> str:
         lines.append(f"  • متوسط قمة الفائز: +{avg_peak_win:.1f}% (مقابل خروج الهدف1)")
         lines.append(f"  • ℹ️ هدفها الأول (الأقرب) أقل من 10%: {low10:.0f}% "
                      "— للعلم فقط؛ الرفض يكون على سقف الأهداف لا الأقرب")
-        # ── 🔀 قياس الخروج الجزئي (ظل — لا يُطبَّق): هل يرفع التوقّع؟ ──
+        # ── 🔀 قياس بدائل الخروج (ظل — لا يُطبَّق): هل يرفع التوقّع؟ ──
         rps = [t["realized_partial_pct"] for t in res.trades
                if t.get("realized_partial_pct") is not None]
-        if rps:
-            avg_part = sum(rps) / len(rps)
-            delta = avg_part - avg_real
-            tag = ("🟢 أفضل" if delta > 0.05 else
-                   "🔴 أسوأ" if delta < -0.05 else "≈ مماثل")
-            lines.append("\n🔀 قياس الخروج الجزئي (ظل — لا يُطبَّق على الحيّ):")
-            lines.append(f"  • التوقّع/صفقة: حالي {avg_real:+.1f}% ← خروج جزئي "
-                         f"{avg_part:+.1f}% ({tag} {delta:+.1f}%)")
-            lines.append("  <i>↳ بيع نصف عند هدف1 + رفع الوقف للتعادل + إمساك "
-                         "النصف للأهداف الأعلى (محاكى-المسار، متحفّظ).</i>")
+        rts = [t["realized_trail_pct"] for t in res.trades
+               if t.get("realized_trail_pct") is not None]
+        if rps or rts:
+            def _tag(d):
+                return ("🟢 أفضل" if d > 0.05 else
+                        "🔴 أسوأ" if d < -0.05 else "≈ مماثل")
+            lines.append("\n🔀 قياس بدائل الخروج (ظل — لا يُطبَّق على الحيّ):")
+            line = f"  • التوقّع/صفقة: حالي {avg_real:+.1f}%"
+            if rps:
+                avg_part = sum(rps) / len(rps)
+                dp = avg_part - avg_real
+                line += f" ← جزئي {avg_part:+.1f}% ({_tag(dp)} {dp:+.1f}%)"
+            if rts:
+                avg_tr = sum(rts) / len(rts)
+                dt = avg_tr - avg_real
+                line += f" ← متعقّب {avg_tr:+.1f}% ({_tag(dt)} {dt:+.1f}%)"
+            lines.append(line)
+            lines.append("  <i>↳ الجزئي: نصف عند هدف1 + وقف تعادل. المتعقّب: بعد "
+                         "هدف1 وقف يتبع القمة (يقفل الربح تدريجيًا). كلاهما "
+                         "محاكى-المسار متحفّظ.</i>")
     if res.trades:
         def b(title, kf):
             rows = [r for r in _bucket_stats(res.trades, kf) if r[1] >= 3]

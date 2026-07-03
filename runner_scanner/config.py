@@ -202,6 +202,10 @@ class Config:
     # قياس الظل: يسجّل لكل سهم مرفوض بـRVol نتيجة افتراضية + أقصى RVol بلغه،
     # لنعرف هل عتبة RVol=5x تفوّت فرصًا (قياس فقط، لا يغيّر أي قرار حيّ).
     backtest_shadow_rvol: bool = True
+    # قياس ظلّ بديل للخروج: بعد بلوغ الهدف1، وقف يتبع القمة بهذه النسبة (%) —
+    # لقياس هل يلتقط فجوة «قمة الفائز مقابل خروج الهدف1». معامل **قياس** فقط،
+    # لا يُطبَّق على الحيّ ولا يغيّر أي فرز.
+    backtest_trail_pct: float = 5.0
 
     # ── معايرة العتبات A/B (يقترح أفضل عتبات تاريخيًا — لا يطبّق) ───
     # يجرّب تغيير عتبة واحدة كل مرة على نفس البيانات (no-lookahead) ويرتّب
@@ -329,6 +333,7 @@ class Config:
             backtest_quick_step=_i("BACKTEST_QUICK_STEP", 2),
             backtest_workers=_i("BACKTEST_WORKERS", 8),
             backtest_shadow_rvol=_b("BACKTEST_SHADOW_RVOL", True),
+            backtest_trail_pct=_f("BACKTEST_TRAIL_PCT", 5.0),
             backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", False),
             backtest_grid_readiness=_ftuple(
                 "BACKTEST_GRID_READINESS", (55.0, 60.0, 65.0, 70.0)),
