@@ -36,6 +36,7 @@ from .models import Bar, Session, SnapshotEntry
 from .pipeline import _closed_daily, daily_resistance_targets, process_candidate
 from .risk import build_risk_plan
 from .sessions import ET, classify_session
+from .textutil import esc
 
 logger = logging.getLogger(__name__)
 
@@ -649,16 +650,28 @@ def save_run(cfg: Config, res: "BacktestResult", report_text: str,
         return None
 
 
+def _num(v) -> bool:
+    """قيمة رقمية حقيقية (لا منطقية) — لتجاهل bool في جمع أعداد القمع."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 def _merge_funnel(dst: dict, src: dict) -> None:
     """يدمج قمع تشغيل (src) في المجمّع (dst): الأعداد بالجمع، reject_reasons
-    بجمع كل بوّابة، shadow بالإلحاق. مفاتيح غير معروفة تُتجاهَل بأمان."""
-    for k, v in (src or {}).items():
+    بجمع كل بوّابة، shadow بالإلحاق. **دفاعي**: أي قيمة فرعية مشوّهة (نوع غير
+    متوقّع من انجراف مخطّط §7) تُتجاهَل بأمان بلا رفع استثناء يُسقط الدمج كلّه."""
+    if not isinstance(src, dict):
+        return
+    for k, v in src.items():
         if k == "reject_reasons":
-            for rk, rv in (v or {}).items():
-                dst["reject_reasons"][rk] = dst["reject_reasons"].get(rk, 0) + rv
+            if isinstance(v, dict):
+                for rk, rv in v.items():
+                    if _num(rv):
+                        dst["reject_reasons"][rk] = \
+                            dst["reject_reasons"].get(rk, 0) + rv
         elif k == "shadow":
-            dst["shadow"].extend(v or [])
-        elif isinstance(v, (int, float)) and not isinstance(v, bool):
+            if isinstance(v, list):
+                dst["shadow"].extend(v)
+        elif _num(v):
             dst[k] = dst.get(k, 0) + v
 
 
@@ -674,12 +687,17 @@ def merge_saved_runs(cfg: Config) -> tuple["BacktestResult | None", list[str]]:
         try:
             with open(p, encoding="utf-8") as fh:
                 data = json.load(fh)
+            # تحقّق بنيوي كامل (لا الوجود فقط): يمنع ملفًا منجرف-المخطّط (§7) من
+            # كسر الدمج كلّه لاحقًا خارج هذا try — يُتخطّى هنا كباقي التالفة.
             if not (data.get("start") and data.get("end")
-                    and isinstance(data.get("trades"), list)):
-                raise ValueError("حقول ناقصة")
+                    and isinstance(data.get("trades"), list)
+                    and isinstance(data.get("funnel", {}), dict)
+                    and _num(data.get("days", 0))):
+                raise ValueError("بنية مشوّهة")
             runs.append((data, name))
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            notes.append(f"⚠️ تُخطّي ملف تالف {name}: {exc}")
+            # §5: الاسم/الاستثناء نصّان خارجيان → هروب HTML قبل دمجهما في رسالة
+            notes.append(f"⚠️ تُخطّي ملف تالف {esc(name)}: {esc(exc)}")
     if not runs:
         return None, notes
     runs.sort(key=lambda r: (r[0]["start"], r[0]["end"]))
@@ -689,17 +707,17 @@ def merge_saved_runs(cfg: Config) -> tuple["BacktestResult | None", list[str]]:
     used = 0
     for data, name in runs:
         if last_end is not None and data["start"] <= last_end:
-            notes.append(f"⚠️ تخطّي المتداخل {name} (يتقاطع مع نطاق سابق)")
+            notes.append(f"⚠️ تخطّي المتداخل {esc(name)} (يتقاطع مع نطاق سابق)")
             continue
         used += 1
         merged.trades.extend(data.get("trades") or [])
-        merged.days += int(data.get("days") or 0)
+        merged.days += int(data.get("days") or 0)   # عدد رقمي (تحقّق مسبقًا)
         _merge_funnel(merged.funnel, data.get("funnel") or {})
         if data["end"] > merged.end:
             merged.end = data["end"]
         last_end = data["end"]
     notes.insert(0, f"🧩 دمج {used} تشغيلات باكتيست محفوظة "
-                    f"({merged.start} → {merged.end})")
+                    f"({esc(merged.start)} → {esc(merged.end)})")
     return merged, notes
 
 

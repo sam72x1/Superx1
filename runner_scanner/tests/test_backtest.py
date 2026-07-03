@@ -825,6 +825,42 @@ def test_merge_skips_overlapping_range(tmp_path):
     assert any("المتداخل" in n for n in notes)
 
 
+def test_merge_skips_structurally_malformed_file(tmp_path):
+    """م2/§3: ملف صالح-JSON لكن مشوّه البنية (funnel قائمة · days نصّي · reject_reasons
+    قائمة) يُتخطّى مع تحذير — لا يُسقط الدمج كلّه (انجراف مخطّط §7 على القرص الدائم)."""
+    import json
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
+    _saved_run(cfg, "2026-01-01", "2026-01-31",
+               [{"result": "win", "max_gain_pct": 5}])            # ملف سليم
+    # funnel قائمة بدل dict (نسخة save_run قديمة مثلًا)
+    (tmp_path / "bt_2026-02-01_2026-02-28.json").write_text(json.dumps(
+        {"start": "2026-02-01", "end": "2026-02-28", "days": 20,
+         "trades": [{"result": "win"}], "funnel": [1, 2]}), encoding="utf-8")
+    # days نصّي غير رقمي
+    (tmp_path / "bt_2026-03-01_2026-03-31.json").write_text(json.dumps(
+        {"start": "2026-03-01", "end": "2026-03-31", "days": "abc",
+         "trades": [], "funnel": {}}), encoding="utf-8")
+    # funnel dict لكن reject_reasons قائمة (تلف داخلي في حقل تشخيصي): البنية
+    # العليا سليمة فيُدمَج، و_merge_funnel الدفاعي يُسقط القيمة الفرعية المشوّهة.
+    (tmp_path / "bt_2026-04-01_2026-04-30.json").write_text(json.dumps(
+        {"start": "2026-04-01", "end": "2026-04-30", "days": 21,
+         "trades": [{"result": "loss"}], "funnel": {"reject_reasons": [1]}}),
+        encoding="utf-8")
+    merged, notes = backtest.merge_saved_runs(cfg)     # يجب ألا يرفع استثناءً
+    # المشوّهان بنيويًّا (funnel قائمة · days نصّي) يُتخطّيان؛ السليم + المتساهَل يُدمجان
+    assert merged is not None and len(merged.trades) == 2
+    assert sum("تالف" in n for n in notes) >= 2
+
+
+def test_merge_notes_escape_html(tmp_path):
+    """§5: اسم الملف/الاستثناء في ملاحظات الدمج مهرَّب HTML (وإلا < أو > يُسقط الرسالة)."""
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
+    (tmp_path / "bt_<x>_bad.json").write_text("{ليس JSON", encoding="utf-8")
+    _, notes = backtest.merge_saved_runs(cfg)
+    joined = "\n".join(notes)
+    assert "&lt;x&gt;" in joined and "bt_<x>" not in joined
+
+
 def test_merge_no_saved_runs_message(tmp_path):
     """م2: بلا تشغيلات محفوظة → None + رسالة عربية واضحة (بلا استثناء)."""
     cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
