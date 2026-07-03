@@ -729,6 +729,8 @@ def test_reject_bucket_classifies():
     assert backtest._reject_bucket(
         "جاهزية فنية 45 < 60 (غير جاهز فنيًا)") == "جاهزية"
     assert backtest._reject_bucket("درجة 55 < عتبة التنبيه 60") == "درجة"
+    assert backtest._reject_bucket(
+        "تحت VWAP (شريحة أضعف تاريخيًا 55%)") == "تحت VWAP"
 
 
 # ── م1: الحفظ الدائم للتشغيلات (مصدر الدمج) ───────────────────────

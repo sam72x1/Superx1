@@ -92,6 +92,23 @@ def check_listing(cfg: Config, c: Candidate) -> GateResult:
     return GateResult(True)
 
 
+def check_vwap(cfg: Config, c: Candidate) -> GateResult:
+    """تنبيه **فوق VWAP فقط** (قرار المستخدم بالبيانات، 6 أشهر): شريحة تحت VWAP
+    وقت التنبيه 55% نجاح < تعادل 64% (خاسرة صافيًا بوقف −7% ثابت).
+
+    best-effort §4: يُطبَّق فقط على VWAP **موثوق** — لو غاب الزخم أو كان VWAP
+    artifact صفريًّا (جلسات ممتدة) → لا رفض (بيانات مفقودة ≠ رفض؛ above_vwap
+    يكون False افتراضيًا وقتها فلا نبني عليه). يُعاد الفحص كل دورة: سهم يستعيد
+    VWAP يُنبَّه لاحقًا (لا إسقاط دائم)."""
+    if not cfg.vwap_gate_enabled:
+        return GateResult(True)
+    if c.momentum is None or not c.momentum.vwap_reliable:
+        return GateResult(True)   # §4: VWAP غير موثوق/غير محسوب → لا نرفض عليه
+    if not c.momentum.above_vwap:
+        return GateResult(False, "تحت VWAP (شريحة أضعف تاريخيًا 55%)")
+    return GateResult(True)
+
+
 def check_parabolic(cfg: Config, c: Candidate) -> GateResult:
     """رفض البارابولِك المنهك (خطر blow-off)."""
     # ابتعاد كبير عن إغلاق أمس
@@ -116,7 +133,7 @@ def check_parabolic(cfg: Config, c: Candidate) -> GateResult:
 PRE_TA_GATES = (check_listing, check_price, check_volume, check_float,
                 check_parabolic)
 # بوابات تحتاج نتيجة الزخم (تُطبّق بعد intraday_ta).
-POST_TA_GATES = (check_rvol, check_parabolic)
+POST_TA_GATES = (check_rvol, check_parabolic, check_vwap)
 
 
 def apply_gates(cfg: Config, c: Candidate, gates) -> GateResult:

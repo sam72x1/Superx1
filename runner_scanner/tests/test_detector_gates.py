@@ -75,6 +75,46 @@ def test_parabolic_gate_vwap_extension():
     assert gates.check_parabolic(CFG, c).passed is False
 
 
+# ── بوّابة VWAP (قرار المستخدم بالبيانات: تنبيه فوق VWAP فقط) ───────
+def _mom(above, reliable=True):
+    return MomentumResult(
+        score=40, rvol=10, rvol_5min=20, change_5min_pct=2,
+        vwap_distance_pct=(3.0 if above else -3.0),
+        above_vwap=above, volume_rising=True, vwap_reliable=reliable)
+
+
+def test_vwap_gate_rejects_below_vwap():
+    c = _cand(change_pct=25.0)
+    c.momentum = _mom(above=False)
+    res = gates.check_vwap(CFG, c)
+    assert res.passed is False and "VWAP" in res.reason
+
+
+def test_vwap_gate_passes_above_vwap():
+    c = _cand(change_pct=25.0)
+    c.momentum = _mom(above=True)
+    assert gates.check_vwap(CFG, c).passed is True
+
+
+def test_vwap_gate_skips_unreliable_vwap():
+    # §4: VWAP غير موثوق (artifact صفري بالجلسات الممتدة) → لا رفض
+    c = _cand(change_pct=25.0)
+    c.momentum = _mom(above=False, reliable=False)
+    assert gates.check_vwap(CFG, c).passed is True
+
+
+def test_vwap_gate_no_momentum_passes():
+    c = _cand(change_pct=25.0)          # momentum=None (قبل حساب الزخم)
+    assert gates.check_vwap(CFG, c).passed is True
+
+
+def test_vwap_gate_disabled_passes_below():
+    cfg = Config(vwap_gate_enabled=False)
+    c = _cand(change_pct=25.0)
+    c.momentum = _mom(above=False)
+    assert gates.check_vwap(cfg, c).passed is True
+
+
 def test_detector_drops_reverse_split_distortion():
     snaps = [
         make_snapshot("REAL", change_pct=50.0),

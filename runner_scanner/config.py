@@ -109,6 +109,11 @@ class Config:
     parabolic_vwap_ext_pct: float = 40.0
     # أو لو صعد عن إغلاق أمس بأكثر من هذا% (منهك / خطر blow-off)
     parabolic_day_change_pct: float = 120.0
+    # بوّابة VWAP (قرار المستخدم بالبيانات، 6 أشهر): تنبيه **فوق VWAP فقط** —
+    # شريحة تحت VWAP وقت التنبيه 55% نجاح < تعادل 64% (خاسرة صافيًا). تُطبَّق فقط
+    # على VWAP موثوق (§4: artifact صفري بالجلسات الممتدة → لا رفض). يُعاد الفحص كل
+    # دورة، فالسهم يُنبَّه لاحقًا لو استعاد VWAP.
+    vwap_gate_enabled: bool = True
 
     # ── الجاهزية الفنية (قرار المستخدم: ≥ 60/100) ─────────────────
     tech_readiness_min: float = 60.0     # درجة التحليل الكلاسيكي 0–100
@@ -286,6 +291,7 @@ class Config:
             rvol_min=_f("RVOL_MIN", 5.0),
             volume_min=_f("VOLUME_MIN", 300_000),
             volume_gate_enabled=_b("VOLUME_GATE_ENABLED", False),
+            vwap_gate_enabled=_b("VWAP_GATE_ENABLED", True),
             price_min=_f("PRICE_MIN", 1.0),
             price_max=_f("PRICE_MAX", 30.0),
             parabolic_vwap_ext_pct=_f("PARABOLIC_VWAP_EXT_PCT", 40.0),
