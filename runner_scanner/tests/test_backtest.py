@@ -797,6 +797,30 @@ def test_format_merged_report_end_to_end(tmp_path):
     assert "<" not in stripped and ">" not in stripped
 
 
+def test_report_realized_expectancy_by_rr_and_vwap():
+    """م3: التقرير يعرض التوقّع المحقّق (realized_pct) لكل شريحة R/R وموقع VWAP —
+    نسبة النجاح وحدها تخدع (هدف أقرب يُلمس أسهل). §5: بلا < أو > حرفية."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+
+    def tr(rr, vwap, realized, result):
+        return {"t1_rr": rr, "above_vwap": vwap, "realized_pct": realized,
+                "result": result, "max_gain_pct": max(realized, 0.0)}
+    res.trades = ([tr(0.3, True, 2.8, "win")] * 3 +       # دون 0.5 · فوق VWAP
+                  [tr(1.5, False, -7.0, "loss")] * 3)     # ≥1 · تحت VWAP
+    res.funnel = backtest.new_funnel()
+    rep = backtest.format_report(res)
+    assert "توقّع محقّق حسب R/R الهدف1" in rep
+    assert "توقّع محقّق حسب موقع VWAP" in rep
+    assert "دون 0.5: توقّع +2.8%/صفقة (3)" in rep
+    assert "≥1: توقّع -7.0%/صفقة (3)" in rep
+    assert "فوق VWAP: توقّع +2.8%/صفقة (3)" in rep
+    assert "تحت VWAP: توقّع -7.0%/صفقة (3)" in rep
+    stripped = rep
+    for tag in ("<b>", "</b>", "<i>", "</i>"):
+        stripped = stripped.replace(tag, "")
+    assert "<" not in stripped and ">" not in stripped
+
+
 def test_backtest_merge_command_needs_no_api_key(tmp_path):
     """م2: «/backtest دمج» يقرأ المحفوظ بلا شبكة ولا مفتاح Massive (لا رسالة مفتاح)."""
     from runner_scanner.telegram_bot import TelegramAssistant

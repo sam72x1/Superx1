@@ -766,6 +766,32 @@ def format_report(res: BacktestResult) -> str:
         # فرضية PYXS (ب): تمييز R/R الهدف1 — هل منخفضو العائد/المخاطرة يخسرون أكثر؟
         b("حسب R/R الهدف1", lambda t: None if t.get("t1_rr") is None else
           ("دون 0.5" if t["t1_rr"] < 0.5 else "0.5–1" if t["t1_rr"] < 1 else "≥1"))
+
+        # ── التوقّع المحقّق لكل شريحة (نسبة النجاح تخدع: هدف أقرب يُلمس أسهل
+        # فترفع النسبة؛ التوقّع = متوسط realized_pct يوزن الربح بالخسارة فيكشف
+        # الصافي الحقيقي — أساس أي قرار على شرائح R/R أو موقع VWAP) ──
+        def exp_line(title, kf, order):
+            groups: dict = {}
+            for t in res.trades:
+                k = kf(t)
+                if k is not None:
+                    groups.setdefault(k, []).append(t)
+            rows = [(k, groups[k]) for k in order if len(groups.get(k, [])) >= 3]
+            if not rows:
+                return
+            lines.append(f"\n{title}:")
+            for k, g in rows:
+                lines.append(f"  • {k}: توقّع {_avg(g, 'realized_pct'):+.1f}%"
+                             f"/صفقة ({len(g)})")
+        exp_line("توقّع محقّق حسب R/R الهدف1",
+                 lambda t: None if t.get("t1_rr") is None else
+                 ("دون 0.5" if t["t1_rr"] < 0.5 else
+                  "0.5–1" if t["t1_rr"] < 1 else "≥1"),
+                 ["دون 0.5", "0.5–1", "≥1"])
+        exp_line("توقّع محقّق حسب موقع VWAP",
+                 lambda t: None if t.get("above_vwap") is None else
+                 ("فوق VWAP" if t["above_vwap"] else "تحت VWAP"),
+                 ["فوق VWAP", "تحت VWAP"])
         # ── المؤشرات الثنائية: نجاح «نعم» مقابل «لا» جنبًا لجنب (يكشف
         # أيها يتنبّأ بالنجاح فعلًا → أساس ضبط أوزان نظام الفرز بالبيانات) ──
         def _wr(g):
