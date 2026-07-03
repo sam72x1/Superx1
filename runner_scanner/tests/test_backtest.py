@@ -677,8 +677,14 @@ def test_shadow_verdict_is_data_driven():
 def test_reject_bucket_classifies():
     assert backtest._reject_bucket("RVol 3.0x < 5x") == "RVol"
     assert backtest._reject_bucket("فلوت 90,000,000 > 40,000,000") == "فلوت"
-    assert backtest._reject_bucket("جاهزية فنية 45 < 60") == "جاهزية/درجة"
     assert backtest._reject_bucket("شيء غريب") == "أخرى"
+    # م4: السعر والجاهزية/الدرجة مفصولة (كانت مدموجة) — بنصوص البوّابات الفعلية
+    assert backtest._reject_bucket("سعر 0.80 < 1.0 (سنتات)") == "سعر تحت الحد"
+    assert backtest._reject_bucket(
+        "سعر 45.00 > 30.0 (فوق نطاق الأسهم)") == "سعر فوق الحد"
+    assert backtest._reject_bucket(
+        "جاهزية فنية 45 < 60 (غير جاهز فنيًا)") == "جاهزية"
+    assert backtest._reject_bucket("درجة 55 < عتبة التنبيه 60") == "درجة"
 
 
 # ── م1: الحفظ الدائم للتشغيلات (مصدر الدمج) ───────────────────────
