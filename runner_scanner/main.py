@@ -331,8 +331,21 @@ class Scanner:
 
             res = backtest.run_backtest(run_cfg, client, start, end,
                                         progress=_progress)
-            self.telegram.send(backtest.format_report(res))
+            report = backtest.format_report(res)
+            self.telegram.send(report)
             logger.info("اكتمل الباكتيست (%d صفقة)", len(res.trades))
+            # حفظ التشغيلات الكاملة فقط (المعاينة السريعة غير ممثِّلة → لا تُحفَظ
+            # ولا تُدمَج). best-effort §3: فشل الحفظ/الإرسال لا يمنع التقرير نفسه.
+            if not quick:
+                try:
+                    path = backtest.save_run(self.cfg, res, report)
+                    if path:
+                        self.telegram.send_document(
+                            path, f"📦 بيانات باكتيست {start} → {end} "
+                            f"({res.days} يوم · {len(res.trades)} صفقة) — "
+                            "احفظه؛ يُدمَج لاحقًا بـ/backtest دمج")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("حفظ/إرسال بيانات الباكتيست فشل: %s", exc)
             # ── معايرة العتبات A/B — للوظيفة الأسبوعية فقط (ثقيلة 7×) ──
             grid = None
             if with_grid and not quick and self.cfg.backtest_grid_enabled:

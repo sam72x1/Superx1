@@ -222,6 +222,9 @@ class Config:
     backtest_grid_min_edge: float = 3.0
     # ملاحظات تحليلية تُرسَل مع الباكتيست (تشرح الأرقام والقمع وتقترح — لا تنفّذ)
     backtest_notes_enabled: bool = True
+    # مجلد حفظ نتائج كل تشغيل باكتيست كامل (JSON = مصدر الدمج + نسخة نص التقرير)
+    # على القرص الدائم. الفراغ = <مجلد قاعدة البيانات>/backtests (نفس قرص Render).
+    backtest_save_dir: str = ""
 
     # ── رادار التخفيف (SEC EDGAR) — يحذّر من الطرح القادم ──────────
     dilution_radar_enabled: bool = True   # رصد ملفات SEC التخفيفية
@@ -337,6 +340,7 @@ class Config:
             backtest_grid_min_decisive=_i("BACKTEST_GRID_MIN_DECISIVE", 8),
             backtest_grid_min_edge=_f("BACKTEST_GRID_MIN_EDGE", 3.0),
             backtest_notes_enabled=_b("BACKTEST_NOTES_ENABLED", True),
+            backtest_save_dir=_s("BACKTEST_SAVE_DIR", ""),
             dilution_radar_enabled=_b("DILUTION_RADAR_ENABLED", True),
             dilution_active_days=_i("DILUTION_ACTIVE_DAYS", 45),
             dilution_shelf_days=_i("DILUTION_SHELF_DAYS", 180),

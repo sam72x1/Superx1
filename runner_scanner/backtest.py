@@ -19,7 +19,10 @@
 from __future__ import annotations
 
 import argparse
+import glob
+import json
 import logging
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -566,6 +569,39 @@ class BacktestResult:
             "avg_gain": (sum(t["max_gain_pct"] for t in self.trades) / n) if n else 0.0,
             "per_day": n / self.days if self.days else 0.0,
         }
+
+
+# ── الحفظ الدائم للتشغيلات (مصدر الدمج عبر الأشهر) ────────────────
+def _save_dir(cfg: Config) -> str:
+    """مجلد حفظ نتائج الباكتيست: المُعدّ صراحةً أو <مجلد القاعدة>/backtests."""
+    if cfg.backtest_save_dir:
+        return cfg.backtest_save_dir
+    return os.path.join(os.path.dirname(cfg.db_path) or ".", "backtests")
+
+
+def save_run(cfg: Config, res: "BacktestResult", report_text: str,
+             now_utc: datetime | None = None) -> str | None:
+    """يحفظ تشغيل باكتيست كامل على القرص (best-effort §3): JSON (مصدر الدمج) +
+    نسخة نص التقرير. يرجّع مسار JSON للإرسال، أو None عند الفشل (لا يكسر شيئًا).
+    JSON يحفظ الأنواع بدقّة (أعداد/منطقيات) فيُدمَج لاحقًا بلا فقد."""
+    try:
+        d = _save_dir(cfg)
+        os.makedirs(d, exist_ok=True)
+        stem = f"bt_{res.start}_{res.end}"
+        created = (now_utc or datetime.now(timezone.utc)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        payload = {"start": res.start, "end": res.end, "days": res.days,
+                   "funnel": res.funnel, "trades": res.trades,
+                   "created_utc": created}
+        json_path = os.path.join(d, stem + ".json")
+        with open(json_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        with open(os.path.join(d, stem + ".txt"), "w", encoding="utf-8") as fh:
+            fh.write(report_text)
+        return json_path
+    except OSError as exc:
+        logger.warning("تعذّر حفظ نتائج الباكتيست: %s", exc)
+        return None
 
 
 def _bucket_stats(trades: list[dict], keyfn) -> list[tuple]:

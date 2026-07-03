@@ -679,3 +679,42 @@ def test_reject_bucket_classifies():
     assert backtest._reject_bucket("فلوت 90,000,000 > 40,000,000") == "فلوت"
     assert backtest._reject_bucket("جاهزية فنية 45 < 60") == "جاهزية/درجة"
     assert backtest._reject_bucket("شيء غريب") == "أخرى"
+
+
+# ── م1: الحفظ الدائم للتشغيلات (مصدر الدمج) ───────────────────────
+def test_save_run_persists_json_and_report(tmp_path):
+    """م1: التشغيل الكامل يُحفَظ JSON (بالأنواع الدقيقة) + نص التقرير على القرص."""
+    import json
+    import os
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_save_dir=str(tmp_path))
+    res = backtest.run_backtest(cfg, MockBase(), "2026-06-26", "2026-06-26")
+    report = backtest.format_report(res)
+    path = backtest.save_run(cfg, res, report)
+    assert path and os.path.exists(path)
+    data = json.load(open(path, encoding="utf-8"))
+    assert data["start"] == "2026-06-26" and data["end"] == "2026-06-26"
+    assert data["days"] == res.days and data["trades"] == res.trades
+    assert data["funnel"] == res.funnel and "created_utc" in data
+    # نسخة نص التقرير محفوظة بجانب JSON (نفس الجذع، لاحقة .txt)
+    txt = path[:-5] + ".txt"
+    assert os.path.exists(txt) and open(txt, encoding="utf-8").read() == report
+
+
+def test_save_run_failure_is_best_effort(tmp_path):
+    """م1: فشل الحفظ (مسار غير قابل للكتابة) يرجّع None بلا استثناء (§3)."""
+    afile = tmp_path / "afile"
+    afile.write_text("x")            # ملف مكان المجلد → makedirs يفشل
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(afile / "sub"))
+    res = backtest.BacktestResult(start="2026-01-01", end="2026-01-31", days=1)
+    res.funnel = backtest.new_funnel()
+    assert backtest.save_run(cfg, res, "تقرير") is None
+
+
+def test_save_dir_defaults_next_to_db(tmp_path):
+    """م1: مجلد الحفظ الافتراضي = <مجلد قاعدة البيانات>/backtests (القرص الدائم)."""
+    import os
+    cfg = Config(massive_api_key="x",
+                 db_path=str(tmp_path / "sub" / "runner.sqlite3"))
+    assert backtest._save_dir(cfg) == os.path.join(
+        str(tmp_path / "sub"), "backtests")
