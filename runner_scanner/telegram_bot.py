@@ -39,7 +39,7 @@ _HELP = (
     "/improve — أهم إجراء تحسين الآن (سطر واحد جاهز)\n"
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
-    "/backtest — معاينة (شهر: «/backtest شهر 4» · طابور: «/backtest 3 4 5»)\n"
+    "/backtest — معاينة (شهر: «/backtest شهر 4» · طابور: «3 4 5» · دمج: «دمج»)\n"
     "/ask سؤالك — اسأل المستشار الذكي\n"
     "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
     "/diag RMZ — بيانات السهم الخام (تشخيص الفيد)\n"
@@ -275,7 +275,14 @@ class TelegramAssistant:
         - «/backtest» → معاينة سريعة (أيام قليلة).
         - «/backtest كامل» → آخر ~شهر كامل.
         - «/backtest 4 [2025]» → شهر تقويمي محدّد كاملًا (لتجميع عدّة شهور).
-        يشتغل في الخلفية والنتائج تصلك تباعًا مع مؤشّر تقدّم."""
+        يشتغل في الخلفية والنتائج تصلك تباعًا مع مؤشّر تقدّم.
+        «/backtest دمج» → تقرير واحد مجمّع من كل التشغيلات المحفوظة (بلا شبكة)."""
+        toks_all = arg.strip().split()
+        # الدمج لا يحتاج شبكة ولا مفتاح — يقرأ التشغيلات المحفوظة على القرص فقط.
+        if any(t in ("دمج", "merge", "المدمج", "مدمج") for t in toks_all):
+            from . import backtest
+            self._reply(backtest.format_merged_report(self.cfg))
+            return
         if not self.cfg.massive_api_key:
             self._reply("الباكتيست يحتاج MASSIVE_API_KEY.")
             return

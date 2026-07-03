@@ -604,6 +604,70 @@ def save_run(cfg: Config, res: "BacktestResult", report_text: str,
         return None
 
 
+def _merge_funnel(dst: dict, src: dict) -> None:
+    """يدمج قمع تشغيل (src) في المجمّع (dst): الأعداد بالجمع، reject_reasons
+    بجمع كل بوّابة، shadow بالإلحاق. مفاتيح غير معروفة تُتجاهَل بأمان."""
+    for k, v in (src or {}).items():
+        if k == "reject_reasons":
+            for rk, rv in (v or {}).items():
+                dst["reject_reasons"][rk] = dst["reject_reasons"].get(rk, 0) + rv
+        elif k == "shadow":
+            dst["shadow"].extend(v or [])
+        elif isinstance(v, (int, float)) and not isinstance(v, bool):
+            dst[k] = dst.get(k, 0) + v
+
+
+def merge_saved_runs(cfg: Config) -> tuple["BacktestResult | None", list[str]]:
+    """يقرأ كل bt_*.json المحفوظة (م1) ويدمجها في نتيجة واحدة + ملاحظات عربية.
+    best-effort: ملف تالف يُتخطّى مع تحذير. لتجنّب العدّ المزدوج، النطاقات
+    المتداخلة زمنيًا تُتخطّى (نُبقي الأبكر ونتخطّى المتقاطع معه)."""
+    notes: list[str] = []
+    paths = sorted(glob.glob(os.path.join(_save_dir(cfg), "bt_*.json")))
+    runs: list[tuple[dict, str]] = []
+    for p in paths:
+        name = os.path.basename(p)
+        try:
+            with open(p, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not (data.get("start") and data.get("end")
+                    and isinstance(data.get("trades"), list)):
+                raise ValueError("حقول ناقصة")
+            runs.append((data, name))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            notes.append(f"⚠️ تُخطّي ملف تالف {name}: {exc}")
+    if not runs:
+        return None, notes
+    runs.sort(key=lambda r: (r[0]["start"], r[0]["end"]))
+    merged = BacktestResult(start=runs[0][0]["start"], end=runs[0][0]["end"])
+    merged.funnel = new_funnel()
+    last_end: str | None = None
+    used = 0
+    for data, name in runs:
+        if last_end is not None and data["start"] <= last_end:
+            notes.append(f"⚠️ تخطّي المتداخل {name} (يتقاطع مع نطاق سابق)")
+            continue
+        used += 1
+        merged.trades.extend(data.get("trades") or [])
+        merged.days += int(data.get("days") or 0)
+        _merge_funnel(merged.funnel, data.get("funnel") or {})
+        if data["end"] > merged.end:
+            merged.end = data["end"]
+        last_end = data["end"]
+    notes.insert(0, f"🧩 دمج {used} تشغيلات باكتيست محفوظة "
+                    f"({merged.start} → {merged.end})")
+    return merged, notes
+
+
+def format_merged_report(cfg: Config) -> str:
+    """تقرير مجمّع من التشغيلات المحفوظة (لأمر «/backtest دمج»). خفيف، بلا شبكة."""
+    merged, notes = merge_saved_runs(cfg)
+    if merged is None:
+        body = ("لا توجد تشغيلات باكتيست محفوظة بعد. شغّل «/backtest كامل» أو "
+                "شهرًا محددًا («/backtest 4») أولًا — تُحفَظ تلقائيًا للدمج.")
+        return "\n".join(notes + [body]) if notes else body
+    return "\n".join(notes) + "\n\n" + format_report(merged)
+
+
 def _bucket_stats(trades: list[dict], keyfn) -> list[tuple]:
     groups: dict = {}
     for t in trades:

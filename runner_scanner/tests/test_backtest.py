@@ -718,3 +718,100 @@ def test_save_dir_defaults_next_to_db(tmp_path):
                  db_path=str(tmp_path / "sub" / "runner.sqlite3"))
     assert backtest._save_dir(cfg) == os.path.join(
         str(tmp_path / "sub"), "backtests")
+
+
+# ── م2: دمج التشغيلات المحفوظة ────────────────────────────────────
+def _saved_run(cfg, start, end, trades, reject_reasons=None):
+    """يحفظ تشغيلًا وهميًّا بأقل الحقول (لاختبار الدمج، لا التنسيق)."""
+    res = backtest.BacktestResult(start=start, end=end, days=20)
+    res.trades = trades
+    res.funnel = backtest.new_funnel()
+    res.funnel["considered"] = 100
+    res.funnel["alerts"] = len(trades)
+    if reject_reasons:
+        res.funnel["reject_reasons"] = reject_reasons
+    backtest.save_run(cfg, res, "تقرير")
+
+
+def test_merge_saved_runs_aggregates(tmp_path):
+    """م2: دمج تشغيلين يجمع الصفقات والأيام والقمع (reject_reasons/considered)."""
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
+    def t(r):
+        return {"result": r, "max_gain_pct": 5, "session": "رسمي"}
+    _saved_run(cfg, "2026-01-01", "2026-01-31",
+               [t("win")] * 3 + [t("loss")], {"RVol": 10})
+    _saved_run(cfg, "2026-02-01", "2026-02-28",
+               [t("win")] * 2, {"RVol": 5, "سعر": 3})
+    merged, notes = backtest.merge_saved_runs(cfg)
+    assert merged is not None
+    assert len(merged.trades) == 6 and merged.days == 40
+    assert merged.start == "2026-01-01" and merged.end == "2026-02-28"
+    assert merged.funnel["considered"] == 200
+    assert merged.funnel["reject_reasons"]["RVol"] == 15
+    assert merged.funnel["reject_reasons"]["سعر"] == 3
+    assert any("دمج 2" in n for n in notes)
+
+
+def test_merge_skips_corrupt_file(tmp_path):
+    """م2: ملف JSON تالف يُتخطّى مع تحذير — لا يكسر الدمج (best-effort)."""
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
+    _saved_run(cfg, "2026-01-01", "2026-01-31",
+               [{"result": "win", "max_gain_pct": 5}])
+    (tmp_path / "bt_bad_bad.json").write_text("{ليس JSON", encoding="utf-8")
+    merged, notes = backtest.merge_saved_runs(cfg)
+    assert merged is not None and len(merged.trades) == 1
+    assert any("تالف" in n for n in notes)
+
+
+def test_merge_skips_overlapping_range(tmp_path):
+    """م2: نطاق متداخل زمنيًا يُتخطّى (تجنّب عدّ الصفقات مرّتين)."""
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
+    _saved_run(cfg, "2026-01-01", "2026-01-31",
+               [{"result": "win", "max_gain_pct": 5}])
+    _saved_run(cfg, "2026-01-15", "2026-02-15",
+               [{"result": "loss", "max_gain_pct": 1}] * 9)
+    merged, notes = backtest.merge_saved_runs(cfg)
+    assert len(merged.trades) == 1               # المتداخل مُستبعَد
+    assert any("المتداخل" in n for n in notes)
+
+
+def test_merge_no_saved_runs_message(tmp_path):
+    """م2: بلا تشغيلات محفوظة → None + رسالة عربية واضحة (بلا استثناء)."""
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
+    merged, notes = backtest.merge_saved_runs(cfg)
+    assert merged is None
+    assert "لا توجد تشغيلات" in backtest.format_merged_report(cfg)
+
+
+def test_format_merged_report_end_to_end(tmp_path):
+    """م2: تقرير الدمج يظهر رأس «دمج N» + جسم التقرير، وآمن HTML (§5)."""
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_save_dir=str(tmp_path))
+    res = backtest.run_backtest(cfg, MockBase(), "2026-06-26", "2026-06-26")
+    backtest.save_run(cfg, res, backtest.format_report(res))
+    rep = backtest.format_merged_report(cfg)
+    assert "🧩 دمج 1" in rep and "باكتيست" in rep
+    stripped = rep
+    for tag in ("<b>", "</b>", "<i>", "</i>"):
+        stripped = stripped.replace(tag, "")
+    assert "<" not in stripped and ">" not in stripped
+
+
+def test_backtest_merge_command_needs_no_api_key(tmp_path):
+    """م2: «/backtest دمج» يقرأ المحفوظ بلا شبكة ولا مفتاح Massive (لا رسالة مفتاح)."""
+    from runner_scanner.telegram_bot import TelegramAssistant
+    sent = []
+
+    class _FakeTelegram:
+        def send(self, text):
+            sent.append(text)
+            return True
+
+    class _FakeScanner:
+        pass
+
+    sc = _FakeScanner()
+    sc.cfg = Config(massive_api_key="", backtest_save_dir=str(tmp_path))
+    sc.telegram = _FakeTelegram()
+    TelegramAssistant(sc)._handle_backtest("دمج")
+    assert sent and "لا توجد تشغيلات" in sent[0]   # لا «يحتاج MASSIVE_API_KEY»
