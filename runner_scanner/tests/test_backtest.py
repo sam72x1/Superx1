@@ -183,6 +183,64 @@ def test_wide_t1_stop_first_within_bar():
     assert round(_wide(3.0, 2.7, 3.06, post), 1) == -10.0
 
 
+# ── ترقية الوقف مع كل هدف (ظل قياس — طلب المستخدم) ────────────────
+def _ratchet(entry, stop, t1, post, window=90):
+    return backtest.ratchet_exit_realized(entry, _risk(stop, t1), post, 0, window)
+
+
+def test_ratchet_all_targets_exits_at_last():
+    """بلوغ كل الأهداف → خروج كامل عند الهدف الأخير."""
+    post = [Bar(t_ms=1000, o=3.0, h=4.4, l=3.0, c=4.3, v=1)]   # يتجاوز [3.6,3.96,4.32]
+    assert round(_ratchet(3.0, 2.7, 3.6, post), 1) == 44.0     # (4.32-3)/3
+
+
+def test_ratchet_stop_before_target_is_full_loss():
+    """كسر الوقف الأصلي قبل أي هدف → خسارة كاملة."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.1, l=2.6, c=2.7, v=1)]
+    assert round(_ratchet(3.0, 2.7, 3.6, post), 1) == -10.0
+
+
+def test_ratchet_reverts_to_breakeven_after_target1():
+    """هدف1 يرفع الوقف للتعادل؛ الرجوع للتعادل → خروج 0% (لا −7%)."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.7, l=3.0, c=3.6, v=1),   # هدف1 → وقف تعادل 3.0
+            Bar(t_ms=2000, o=3.6, h=3.5, l=2.9, c=3.0, v=1)]   # رجع للتعادل
+    assert round(_ratchet(3.0, 2.7, 3.6, post), 1) == 0.0
+
+
+def test_ratchet_held_to_window_end_returns_locked_stop():
+    """هدف1 ثم انتهاء النافذة ممسوكًا → الوقف المُرقّى المقفول (تعادل=0%)."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.7, l=3.5, c=3.6, v=1)]   # هدف1 فقط ثم انتهت
+    assert round(_ratchet(3.0, 2.7, 3.6, post), 1) == 0.0
+
+
+def test_ratchet_no_target_no_stop_is_zero():
+    """لا هدف ولا وقف → 0 (⏳)."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.1, l=2.9, c=3.0, v=1)]
+    assert _ratchet(3.0, 2.7, 3.6, post) == 0.0
+
+
+def test_ratchet_intracandle_low_before_ratchet():
+    """داخل الشمعة القاع يُفحص ضد الوقف الحالي قبل ترقيته بأهداف تلك الشمعة."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.7, l=3.0, c=3.6, v=1),   # هدف1 → تعادل 3.0
+            Bar(t_ms=2000, o=3.6, h=4.0, l=2.9, c=3.5, v=1)]   # هدف2 لكن قاعه 2.9≤3.0
+    assert round(_ratchet(3.0, 2.7, 3.6, post), 1) == 0.0      # خرج بالتعادل لا هدف2
+
+
+def test_report_shows_ratchet_exit_measurement():
+    """قسم بدائل الخروج يعرض «مُرقّى» بجانب الجزئي/المتعقّب، وآمن HTML (§5)."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "max_gain_pct": 10, "realized_pct": 3.0,
+                   "realized_partial_pct": 3.5, "realized_trail_pct": 8.0,
+                   "realized_ratchet_pct": 6.0}] * 4
+    res.funnel = backtest.new_funnel()
+    rep = backtest.format_report(res)
+    assert "← مُرقّى +6.0%" in rep
+    stripped = rep
+    for tag in ("<b>", "</b>", "<i>", "</i>"):
+        stripped = stripped.replace(tag, "")
+    assert "<" not in stripped and ">" not in stripped
+
+
 def test_report_shows_wide_t1_measurement():
     """اعتماد 2: قسم توسيع هدف1 لـ«دون 0.5» يظهر بالحساب الصحيح وآمن HTML (§5)."""
     res = backtest.BacktestResult(start="x", end="y", days=1)

@@ -308,6 +308,36 @@ def wide_target1_realized(entry: float, risk, post_bars: list[Bar],
     return 0.0                             # لم يبلغ الهدف الموسّع ولا الوقف → ⏳=0
 
 
+def ratchet_exit_realized(entry: float, risk, post_bars: list[Bar],
+                          asof_ms: int, window_min: float) -> float:
+    """ربح **ترقية الوقف مع كل هدف** المحاكى-المسار (قياس فقط، لا حيّ — يقيس طلب
+    المستخدم): الوقف يبدأ أصليًا؛ بعد بلوغ الهدف1 يرتفع للتعادل، وبعد كل هدف تالٍ
+    للهدف السابق. الخروج عند لمس الوقف الحالي (المُرقّى) أو بلوغ الهدف الأخير ربحًا.
+    يكشف: هل الترقية ترفع التوقّع (تحمي الربح وتحمل للأعلى) أم تخسر ربح الهدف1
+    لصفقات لا تُكمل؟ تحفّظ: داخل كل شمعة نفحص القاع ضد الوقف الحالي **قبل** ترقيته
+    بأهداف تلك الشمعة (الهبوط أولًا). انتهاء النافذة ممسوكًا = الوقف المُرقّى المقفول
+    (≤ آخر سعر). نفس قاعدة لا-تسرّب-المستقبل."""
+    if not risk or not risk.targets or entry <= 0:
+        return 0.0
+    targets = risk.targets
+    deadline = asof_ms + window_min * 60_000
+    level = 0                              # عدد الأهداف المُحقّقة → يحدّد الوقف الحالي
+    cur_stop = risk.stop_price
+    for b in post_bars:
+        if b.t_ms > deadline:
+            break
+        if cur_stop and b.l <= cur_stop:   # الوقف الحالي (المُرقّى) أولًا (تحفّظ)
+            return (cur_stop - entry) / entry * 100.0
+        while level < len(targets) and b.h >= targets[level]:
+            level += 1
+            if level == len(targets):      # الهدف الأخير → خروج كامل ربحًا
+                return (targets[-1] - entry) / entry * 100.0
+            cur_stop = entry if level == 1 else targets[level - 2]
+    if level == 0:                         # لا هدف ولا وقف → ⏳=0
+        return 0.0
+    return (cur_stop - entry) / entry * 100.0   # ممسوك حتى النافذة → المقفول
+
+
 # ── تقويم أيام التداول ────────────────────────────────────────────
 def _is_trading_day(d: date) -> bool:
     return d.weekday() < 5 and not market_calendar.is_holiday(d)
@@ -501,6 +531,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             realized_wide_t1 = wide_target1_realized(
                 entry, cand.risk, post, asof, cfg.outcome_window_min,
                 cfg.backtest_wide_t1_rr)
+            # قياس ترقية الوقف مع كل هدف (ظل — طلب المستخدم): هل يرفع التوقّع؟
+            realized_ratchet = ratchet_exit_realized(
+                entry, cand.risk, post, asof, cfg.outcome_window_min)
             return {"kind": "alert", "trade": {
                 "date": day, "ticker": ticker,
                 "entry": round(entry, 4),
@@ -532,6 +565,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "realized_partial_pct": round(realized_partial, 1),  # لو خروج جزئي
                 "realized_trail_pct": round(realized_trail, 1),  # لو وقف متعقّب
                 "realized_wide_t1_pct": round(realized_wide_t1, 1),  # لو هدف1 أوسع
+                "realized_ratchet_pct": round(realized_ratchet, 1),  # لو وقف مُرقّى
                 "target_hit": tlevel,                  # أعلى هدف لُمس (0..3)
                 "result": result, "max_gain_pct": round(gain, 1),
                 "max_draw_pct": round(draw, 1),
@@ -825,7 +859,9 @@ def format_report(res: BacktestResult) -> str:
                if t.get("realized_partial_pct") is not None]
         rts = [t["realized_trail_pct"] for t in res.trades
                if t.get("realized_trail_pct") is not None]
-        if rps or rts:
+        rrs = [t["realized_ratchet_pct"] for t in res.trades
+               if t.get("realized_ratchet_pct") is not None]
+        if rps or rts or rrs:
             def _tag(d):
                 return ("🟢 أفضل" if d > 0.05 else
                         "🔴 أسوأ" if d < -0.05 else "≈ مماثل")
@@ -839,10 +875,14 @@ def format_report(res: BacktestResult) -> str:
                 avg_tr = sum(rts) / len(rts)
                 dt = avg_tr - avg_real
                 line += f" ← متعقّب {avg_tr:+.1f}% ({_tag(dt)} {dt:+.1f}%)"
+            if rrs:
+                avg_rt = sum(rrs) / len(rrs)
+                dr = avg_rt - avg_real
+                line += f" ← مُرقّى {avg_rt:+.1f}% ({_tag(dr)} {dr:+.1f}%)"
             lines.append(line)
-            lines.append("  <i>↳ الجزئي: نصف عند هدف1 + وقف تعادل. المتعقّب: بعد "
-                         "هدف1 وقف يتبع القمة (يقفل الربح تدريجيًا). كلاهما "
-                         "محاكى-المسار متحفّظ.</i>")
+            lines.append("  <i>↳ الجزئي: نصف عند هدف1 + وقف تعادل. المتعقّب: وقف "
+                         "يتبع القمة. المُرقّى: الوقف يرتفع مع كل هدف (تعادل بعد "
+                         "هدف1 ثم الهدف السابق). كلها محاكى-المسار متحفّظ.</i>")
     if res.trades:
         def b(title, kf):
             rows = [r for r in _bucket_stats(res.trades, kf) if r[1] >= 3]
