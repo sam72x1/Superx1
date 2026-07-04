@@ -61,6 +61,22 @@ def test_outcome_win_on_target_hit():
     assert any(e["type"] == "target" and e["level"] == 1 for e in events)
 
 
+def test_target_event_carries_ratcheted_stop():
+    """طلب المستخدم: حدث تحقيق الهدف يحمل الوقف المُرقّى (تعادل بعد هدف1، الهدف
+    السابق بعد كل هدف تالٍ) لتذكير المستخدم برفع وقفه."""
+    st = _store()
+    c = _cand("RT", 3.0, stop=2.7, t1=3.6)     # أهداف [3.6, 3.96, 4.32]
+    st.log_candidate(c, T0)
+    st.mark_alerted("RT", 80, T0)
+    events = st.update_outcomes(                 # 4.0 يتجاوز هدف1 وهدف2
+        {"RT": 4.0}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    tgts = sorted([e for e in events if e["type"] == "target"],
+                  key=lambda e: e["level"])
+    assert tgts[0]["level"] == 1 and tgts[0]["new_stop"] == 3.0   # تعادل (الدخول)
+    assert tgts[1]["level"] == 2 and tgts[1]["new_stop"] == 3.6   # الهدف1
+    st.close()
+
+
 def test_outcome_loss_on_stop_hit():
     st = _store()
     c = _cand("LOSE", 5.0, stop=4.5, t1=6.0)

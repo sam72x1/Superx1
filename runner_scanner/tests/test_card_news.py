@@ -83,6 +83,24 @@ def test_card_shows_target1_rr_info():
     assert "ضئيل" in low
 
 
+def test_card_shows_stop_ratchet_ladder():
+    """طلب المستخدم: البطاقة تُرشد لترقية الوقف مع كل هدف (تعادل ثم الهدف السابق)."""
+    card = build_card(CFG, _card_candidate())
+    # دخول 1.54 · أهداف [1.69, 1.85, 2.00]
+    assert "🪜 رقِّ الوقف مع كل هدف" in card
+    assert "هدف1→$1.54 (تعادل)" in card
+    assert "هدف2→$1.69" in card and "هدف3→$1.85" in card
+
+
+def test_followup_target_reminds_to_raise_stop():
+    """طلب المستخدم: رسالة تحقيق الهدف تُذكّر برفع الوقف للمستوى المُرقّى."""
+    from runner_scanner.alerts import build_followup
+    msg = build_followup(CFG, {"ticker": "LICN", "type": "target", "level": 2,
+                               "price": 1.85, "gain_pct": 20.0, "new_stop": 1.69})
+    assert "وصل الهدف 2" in msg
+    assert "ارفع وقفك إلى $1.69" in msg
+
+
 def test_card_includes_news_summary():
     card = build_card(CFG, _card_candidate(headline="Big Pharma Gets FDA Approval"))
     assert "📰 الخبر —" in card

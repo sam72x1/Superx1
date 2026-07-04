@@ -314,11 +314,16 @@ class Store:
                     if not result:
                         result = "win"
                     if is_alert:
+                        # 🪜 الوقف المُرقّى بعد هذا الهدف: التعادل (سعر الدخول) بعد
+                        # الهدف1، والهدف السابق بعد كل هدف تالٍ — يُرشد لرفع الوقف.
+                        new_stop = (first if notified_t == 1
+                                    else targets[notified_t - 2])
                         events.append({
                             "ticker": r["ticker"], "type": "target",
                             "level": notified_t, "price": targets[notified_t - 1],
                             "gain_pct": (targets[notified_t - 1] - first) / first * 100.0,
                             "participation": participation,
+                            "new_stop": new_stop,
                         })
 
                 # ⛔ الوقف: نبلّغ مرة واحدة (ويغلق التتبّع)

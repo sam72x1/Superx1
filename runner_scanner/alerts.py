@@ -144,6 +144,13 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
         # ⛔ الوقف
         lines.append(
             f"⛔ الوقف: {_money(rp.stop_price)} (-{rp.stop_pct:.0f}%)")
+        # 🪜 ترقية الوقف مع كل هدف يتحقّق (يقفل الربح تدريجيًا): بعد الهدف1 ارفع
+        # الوقف للتعادل، وبعد كل هدف تالٍ ارفعه للهدف السابق. إرشاد لا تنفيذ.
+        if rp.targets:
+            steps = [f"هدف1→{_money(entry)} (تعادل)"]
+            for i in range(2, len(rp.targets) + 1):
+                steps.append(f"هدف{i}→{_money(rp.targets[i - 2])}")
+            lines.append("🪜 رقِّ الوقف مع كل هدف: " + " · ".join(steps))
         lines.append("↑ الوقف والأهداف من الشارت (دعوم/مقاومات حقيقية)")
         # ⚖️ عائد/مخاطرة الهدف1 (معلومة لتقرّر الإمساك يدويًا — لا يغيّر الفرز):
         # الباكتيست (6 أشهر) بيّن أن «الهدف القريب» يُصاب كثيرًا لكن ربحه ضئيل،
@@ -206,8 +213,11 @@ def build_followup(cfg: Config, event: dict, now: datetime | None = None) -> str
     part_line = f"\n📊 مشاركة الحجم: {part}" if part else ""
     if etype == "target":
         lvl = event.get("level", 1)
+        ns = event.get("new_stop")
+        # 🪜 تذكير ترقية الوقف مع كل هدف (يقفل الربح) — إرشاد لا تنفيذ
+        ratchet = f"\n🪜 ارفع وقفك إلى {_money(ns)}" if ns else ""
         return (f"🎯 <b>${tkr}</b> وصل الهدف {lvl}!  "
-                f"{_money(price)} (+{gain:.0f}%){part_line}\n{when}")
+                f"{_money(price)} (+{gain:.0f}%){part_line}{ratchet}\n{when}")
     if etype == "stop":
         return (f"⛔ <b>${tkr}</b> كسر الوقف  "
                 f"{_money(price)} ({gain:.0f}%)\n{when}")
