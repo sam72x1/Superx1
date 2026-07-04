@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from .config import Config
 from .llm import ClaudeClient
@@ -18,6 +18,24 @@ from .state import trade_date_str
 from .textutil import esc
 
 logger = logging.getLogger(__name__)
+
+# أسماء أيام الأسبوع بالعربي (Mon=0..Sun=6) — نحسبها في الكود لا نتركها للنموذج
+# (النماذج اللغوية تُخطئ حساب يوم الأسبوع من التاريخ — ظهر «الخميس» بدل «الجمعة»).
+_AR_WEEKDAYS = ("الإثنين", "الثلاثاء", "الأربعاء", "الخميس",
+                "الجمعة", "السبت", "الأحد")
+
+
+def _ar_weekday(day_iso: str) -> str:
+    """اسم اليوم بالعربي من تاريخ ISO (YYYY-MM-DD). فراغ لو التاريخ غير صالح."""
+    try:
+        return _AR_WEEKDAYS[date.fromisoformat(day_iso).weekday()]
+    except (ValueError, TypeError):
+        return ""
+
+
+def _header_date(summary: dict) -> str:
+    """«اليوم التاريخ» للترويسة (يتخطّى اليوم إن تعذّر حسابه)."""
+    return f"{summary.get('day_name', '')} {summary['day']}".strip()
 
 _SYSTEM = (
     "أنت مستشار تداول شخصي للمستخدم، أمين ومحافظ، سُلّمت إدارة متابعة بوت "
@@ -41,7 +59,8 @@ def _summarize_day(cfg: Config, store, now: datetime) -> dict:
     missed = [r for r in store.fetch_missed(cfg.missed_rise_pct)
               if r["trade_date"] == day]
     return {
-        "day": day, "processed": len(rows), "alerts": alerts,
+        "day": day, "day_name": _ar_weekday(day),
+        "processed": len(rows), "alerts": alerts,
         "wins": wins, "losses": losses, "timeouts": timeouts, "missed": missed,
     }
 
@@ -49,7 +68,7 @@ def _summarize_day(cfg: Config, store, now: datetime) -> dict:
 def _data_text(summary: dict, health_faults, render_summary: str) -> str:
     s = summary
     lines = [
-        f"التاريخ: {s['day']}",
+        f"اليوم: {s.get('day_name', '')} · التاريخ: {s['day']}",
         f"مرشّحون عُولجوا: {s['processed']} · تنبيهات: {len(s['alerts'])}",
         f"نتائج التنبيهات: {len(s['wins'])} نجاح · {len(s['losses'])} خسارة · "
         f"{len(s['timeouts'])} بلا حسم",
@@ -89,18 +108,19 @@ def build_briefing(cfg: Config, store, render_summary: str = "",
     client = client or ClaudeClient(cfg.anthropic_api_key)
     if cfg.advisor_enabled and client.available:
         prompt = (f"بيانات جلسة اليوم:\n{data}\n\n"
-                  "اكتب بريفنغ نهاية الجلسة كمستشار.")
+                  "اكتب بريفنغ نهاية الجلسة كمستشار. **استخدم اليوم والتاريخ "
+                  "المذكورين أعلاه حرفيًّا؛ لا تحسب يوم الأسبوع بنفسك.**")
         # سقف أوسع: البريفنغ يشمل تشريح كل فاشلي اليوم، 900 يقطعه في يوم نشِط
         text = client.chat(cfg.anthropic_model, _SYSTEM, prompt, max_tokens=2000)
         if text:
             # نص Claude حرّ → يُهرَّب قبل لفّه بوسوم HTML الثابتة
-            return (f"🌙 <b>بريفنغ نهاية الجلسة — {summary['day']}</b>\n\n"
+            return (f"🌙 <b>بريفنغ نهاية الجلسة — {_header_date(summary)}</b>\n\n"
                     f"{esc(text)}\n\n<i>— مستشارك الآلي (توصيات للمراجعة فقط).</i>")
 
     # fallback مبسّط (بلا Claude)
     s = summary
     return (
-        f"🌙 <b>بريفنغ نهاية الجلسة — {s['day']}</b>\n"
+        f"🌙 <b>بريفنغ نهاية الجلسة — {_header_date(s)}</b>\n"
         f"تنبيهات: {len(s['alerts'])} ({len(s['wins'])}✅/{len(s['losses'])}🛑/"
         f"{len(s['timeouts'])}⏳) · فرص فائتة: {len(s['missed'])}\n"
         f"{render_summary}\n"   # مُهرَّب أصلًا داخل summary() — لا تُهرّبه ثانيةً

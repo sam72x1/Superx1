@@ -250,6 +250,10 @@ class Scanner:
         if not self.cfg.advisor_enabled:
             return
         et_now = et_now or now_et()
+        # بريفنغ «نهاية الجلسة» يخصّ أيام التداول فقط: في نهايات الأسبوع والعطلات
+        # لا جلسة أصلًا، فلا نرسل بريفنغًا يصف يوم عطلة كـ«جلسة صفرية» مضلّلة.
+        if et_now.weekday() >= 5 or market_calendar.is_holiday(et_now.date()):
+            return
         if classify_session(self.cfg, et_now) is not Session.CLOSED:
             return
         end_hour = (market_calendar.EARLY_CLOSE_HOUR

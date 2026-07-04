@@ -152,6 +152,66 @@ def test_assistant_sha_reports_real_version(monkeypatch):
     sc.shutdown()
 
 
+# ── بريفنغ نهاية الجلسة: اليوم الصحيح + تخطّي غير أيام التداول ────────
+def test_ar_weekday_computed_in_code():
+    """اسم اليوم يُحسب في الكود لا يُترك للنموذج (كان يُخطئ: الخميس بدل الجمعة)."""
+    from runner_scanner import advisor
+    assert advisor._ar_weekday("2026-07-03") == "الجمعة"
+    assert advisor._ar_weekday("2026-07-04") == "السبت"
+    assert advisor._ar_weekday("غير صالح") == ""
+
+
+def test_briefing_header_has_correct_weekday():
+    """ترويسة البريفنغ (fallback بلا Claude) تحمل اليوم الصحيح من التاريخ."""
+    from datetime import datetime, timezone
+    from runner_scanner.advisor import build_briefing
+
+    class _Store:
+        def fetch_day(self, day):
+            return []
+
+        def fetch_missed(self, pct):
+            return []
+
+    out = build_briefing(Config(anthropic_api_key=""), _Store(),
+                         now=datetime(2026, 7, 3, 17, 0, tzinfo=timezone.utc))
+    assert "الجمعة 2026-07-03" in out        # الجمعة لا الخميس
+
+
+def _et(y, mo, d, h):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime(y, mo, d, h, 0, tzinfo=ZoneInfo("America/New_York"))
+
+
+def test_briefing_skipped_on_holiday():
+    """3 يوليو 2026 عطلة الاستقلال المُلاحَظة → لا بريفنغ (ليست جلسة)."""
+    sc = _scanner(anthropic_api_key="")
+    sent = _capture(sc)
+    sc._maybe_advisor_briefing(_et(2026, 7, 3, 21))
+    assert sent == []
+    sc.shutdown()
+
+
+def test_briefing_skipped_on_weekend():
+    """السبت (4 يوليو 2026) → لا بريفنغ نهاية جلسة."""
+    sc = _scanner(anthropic_api_key="")
+    sent = _capture(sc)
+    sc._maybe_advisor_briefing(_et(2026, 7, 4, 21))
+    assert sent == []
+    sc.shutdown()
+
+
+def test_briefing_fires_on_trading_day_with_weekday():
+    """يوم تداول عادي (الخميس 2 يوليو) → بريفنغ باليوم الصحيح."""
+    sc = _scanner(anthropic_api_key="")
+    sent = _capture(sc)
+    sc._maybe_advisor_briefing(_et(2026, 7, 2, 21))
+    assert any("بريفنغ نهاية الجلسة" in m for m in sent)
+    assert any("الخميس 2026-07-02" in m for m in sent)
+    sc.shutdown()
+
+
 # ── ريندر ────────────────────────────────────────────────────────
 def test_render_not_available_without_keys():
     cfg = Config()
