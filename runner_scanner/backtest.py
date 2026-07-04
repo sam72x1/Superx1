@@ -565,6 +565,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "realized_partial_pct": round(realized_partial, 1),  # لو خروج جزئي
                 "realized_trail_pct": round(realized_trail, 1),  # لو وقف متعقّب
                 "realized_wide_t1_pct": round(realized_wide_t1, 1),  # لو هدف1 أوسع
+                "wide_t1_rr": cfg.backtest_wide_t1_rr,  # عتبة التوسيع المستخدمة
                 "realized_ratchet_pct": round(realized_ratchet, 1),  # لو وقف مُرقّى
                 "target_hit": tlevel,                  # أعلى هدف لُمس (0..3)
                 "result": result, "max_gain_pct": round(gain, 1),
@@ -855,31 +856,29 @@ def format_report(res: BacktestResult) -> str:
         lines.append(f"  • ℹ️ هدفها الأول (الأقرب) أقل من 10%: {low10:.0f}% "
                      "— للعلم فقط؛ الرفض يكون على سقف الأهداف لا الأقرب")
         # ── 🔀 قياس بدائل الخروج (ظل — لا يُطبَّق): هل يرفع التوقّع؟ ──
-        rps = [t["realized_partial_pct"] for t in res.trades
-               if t.get("realized_partial_pct") is not None]
-        rts = [t["realized_trail_pct"] for t in res.trades
-               if t.get("realized_trail_pct") is not None]
-        rrs = [t["realized_ratchet_pct"] for t in res.trades
-               if t.get("realized_ratchet_pct") is not None]
-        if rps or rts or rrs:
+        # على **نفس المجتمع**: الصفقات التي تحمل كل قياسات الظل الثلاثة، ونحسب
+        # الخط الأساسي (حالي) والبدائل عليها معًا — وإلا دمج تشغيلات محفوظة قديمة
+        # تفتقد حقلًا يقارن الخط الأساسي بمجتمع أوسع من البدائل (مقارنة زائفة).
+        alt = [t for t in res.trades
+               if t.get("realized_partial_pct") is not None
+               and t.get("realized_trail_pct") is not None
+               and t.get("realized_ratchet_pct") is not None]
+        if alt:
+            base = _avg(alt, "realized_pct")
+
             def _tag(d):
                 return ("🟢 أفضل" if d > 0.05 else
                         "🔴 أسوأ" if d < -0.05 else "≈ مماثل")
+
+            def _seg(name, key):
+                v = _avg(alt, key)
+                d = v - base
+                return f" ← {name} {v:+.1f}% ({_tag(d)} {d:+.1f}%)"
             lines.append("\n🔀 قياس بدائل الخروج (ظل — لا يُطبَّق على الحيّ):")
-            line = f"  • التوقّع/صفقة: حالي {avg_real:+.1f}%"
-            if rps:
-                avg_part = sum(rps) / len(rps)
-                dp = avg_part - avg_real
-                line += f" ← جزئي {avg_part:+.1f}% ({_tag(dp)} {dp:+.1f}%)"
-            if rts:
-                avg_tr = sum(rts) / len(rts)
-                dt = avg_tr - avg_real
-                line += f" ← متعقّب {avg_tr:+.1f}% ({_tag(dt)} {dt:+.1f}%)"
-            if rrs:
-                avg_rt = sum(rrs) / len(rrs)
-                dr = avg_rt - avg_real
-                line += f" ← مُرقّى {avg_rt:+.1f}% ({_tag(dr)} {dr:+.1f}%)"
-            lines.append(line)
+            lines.append(f"  • التوقّع/صفقة: حالي {base:+.1f}%"
+                         + _seg("جزئي", "realized_partial_pct")
+                         + _seg("متعقّب", "realized_trail_pct")
+                         + _seg("مُرقّى", "realized_ratchet_pct"))
             lines.append("  <i>↳ الجزئي: نصف عند هدف1 + وقف تعادل. المتعقّب: وقف "
                          "يتبع القمة. المُرقّى: الوقف يرتفع مع كل هدف (تعادل بعد "
                          "هدف1 ثم الهدف السابق). كلها محاكى-المسار متحفّظ.</i>")
@@ -935,19 +934,23 @@ def format_report(res: BacktestResult) -> str:
                  lambda t: None if t.get("above_vwap") is None else
                  ("فوق VWAP" if t["above_vwap"] else "تحت VWAP"),
                  ["فوق VWAP", "تحت VWAP"])
-        # ── قياس ظلّ: توسيع الهدف1 لشريحة «دون 0.5» (الهدف القريب أكبر عددًا
+        # ── قياس ظلّ: توسيع الهدف1 لشريحة «دون العتبة» (الهدف القريب أكبر عددًا
         # وأضعف توقّعًا؛ نقيس هل توسيعه يرفع التوقّع أم يحوّل إصابات سهلة لانتهاء
-        # وقت). قياس فقط لا يُطبَّق على الحيّ. §5: بلا < أو > حرفية. ──
+        # وقت). حدّ الشريحة = عتبة التوسيع المخزّنة (backtest_wide_t1_rr) كي يتّسق
+        # مع الحساب لو غيّرها المستخدم. قياس فقط. §5: بلا < أو > حرفية. ──
         near = [t for t in res.trades
-                if t.get("t1_rr") is not None and t["t1_rr"] < 0.5
-                and t.get("realized_wide_t1_pct") is not None]
+                if t.get("t1_rr") is not None
+                and t.get("realized_wide_t1_pct") is not None
+                and t["t1_rr"] < t.get("wide_t1_rr", 0.5)]
         if len(near) >= 3:
+            thr = near[0].get("wide_t1_rr", 0.5)
             cur = _avg(near, "realized_pct")
             wide = _avg(near, "realized_wide_t1_pct")
             d = wide - cur
             tag = ("🟢 أفضل" if d > 0.05 else
                    "🔴 أسوأ" if d < -0.05 else "≈ مماثل")
-            lines.append(f"\n🎯 قياس ظلّ: توسيع هدف1 لشريحة «دون 0.5» ({len(near)}):")
+            lines.append(f"\n🎯 قياس ظلّ: توسيع هدف1 لشريحة «دون {thr:g}» "
+                         f"({len(near)}):")
             lines.append(f"  • التوقّع/صفقة: حالي {cur:+.1f}% ← هدف أوسع "
                          f"{wide:+.1f}% ({tag} {d:+.1f}%)")
             lines.append("  <i>↳ لو رُفع هدف1 لعائد/مخاطرة ≥ العتبة. قياس فقط، "

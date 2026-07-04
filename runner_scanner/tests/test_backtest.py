@@ -1026,7 +1026,8 @@ def test_report_shows_trailing_exit_measurement():
     """م5: قسم بدائل الخروج يعرض «متعقّب» بجانب «جزئي»، وآمن HTML (§5)."""
     res = backtest.BacktestResult(start="x", end="y", days=1)
     res.trades = [{"result": "win", "max_gain_pct": 10, "realized_pct": 3.0,
-                   "realized_partial_pct": 3.5, "realized_trail_pct": 8.0}] * 4
+                   "realized_partial_pct": 3.5, "realized_trail_pct": 8.0,
+                   "realized_ratchet_pct": 4.0}] * 4
     res.funnel = backtest.new_funnel()
     rep = backtest.format_report(res)
     assert "قياس بدائل الخروج" in rep

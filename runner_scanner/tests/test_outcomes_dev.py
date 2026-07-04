@@ -72,7 +72,9 @@ def test_target_event_carries_ratcheted_stop():
         {"RT": 4.0}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
     tgts = sorted([e for e in events if e["type"] == "target"],
                   key=lambda e: e["level"])
-    assert tgts[0]["level"] == 1 and tgts[0]["new_stop"] == 3.0   # تعادل (الدخول)
+    # الهدف1: التعادل يُصاغ «سعر دخولك» بلا رقم (new_stop=None) لتجنّب اختلاف
+    # first_price عن سعر دخول البطاقة؛ الهدف2: مستوى مطلق = الهدف1.
+    assert tgts[0]["level"] == 1 and tgts[0]["new_stop"] is None
     assert tgts[1]["level"] == 2 and tgts[1]["new_stop"] == 3.6   # الهدف1
     st.close()
 

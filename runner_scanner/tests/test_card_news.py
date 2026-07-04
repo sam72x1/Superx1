@@ -95,10 +95,14 @@ def test_card_shows_stop_ratchet_ladder():
 def test_followup_target_reminds_to_raise_stop():
     """طلب المستخدم: رسالة تحقيق الهدف تُذكّر برفع الوقف للمستوى المُرقّى."""
     from runner_scanner.alerts import build_followup
+    # الهدف2: مستوى مطلق (الهدف1)
     msg = build_followup(CFG, {"ticker": "LICN", "type": "target", "level": 2,
                                "price": 1.85, "gain_pct": 20.0, "new_stop": 1.69})
-    assert "وصل الهدف 2" in msg
-    assert "ارفع وقفك إلى $1.69" in msg
+    assert "وصل الهدف 2" in msg and "ارفع وقفك إلى $1.69" in msg
+    # الهدف1: التعادل (سعر دخول المستخدم) بلا رقم مطلق قد يخالف سعر البطاقة
+    m1 = build_followup(CFG, {"ticker": "LICN", "type": "target", "level": 1,
+                              "price": 1.69, "gain_pct": 10.0, "new_stop": None})
+    assert "وصل الهدف 1" in m1 and "ارفع وقفك للتعادل (سعر دخولك)" in m1
 
 
 def test_card_includes_news_summary():

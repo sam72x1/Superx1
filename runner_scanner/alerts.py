@@ -214,8 +214,15 @@ def build_followup(cfg: Config, event: dict, now: datetime | None = None) -> str
     if etype == "target":
         lvl = event.get("level", 1)
         ns = event.get("new_stop")
-        # 🪜 تذكير ترقية الوقف مع كل هدف (يقفل الربح) — إرشاد لا تنفيذ
-        ratchet = f"\n🪜 ارفع وقفك إلى {_money(ns)}" if ns else ""
+        # 🪜 تذكير ترقية الوقف مع كل هدف (يقفل الربح) — إرشاد لا تنفيذ. الهدف1:
+        # «للتعادل (سعر دخولك)» بلا رقم (سعر دخول المستخدم، لا first_price)؛ التالي:
+        # المستوى المطلق (الهدف السابق) المطابق للبطاقة.
+        if lvl == 1:
+            ratchet = "\n🪜 ارفع وقفك للتعادل (سعر دخولك)"
+        elif ns:
+            ratchet = f"\n🪜 ارفع وقفك إلى {_money(ns)}"
+        else:
+            ratchet = ""
         return (f"🎯 <b>${tkr}</b> وصل الهدف {lvl}!  "
                 f"{_money(price)} (+{gain:.0f}%){part_line}{ratchet}\n{when}")
     if etype == "stop":
