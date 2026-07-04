@@ -69,6 +69,20 @@ def test_card_matches_template_lines():
     assert "🧾 إصدار الكود: abc1234" in card
 
 
+def test_card_shows_target1_rr_info():
+    """اعتماد 1: البطاقة تعرض عائد/مخاطرة الهدف1 كمعلومة (لا تغيّر الفرز)."""
+    # هدف1 1.69 من دخول 1.54 = +9.7% ÷ وقف 7% = R/R 1.4 → «مرتفع»
+    card = build_card(CFG, _card_candidate(),
+                      now=datetime(2026, 6, 26, 15, 31, tzinfo=timezone.utc))
+    assert "⚖️ عائد/مخاطرة الهدف1: 1.4" in card
+    assert "مرتفع" in card
+    # هدف قريب → «ضئيل»
+    c = _card_candidate()
+    c.risk.targets = [1.57, 1.85, 2.00]      # +1.9% ÷ 7% = 0.28 < 0.5
+    low = build_card(CFG, c)
+    assert "ضئيل" in low
+
+
 def test_card_includes_news_summary():
     card = build_card(CFG, _card_candidate(headline="Big Pharma Gets FDA Approval"))
     assert "📰 الخبر —" in card

@@ -284,6 +284,30 @@ def trailing_exit_realized(entry: float, risk, post_bars: list[Bar],
     return (max(entry, peak * (1.0 - trail_pct / 100.0)) - entry) / entry * 100.0
 
 
+def wide_target1_realized(entry: float, risk, post_bars: list[Bar],
+                          asof_ms: int, window_min: float,
+                          min_rr: float = 0.5) -> float:
+    """ربح افتراضي لو رُفع الهدف1 إلى عائد/مخاطرة ≥ min_rr (قياس فقط، لا حيّ):
+    نستبدل الهدف1 بالأبعد بين الأصلي و entry×(1+min_rr×stop_pct/100)، ثم نقيس:
+    بلوغ الهدف الموسّع = ربح · كسر الوقف = خسارة كاملة · انتهاء النافذة = 0.
+    للصفقات التي هدفها أصلًا ≥ min_rr لا يتغيّر شيء (الهدف الموسّع = الأصلي).
+    يكشف: هل الهدف القريب («دون min_rr») يترك ربحًا، أم توسيعه يحوّل إصابات
+    سهلة إلى انتهاء وقت؟ تحفّظ: الوقف أولًا داخل الشمعة. لا-تسرّب-المستقبل."""
+    if not risk or not risk.targets or entry <= 0 or not risk.stop_pct:
+        return 0.0
+    stop = risk.stop_price
+    wide = max(risk.targets[0], entry * (1.0 + min_rr * risk.stop_pct / 100.0))
+    deadline = asof_ms + window_min * 60_000
+    for b in post_bars:
+        if b.t_ms > deadline:
+            break
+        if stop and b.l <= stop:          # الوقف أولًا (تحفّظ داخل الشمعة)
+            return (stop - entry) / entry * 100.0
+        if b.h >= wide:                    # بلغ الهدف الموسّع → ربح
+            return (wide - entry) / entry * 100.0
+    return 0.0                             # لم يبلغ الهدف الموسّع ولا الوقف → ⏳=0
+
+
 # ── تقويم أيام التداول ────────────────────────────────────────────
 def _is_trading_day(d: date) -> bool:
     return d.weekday() < 5 and not market_calendar.is_holiday(d)
@@ -473,6 +497,10 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             realized_trail = trailing_exit_realized(
                 entry, cand.risk, post, asof, cfg.outcome_window_min,
                 cfg.backtest_trail_pct)
+            # قياس توسيع الهدف1 (ظل): لو رُفع الهدف القريب لعائد/مخاطرة أعلى
+            realized_wide_t1 = wide_target1_realized(
+                entry, cand.risk, post, asof, cfg.outcome_window_min,
+                cfg.backtest_wide_t1_rr)
             return {"kind": "alert", "trade": {
                 "date": day, "ticker": ticker,
                 "entry": round(entry, 4),
@@ -503,6 +531,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "realized_pct": round(realized, 1),    # الربح/الخسارة المحقّق
                 "realized_partial_pct": round(realized_partial, 1),  # لو خروج جزئي
                 "realized_trail_pct": round(realized_trail, 1),  # لو وقف متعقّب
+                "realized_wide_t1_pct": round(realized_wide_t1, 1),  # لو هدف1 أوسع
                 "target_hit": tlevel,                  # أعلى هدف لُمس (0..3)
                 "result": result, "max_gain_pct": round(gain, 1),
                 "max_draw_pct": round(draw, 1),
@@ -866,6 +895,23 @@ def format_report(res: BacktestResult) -> str:
                  lambda t: None if t.get("above_vwap") is None else
                  ("فوق VWAP" if t["above_vwap"] else "تحت VWAP"),
                  ["فوق VWAP", "تحت VWAP"])
+        # ── قياس ظلّ: توسيع الهدف1 لشريحة «دون 0.5» (الهدف القريب أكبر عددًا
+        # وأضعف توقّعًا؛ نقيس هل توسيعه يرفع التوقّع أم يحوّل إصابات سهلة لانتهاء
+        # وقت). قياس فقط لا يُطبَّق على الحيّ. §5: بلا < أو > حرفية. ──
+        near = [t for t in res.trades
+                if t.get("t1_rr") is not None and t["t1_rr"] < 0.5
+                and t.get("realized_wide_t1_pct") is not None]
+        if len(near) >= 3:
+            cur = _avg(near, "realized_pct")
+            wide = _avg(near, "realized_wide_t1_pct")
+            d = wide - cur
+            tag = ("🟢 أفضل" if d > 0.05 else
+                   "🔴 أسوأ" if d < -0.05 else "≈ مماثل")
+            lines.append(f"\n🎯 قياس ظلّ: توسيع هدف1 لشريحة «دون 0.5» ({len(near)}):")
+            lines.append(f"  • التوقّع/صفقة: حالي {cur:+.1f}% ← هدف أوسع "
+                         f"{wide:+.1f}% ({tag} {d:+.1f}%)")
+            lines.append("  <i>↳ لو رُفع هدف1 لعائد/مخاطرة ≥ العتبة. قياس فقط، "
+                         "لا يُطبَّق على الحيّ.</i>")
         # ── المؤشرات الثنائية: نجاح «نعم» مقابل «لا» جنبًا لجنب (يكشف
         # أيها يتنبّأ بالنجاح فعلًا → أساس ضبط أوزان نظام الفرز بالبيانات) ──
         def _wr(g):

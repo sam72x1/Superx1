@@ -145,6 +145,15 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
         lines.append(
             f"⛔ الوقف: {_money(rp.stop_price)} (-{rp.stop_pct:.0f}%)")
         lines.append("↑ الوقف والأهداف من الشارت (دعوم/مقاومات حقيقية)")
+        # ⚖️ عائد/مخاطرة الهدف1 (معلومة لتقرّر الإمساك يدويًا — لا يغيّر الفرز):
+        # الباكتيست (6 أشهر) بيّن أن «الهدف القريب» يُصاب كثيرًا لكن ربحه ضئيل،
+        # بينما الأهداف الأبعد مجالها أوسع. تُعلِمك لتختار متى تمسك بعد الهدف1.
+        if rp.stop_pct and rp.targets:
+            rr = _pct_from(entry, rp.targets[0]) / rp.stop_pct
+            tag = ("ضئيل — هدف قريب، ربح صغير" if rr < 0.5
+                   else "متوازن" if rr < 1.0
+                   else "مرتفع — هدف أبعد، مجال أوسع")
+            lines.append(f"⚖️ عائد/مخاطرة الهدف1: {rr:.1f} ({tag})")
 
     # 🧠 رؤية المحلّل الذكي (Claude) — نص حرّ من النموذج → يُهرَّب
     if c.analyst is not None and c.analyst.thesis:

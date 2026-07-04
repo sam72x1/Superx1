@@ -143,6 +143,61 @@ def test_trailing_intracandle_low_checked_before_raising_peak():
     assert round(_trail(100, 93, 105, post), 1) == 0.0
 
 
+# ── اعتماد 2: توسيع الهدف1 (ظل قياس) ──────────────────────────────
+def _wide(entry, stop, t1, post, min_rr=0.5, window=90):
+    return backtest.wide_target1_realized(
+        entry, _risk(stop, t1), post, 0, window, min_rr)
+
+
+def test_wide_t1_reaches_wider_target():
+    """توسيع هدف1 قريب يصل الهدف الأوسع → ربح أكبر."""
+    # دخول 3.0 · وقف 2.7 (stop_pct=10) · هدف1 قريب 3.06 (R/R=0.2<0.5)
+    # الموسّع = max(3.06, 3.0×(1+0.5×0.10)=3.15) = 3.15
+    post = [Bar(t_ms=1000, o=3.0, h=3.2, l=3.0, c=3.15, v=1)]   # بلغ 3.2 ≥ 3.15
+    assert round(_wide(3.0, 2.7, 3.06, post), 1) == 5.0         # (3.15-3)/3
+
+
+def test_wide_t1_widening_turns_win_into_loss():
+    """توسيع الهدف يمسك أطول: هدف قريب كان سيُصاب ثم انعكس للوقف → خسارة كاملة."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.10, l=3.0, c=3.05, v=1),   # تجاوز 3.06 لا 3.15
+            Bar(t_ms=2000, o=3.05, h=3.1, l=2.6, c=2.7, v=1)]    # ثم كسر الوقف
+    assert round(_wide(3.0, 2.7, 3.06, post), 1) == -10.0        # (2.7-3)/3
+
+
+def test_wide_t1_already_far_unchanged():
+    """هدف أصلًا بعيد (R/R≥العتبة) → الموسّع = الأصلي (لا تغيير)."""
+    # هدف1 3.3 → R/R=1.0≥0.5 · الموسّع=max(3.3,3.15)=3.3
+    post = [Bar(t_ms=1000, o=3.0, h=3.35, l=3.0, c=3.3, v=1)]
+    assert round(_wide(3.0, 2.7, 3.3, post), 1) == 10.0          # (3.3-3)/3
+
+
+def test_wide_t1_no_reach_no_stop_is_zero():
+    """لم يبلغ الهدف الموسّع ولا الوقف → 0 (⏳)."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.10, l=2.9, c=3.0, v=1)]    # بين الوقف والموسّع
+    assert _wide(3.0, 2.7, 3.06, post) == 0.0
+
+
+def test_wide_t1_stop_first_within_bar():
+    """داخل شمعة تلمس الموسّع والوقف معًا → الوقف أولًا (تحفّظ)."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.5, l=2.6, c=3.0, v=1)]     # 3.5≥3.15 و2.6≤2.7
+    assert round(_wide(3.0, 2.7, 3.06, post), 1) == -10.0
+
+
+def test_report_shows_wide_t1_measurement():
+    """اعتماد 2: قسم توسيع هدف1 لـ«دون 0.5» يظهر بالحساب الصحيح وآمن HTML (§5)."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "max_gain_pct": 5, "t1_rr": 0.3,
+                   "realized_pct": 0.4, "realized_wide_t1_pct": 2.0}] * 4
+    res.funnel = backtest.new_funnel()
+    rep = backtest.format_report(res)
+    assert "توسيع هدف1 لشريحة «دون 0.5»" in rep
+    assert "حالي +0.4% ← هدف أوسع +2.0%" in rep
+    stripped = rep
+    for tag in ("<b>", "</b>", "<i>", "</i>"):
+        stripped = stripped.replace(tag, "")
+    assert "<" not in stripped and ">" not in stripped
+
+
 # ── AsOfClient: لا تسرّب مستقبل ───────────────────────────────────
 class _Base:
     def bars_daily(self, t, s, e):

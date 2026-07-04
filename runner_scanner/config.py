@@ -211,6 +211,11 @@ class Config:
     # لقياس هل يلتقط فجوة «قمة الفائز مقابل خروج الهدف1». معامل **قياس** فقط،
     # لا يُطبَّق على الحيّ ولا يغيّر أي فرز.
     backtest_trail_pct: float = 5.0
+    # قياس ظلّ: عتبة عائد/مخاطرة الهدف1 لاختبار «توسيع الهدف القريب». صفقات
+    # «دون هذه العتبة» (هدف قريب، ربح ضئيل) نقيس نتيجتها لو رُفع هدفها1 إلى هذا
+    # العائد/المخاطرة — هل يرفع التوقّع أم يحوّل إصابات سهلة إلى انتهاء وقت؟
+    # معامل **قياس** فقط، لا يُطبَّق على الحيّ.
+    backtest_wide_t1_rr: float = 0.5
 
     # ── معايرة العتبات A/B (يقترح أفضل عتبات تاريخيًا — لا يطبّق) ───
     # يجرّب تغيير عتبة واحدة كل مرة على نفس البيانات (no-lookahead) ويرتّب
@@ -340,6 +345,7 @@ class Config:
             backtest_workers=_i("BACKTEST_WORKERS", 8),
             backtest_shadow_rvol=_b("BACKTEST_SHADOW_RVOL", True),
             backtest_trail_pct=_f("BACKTEST_TRAIL_PCT", 5.0),
+            backtest_wide_t1_rr=_f("BACKTEST_WIDE_T1_RR", 0.5),
             backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", False),
             backtest_grid_readiness=_ftuple(
                 "BACKTEST_GRID_READINESS", (55.0, 60.0, 65.0, 70.0)),
