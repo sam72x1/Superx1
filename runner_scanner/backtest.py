@@ -33,9 +33,12 @@ from .catalyst import NEGATIVE_NEWS
 from .config import Config
 from .massive_client import MassiveClient
 from .models import Bar, Session, SnapshotEntry
-from .pipeline import _closed_daily, daily_resistance_targets, process_candidate
+from .pipeline import (
+    _closed_daily, _daily_ma_and_peaks, daily_resistance_targets,
+    process_candidate,
+)
 from .risk import build_risk_plan
-from .sessions import ET, classify_session
+from .sessions import ET, classify_session, is_opening_range
 from .textutil import esc
 
 logger = logging.getLogger(__name__)
@@ -538,6 +541,12 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "date": day, "ticker": ticker,
                 "entry": round(entry, 4),
                 "session": cand.session.value,
+                # نسبة صعود اليوم عند الدخول (فرضية «الموجة الأخيرة الأضعف»:
+                # هل الحركة المتقدّمة تخسر أكثر؟) + نافذة الافتتاح (فرضية «سهم
+                # الماركت»: هل ضغط أول نص ساعة أقوى؟) — قياس لا تغيير فرز.
+                "change_pct": round(snap.change_pct, 1),
+                "late_wave_thr": cfg.late_wave_run_pct,   # عتبة «الحركة المتقدّمة»
+                "opening_range": is_opening_range(cfg, asof_dt),
                 "score": round(cand.final_score, 1),
                 "readiness": round(cand.readiness.classic_score, 1)
                 if cand.readiness else 0,
@@ -597,10 +606,13 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             last_asof / 1000, tz=timezone.utc).astimezone(ET)
         daily = AsOfClient(base, day, last_asof, closed, [],
                            static_cache).bars_daily(ticker, "", "")
-        daily_res = daily_resistance_targets(
-            _closed_daily(daily, last_dt), last_snap.last_price)
+        cdaily = _closed_daily(daily, last_dt)
+        daily_res = daily_resistance_targets(cdaily, last_snap.last_price)
+        # مطابقة الخط الحي: نفس مصادر الأهداف (متوسطات ٢٠/٥٠ + قمم تأرجح)
+        ma_levels, daily_peaks = _daily_ma_and_peaks(cdaily)
         risk = build_risk_plan(cfg, last_snap.last_price, closed5,
-                               daily_resistances=daily_res)
+                               daily_resistances=daily_res,
+                               ma_levels=ma_levels, daily_peaks=daily_peaks)
         sres, _, _, _ = simulate_outcome(last_snap.last_price, risk, post,
                                          last_asof, cfg.outcome_window_min)
         shadow = {"max_rvol": round(max_rvol, 1), "result": sres}
@@ -908,6 +920,14 @@ def format_report(res: BacktestResult) -> str:
         # فرضية PYXS (ب): تمييز R/R الهدف1 — هل منخفضو العائد/المخاطرة يخسرون أكثر؟
         b("حسب R/R الهدف1", lambda t: None if t.get("t1_rr") is None else
           ("دون 0.5" if t["t1_rr"] < 0.5 else "0.5–1" if t["t1_rr"] < 1 else "≥1"))
+        # فرضية المستخدم «الموجة الأخيرة الأضعف»: هل الحركة المتقدّمة (صعدت
+        # كثيرًا اليوم) تخسر أكثر؟ عتبة من الإعداد (مخزّنة لكل صفقة).
+        b("حسب تقدّم الحركة", lambda t: None if t.get("change_pct") is None
+          else (f"متقدّمة ≥{t.get('late_wave_thr', 60):g}%"
+                if t["change_pct"] >= t.get("late_wave_thr", 60) else "عادية"))
+        # فرضية المستخدم «سهم الماركت»: هل نافذة الافتتاح (أول نص ساعة) أقوى؟
+        b("حسب نافذة الافتتاح", lambda t: None if t.get("opening_range") is None
+          else ("نافذة الافتتاح" if t["opening_range"] else "بعد الافتتاح"))
 
         # ── التوقّع المحقّق لكل شريحة (نسبة النجاح تخدع: هدف أقرب يُلمس أسهل
         # فترفع النسبة؛ التوقّع = متوسط realized_pct يوزن الربح بالخسارة فيكشف
@@ -934,6 +954,31 @@ def format_report(res: BacktestResult) -> str:
                  lambda t: None if t.get("above_vwap") is None else
                  ("فوق VWAP" if t["above_vwap"] else "تحت VWAP"),
                  ["فوق VWAP", "تحت VWAP"])
+        # فرضية «الموجة الأخيرة الأضعف» بالتوقّع المحقّق (النسبة تخدع)
+        _lw = (res.trades[0].get("late_wave_thr", 60) if res.trades else 60)
+        exp_line("توقّع محقّق حسب تقدّم الحركة",
+                 lambda t: None if t.get("change_pct") is None else
+                 (f"متقدّمة ≥{t.get('late_wave_thr', 60):g}%"
+                  if t["change_pct"] >= t.get("late_wave_thr", 60) else "عادية"),
+                 [f"متقدّمة ≥{_lw:g}%", "عادية"])
+        # فرضية «سهم الماركت»: توقّع نافذة الافتتاح مقابل بعدها
+        exp_line("توقّع محقّق حسب نافذة الافتتاح",
+                 lambda t: None if t.get("opening_range") is None else
+                 ("نافذة الافتتاح" if t["opening_range"] else "بعد الافتتاح"),
+                 ["نافذة الافتتاح", "بعد الافتتاح"])
+        # ── تحقّق أرقام «الحركة النموذجية حسب الجلسة» (خبرة المستخدم) مقابل
+        # الواقع: متوسط قمة الفائز الفعلية لكل جلسة (تُعاير الأرقام لاحقًا) ──
+        sess_groups: dict = {}
+        for t in res.trades:
+            if t.get("result") == "win":
+                sess_groups.setdefault(t.get("session"), []).append(t)
+        sess_rows = [(k, g) for k, g in sess_groups.items() if len(g) >= 3]
+        if sess_rows:
+            lines.append("\n📊 قمة الفائز الفعلية حسب الجلسة "
+                         "(تحقّق أرقام «توقّع الجلسة»):")
+            for k, g in sess_rows:
+                lines.append(f"  • {esc(str(k))}: +{_avg(g, 'max_gain_pct'):.0f}% "
+                             f"متوسط قمة ({len(g)} فائز)")
         # ── قياس ظلّ: توسيع الهدف1 لشريحة «دون العتبة» (الهدف القريب أكبر عددًا
         # وأضعف توقّعًا؛ نقيس هل توسيعه يرفع التوقّع أم يحوّل إصابات سهلة لانتهاء
         # وقت). حدّ الشريحة = عتبة التوسيع المخزّنة (backtest_wide_t1_rr) كي يتّسق

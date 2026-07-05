@@ -641,6 +641,30 @@ def test_pyxs_measurement_buckets_in_report():
     assert "<" not in stripped and ">" not in stripped
 
 
+def test_user_methodology_hypotheses_in_report():
+    """فرضيتا المستخدم قابلتان للقياس بالباكتيست: «الموجة الأخيرة الأضعف»
+    (حركة متقدّمة) و«سهم الماركت» (نافذة الافتتاح) — نسبة نجاح + توقّع محقّق."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    base = {"session": "رسمي", "max_gain_pct": 5, "late_wave_thr": 60.0,
+            "t1_rr": 1.0, "above_vwap": True}
+    res.trades = (
+        # متقدّمة (≥60%) تخسر · عادية تفوز
+        [{**base, "change_pct": 80, "opening_range": False,
+          "result": "loss", "realized_pct": -7}] * 3 +
+        [{**base, "change_pct": 30, "opening_range": True,
+          "result": "win", "realized_pct": 10, "max_gain_pct": 20}] * 3)
+    rep = backtest.format_report(res)
+    assert "حسب تقدّم الحركة" in rep and "متقدّمة ≥60%" in rep and "عادية" in rep
+    assert "حسب نافذة الافتتاح" in rep and "نافذة الافتتاح" in rep
+    assert "توقّع محقّق حسب تقدّم الحركة" in rep
+    assert "قمة الفائز الفعلية حسب الجلسة" in rep
+    # HTML-آمن (§5): لا محارف < أو > شاردة تُسقط التقرير
+    stripped = rep
+    for tag in ("<b>", "</b>", "<i>", "</i>"):
+        stripped = stripped.replace(tag, "")
+    assert "<" not in stripped and ">" not in stripped
+
+
 def test_report_discloses_simulation_limits_html_safe():
     """الإفصاح يذكر الطبقات الغائبة (محلّل/شورت/SEC/أبطال/توقّفات) وحبيبية 5د،
     وخالٍ من محارف < أو > الحرفية (وإلا يُسقط تيليجرام التقرير كاملًا — §5)."""
@@ -760,9 +784,10 @@ def test_shadow_risk_plan_uses_daily_resistances_like_live():
     captured = {}
     orig = backtest.build_risk_plan
 
-    def spy(cfg, entry, closed5, daily_resistances=None):
+    def spy(cfg, entry, closed5, daily_resistances=None, **kw):
         captured["dr"] = daily_resistances       # نداء الظل الوحيد لهذا المرجع
-        return orig(cfg, entry, closed5, daily_resistances=daily_resistances)
+        captured["ma"] = kw.get("ma_levels")     # مطابقة الحي: المتوسطات تُمرَّر
+        return orig(cfg, entry, closed5, daily_resistances=daily_resistances, **kw)
 
     backtest.build_risk_plan = spy
     try:
