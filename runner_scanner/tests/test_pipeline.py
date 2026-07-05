@@ -29,6 +29,24 @@ def test_pipeline_accepts_strong_runner():
     assert cand.market_cap is not None
 
 
+def test_pipeline_wires_labeled_targets_and_ma_into_card():
+    """تحقّق دمج طرف-لطرف: الخط الكامل يُنتج أهدافًا موسومة + متوسطات، والبطاقة
+    تعرضها (منهجية المستخدم مدموجة فعلًا لا مجرد دوال منعزلة)."""
+    from runner_scanner.alerts import build_card
+    cand = process_candidate(
+        CFG, FakeClient(), make_snapshot(change_pct=25.0),
+        halts=None, session=Session.REGULAR, et_now=ET_NOW)
+    assert cand.is_rejected is False
+    rp = cand.risk
+    # الأهداف موسومة بأنواعها (مصدرها الخط لا بناء يدوي)
+    assert rp.target_kinds and len(rp.target_kinds) == len(rp.targets)
+    assert all(k for k in rp.target_kinds)
+    # المتوسطان اليوميان محسوبان ومُمرَّران للعرض (تاريخ 260 يومًا كافٍ)
+    assert rp.ma20 is not None and rp.ma50 is not None
+    card = build_card(CFG, cand)
+    assert "🎯 الهدف 1:" in card and "📐 المتوسطات" in card
+
+
 def test_pipeline_rejects_not_technically_ready():
     client = FakeClient(daily=downtrend_daily_bars())   # جاهزية < 70
     cand = process_candidate(

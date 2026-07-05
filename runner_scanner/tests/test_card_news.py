@@ -105,6 +105,40 @@ def test_followup_target_reminds_to_raise_stop():
     assert "وصل الهدف 1" in m1 and "ارفع وقفك للتعادل (سعر دخولك)" in m1
 
 
+def test_card_shows_target_kinds():
+    """منهجية المستخدم: كل هدف موسوم بنوعه (مقاومة/متوسط/قمة تأرجح)."""
+    c = _card_candidate()
+    c.risk.target_kinds = ["مقاومة", "متوسط ٢٠", "قمة تأرجح"]
+    card = build_card(CFG, c)
+    assert "🎯 الهدف 1: $1.69 (+10%) · مقاومة" in card
+    assert "متوسط ٢٠" in card and "قمة تأرجح" in card
+
+
+def test_card_market_stock_label():
+    """منهجية المستخدم: سهم صاعد من البري + ضغط الافتتاح يُوسم «سهم ماركت»."""
+    c = _card_candidate()
+    c.is_market_stock = True
+    assert "⭐ سهم ماركت نموذجي" in build_card(CFG, c)
+    assert "سهم ماركت نموذجي" not in build_card(CFG, _card_candidate())
+
+
+def test_card_session_move_hint():
+    """سطر «الحركة النموذجية لهذه الجلسة» (سياق تقريبي لا وعد)."""
+    card = build_card(CFG, _card_candidate())
+    assert "الحركة النموذجية لهذه الجلسة" in card and "لا وعد" in card
+    cfg = Config(code_version="x", session_move_hint_enabled=False)
+    assert "الحركة النموذجية" not in build_card(cfg, _card_candidate())
+
+
+def test_card_late_wave_caution():
+    """حركة متقدّمة جدًا اليوم → تحذير «موجة أخيرة أضعف» (إرشاد لا حذف)."""
+    c = _card_candidate()
+    c.snapshot.change_pct = 75.0             # ≥ العتبة 60%
+    card = build_card(CFG, c)
+    assert "حركة متقدّمة" in card and "موجة أخيرة أضعف" in card
+    assert "موجة أخيرة أضعف" not in build_card(CFG, _card_candidate())
+
+
 def test_card_includes_news_summary():
     card = build_card(CFG, _card_candidate(headline="Big Pharma Gets FDA Approval"))
     assert "📰 الخبر —" in card

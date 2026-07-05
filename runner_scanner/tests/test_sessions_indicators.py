@@ -31,6 +31,24 @@ def test_weekend_is_closed():
     assert sessions.classify_session(CFG, sat) is Session.CLOSED
 
 
+def test_opening_range_window():
+    """نافذة الافتتاح: أول 30د من الرسمي (منهجية «سهم الماركت»)."""
+    assert sessions.is_opening_range(CFG, _et(9, 40))       # 9:40 ضمن أول 30د
+    assert not sessions.is_opening_range(CFG, _et(10, 5))   # 10:05 خارجها
+    assert not sessions.is_opening_range(CFG, _et(5))       # بريماركت ليس افتتاحًا
+
+
+def test_session_move_hint_per_session():
+    """الحركة النموذجية تختلف بالجلسة: الافتتاح أعلى من بقية الرسمي."""
+    assert sessions.session_move_hint_pct(
+        CFG, Session.REGULAR, _et(9, 40)) == CFG.session_move_open_pct
+    assert sessions.session_move_hint_pct(
+        CFG, Session.REGULAR, _et(11)) == CFG.session_move_regular_pct
+    assert sessions.session_move_hint_pct(
+        CFG, Session.PREMARKET, _et(5)) == CFG.session_move_premarket_pct
+    assert sessions.session_move_hint_pct(CFG, Session.CLOSED, _et(3)) is None
+
+
 def test_premarket_rvol_uses_premarket_baseline():
     # نفس الحجم: بريماركت يطلع RVol أعلى لأنه مقارن بقاعدة بريماركت الصغيرة
     pre = sessions.compute_rvol(CFG, Session.PREMARKET, 200_000, 5_000_000)

@@ -17,6 +17,7 @@ import requests
 
 from .config import Config
 from .models import Candidate, FloatSource, Session
+from .sessions import session_move_hint_pct
 from .textutil import esc
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,9 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
     ]
     if c.is_champion:
         lines.append("🏆 بطل الفترة السابقة (متابعة بأولوية)")
+    # ⭐ «سهم الماركت» النموذجي (منهجية المستخدم): صاعد من البري + نافذة افتتاح + ضغط
+    if c.is_market_stock:
+        lines.append("⭐ سهم ماركت نموذجي: صاعد من البري + ضغط نافذة الافتتاح")
     lines += [
         f"💪 القوة: {c.final_score:.0f}/100  {bar}  {strength}",
         f"💰 السعر: {_money(s.last_price)}",
@@ -137,10 +141,13 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
         if rp.buy_low is not None and rp.buy_high is not None:
             lines.append(
                 f"🛒 الشراء: من {_money(rp.buy_low)} إلى {_money(rp.buy_high)}")
-        # 🎯 الأهداف بنسبها
+        # 🎯 الأهداف بنسبها + نوع كل هدف (منهجية المستخدم: ه١ مقاومة · ه٢
+        # متوسط ٢٠/٥٠ · ه٣ قمة تأرجح). النوع للعرض لا يغيّر ترتيب السعر التصاعدي.
         for i, t in enumerate(rp.targets, start=1):
+            kind = (f" · {rp.target_kinds[i - 1]}"
+                    if rp.target_kinds and i <= len(rp.target_kinds) else "")
             lines.append(
-                f"🎯 الهدف {i}: {_money(t)} (+{_pct_from(entry, t):.0f}%)")
+                f"🎯 الهدف {i}: {_money(t)} (+{_pct_from(entry, t):.0f}%){kind}")
         # ⛔ الوقف
         lines.append(
             f"⛔ الوقف: {_money(rp.stop_price)} (-{rp.stop_pct:.0f}%)")
@@ -161,6 +168,18 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
                    else "متوازن" if rr < 1.0
                    else "مرتفع — هدف أبعد، مجال أوسع")
             lines.append(f"⚖️ عائد/مخاطرة الهدف1: {rr:.1f} ({tag})")
+        # 📐 المتوسطات ٢٠/٥٠ (منهجية المستخدم) — مؤطّرة بما هي فعلًا للرنر:
+        # فوق السعر = هدف استعادة · تحت السعر = دعم/تأكيد اتجاه صاعد.
+        if rp.ma20 or rp.ma50:
+            parts = []
+            if rp.ma20:
+                parts.append(f"٢٠:{_money(rp.ma20)}")
+            if rp.ma50:
+                parts.append(f"٥٠:{_money(rp.ma50)}")
+            above_price = [x for x in (rp.ma20, rp.ma50) if x and x > entry]
+            rel = ("متوسط فوق السعر (مقاومة/استعادة)"
+                   if above_price else "السعر فوقهما — دعم/اتجاه صاعد")
+            lines.append(f"📐 المتوسطات — {' · '.join(parts)} ({rel})")
 
     # 🧠 رؤية المحلّل الذكي (Claude) — نص حرّ من النموذج → يُهرَّب
     if c.analyst is not None and c.analyst.thesis:
@@ -180,12 +199,26 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
     else:
         lines.append("📰 الخبر: لا يوجد محفّز خبري حديث ⚠️")
 
+    # ⚠️ حركة متقدّمة جدًا اليوم = احتمال قرب نهاية الموجة (الخامسة الأضعف):
+    # إرشاد بمراقبة الجني وتشديد الوقف (منهجية المستخدم) — لا يمنع التنبيه.
+    if cfg.late_wave_caution_enabled and s.change_pct >= cfg.late_wave_run_pct:
+        lines.append(
+            f"⚠️ حركة متقدّمة (+{s.change_pct:.0f}%) — قد تكون موجة أخيرة أضعف "
+            "(الخامسة)؛ راقب الجني وشدّد الوقف.")
+
     # تحذير خارج الجلسة الرسمية (LULD لا يحمي)
     if c.session in (Session.PREMARKET, Session.AFTERHOURS):
         lines.append("⚠️ خارج الجلسة الرسمية: LULD لا يحمي، احتمال فجوة.")
     # تنبيه البريماركت: أداؤه التاريخي في الباكتيست أضعف بوضوح (إعلام لا حذف)
     if c.session is Session.PREMARKET and cfg.premarket_caution_enabled:
         lines.append("🔅 جلسة بريماركت — نجاحها التاريخي أضعف، تحقّق يدويًا قبل الدخول.")
+
+    # 📊 الحركة النموذجية لهذه الجلسة (سياق تقريبي من خبرة المستخدم، لا وعد)
+    if cfg.session_move_hint_enabled:
+        hint = session_move_hint_pct(cfg, c.session, now)
+        if hint:
+            lines.append(f"📊 الحركة النموذجية لهذه الجلسة: ~{hint:.0f}% "
+                         "(تاريخي تقريبي، لا وعد)")
 
     code = cfg.code_version or "dev"
     lines.append(f"⏰ {_local_time(cfg, now)} (الرياض) · {c.session.value}")

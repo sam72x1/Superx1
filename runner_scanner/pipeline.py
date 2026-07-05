@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from . import catalyst as catalyst_mod
 from . import classic_ta, gates, intraday_ta, scoring
 from .config import Config
+from .indicators import pivots, sma
 from .halts import HaltTracker
 from .massive_client import MassiveClient, MassiveError
 from .models import Candidate, FloatSource, HaltState, Session, SnapshotEntry
@@ -58,6 +59,28 @@ def daily_resistance_targets(daily_closed: list, last_price: float) -> list[floa
     res = [daily_closed[-1].h, max(b.h for b in daily_closed[-10:])]
     cap = last_price * 1.30
     return [r for r in res if r and r <= cap]
+
+
+def _daily_ma_and_peaks(daily_closed: list) -> tuple[dict, list[float]]:
+    """متوسطات ٢٠/٥٠ يومية + قمم التأرجح اليومية (قمم الموجة السابقة) كأهداف.
+    من الأيام **المغلقة** فقط (بلا شمعة اليوم الجزئية §4). منهجية المستخدم:
+    ه٢ = متوسط ٢٠/٥٠ · ه٣ = قمم الموجة السابقة. تُدمج فوق الدخول فقط لاحقًا."""
+    if not daily_closed:
+        return {}, []
+    closes = [b.c for b in daily_closed]
+    ma: dict[str, float] = {}
+    ma20 = sma(closes, 20)
+    ma50 = sma(closes, 50)
+    if ma20:
+        ma["متوسط ٢٠"] = ma20
+    if ma50:
+        ma["متوسط ٥٠"] = ma50
+    peaks: list[float] = []
+    highs = [b.h for b in daily_closed]
+    if len(highs) >= 5:
+        hi_idx, _ = pivots(highs)
+        peaks = [highs[i] for i in hi_idx]
+    return ma, peaks
 
 
 def _targets_top_gain(risk, last_price: float) -> float | None:
@@ -222,8 +245,11 @@ def process_candidate(
     # الجزئية)، وبسقف اتجاهي قريب: قمة بعيدة جدًا فوق السعر (سهم منهار) ليست
     # هدفًا واقعيًا داخل-الجلسة (تجنّب فئة بق +474%).
     daily_res = daily_resistance_targets(daily_closed, snap.last_price)
+    # متوسطات ٢٠/٥٠ وقمم تأرجح يومية كأهداف موسومة (منهجية المستخدم: ه٢/ه٣)
+    ma_levels, daily_peaks = _daily_ma_and_peaks(daily_closed)
     c.risk = risk.build_risk_plan(cfg, snap.last_price, closed_5min,
-                                  daily_resistances=daily_res)
+                                  daily_resistances=daily_res,
+                                  ma_levels=ma_levels, daily_peaks=daily_peaks)
 
     # ── 9.5) بوّابة الحد الأدنى للربح (قرار المستخدم) ────────────────
     # سقف ربح الصفقة (أبعد هدف) < العتبة = «لا تستحق المخاطرة» → رفض.

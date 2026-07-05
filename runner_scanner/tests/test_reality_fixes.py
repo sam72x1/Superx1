@@ -95,6 +95,36 @@ def test_thin_bar_high_excluded_from_targets():
     assert 3.9 in tg_raw
 
 
+# ── منهجية المستخدم: أهداف موسومة + متوسطات ٢٠/٥٠ + قمم تأرجح ─────
+def test_targets_labeled_with_kinds():
+    """كل هدف يحمل نوعه (منهجية المستخدم): مقاومة/متوسط/قمة تأرجح، مع الحفاظ
+    على الترتيب التصاعدي بالسعر (شرط تتبّع النتائج والباكتيست)."""
+    bars = [Bar(t_ms=i, o=3.0, h=3.2, l=2.9, c=3.1, v=80_000, n=50)
+            for i in range(4)]
+    # المستويات فوق 3.05: 3.2 (قمة اليوم) · 3.3 (متوسط) · 3.5 (قمة تأرجح)
+    labeled = resistance_targets(
+        3.05, bars, count=3, min_bar_trades=3,
+        ma_levels={"متوسط ٢٠": 3.3}, daily_peaks=[3.5],
+        return_labeled=True)
+    prices = [p for p, _ in labeled]
+    kinds = [k for _, k in labeled]
+    assert prices == sorted(prices)              # تصاعدي بالسعر
+    assert "متوسط ٢٠" in kinds                   # المتوسط ظهر كهدف (مصدر جديد)
+    assert "قمة تأرجح" in kinds                  # قمة الموجة السابقة ظهرت
+    # النوع الافتراضي بلا وسم = list[float] كما قبل (توافق خلفي)
+    plain = resistance_targets(3.05, bars, extra=[3.8], count=3, min_bar_trades=3)
+    assert all(isinstance(t, float) for t in plain)
+
+
+def test_ma_below_entry_not_a_target():
+    """متوسط تحت الدخول ليس هدفًا صاعدًا (الرنر فوق متوسطاته غالبًا)."""
+    bars = [Bar(t_ms=i, o=3.0, h=3.2, l=2.9, c=3.1, v=80_000, n=50)
+            for i in range(4)]
+    labeled = resistance_targets(3.05, bars, count=3, min_bar_trades=3,
+                                 ma_levels={"متوسط ٥٠": 2.5}, return_labeled=True)
+    assert all(k != "متوسط ٥٠" for _, k in labeled)   # 2.5 < 3.05 → مُستبعد
+
+
 # ── #12: RSI لا يُحشى بـ50 → لا دايفرجنس وهمي على تاريخ قصير ──────
 def test_rsi_series_none_in_warmup():
     s = rsi_series([10, 11, 10.5], period=14)   # كله warmup

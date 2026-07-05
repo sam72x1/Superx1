@@ -168,11 +168,17 @@ class RiskPlan:
     stop_pct: float                   # مسافة الوقف عن الدخول%
     entry_ref: float                  # السعر المرجعي للدخول (آخر سعر)
     targets: list[float] = field(default_factory=list)
+    # نوع كل هدف بالترتيب نفسه (مقاومة/متوسط ٢٠/متوسط ٥٠/قمة تأرجح/رقم نفسي).
+    # للعرض فقط (منهجية المستخدم: ه١ مقاومة · ه٢ متوسط · ه٣ قمة موجة). قد يكون
+    # فارغًا للتوافق مع بناءات قديمة لا تمرّر الأنواع.
+    target_kinds: list[str] = field(default_factory=list)
     stop_basis: str = ""              # "دعم 5د" أو "سقف نسبة"
     support_near: Optional[float] = None   # الدعم الأقرب تحت السعر (الدخول)
     support_deep: Optional[float] = None   # الدعم الأعمق
     buy_low: Optional[float] = None        # بداية منطقة الشراء
     buy_high: Optional[float] = None       # نهاية منطقة الشراء
+    ma20: Optional[float] = None           # متوسط ٢٠ يومي (هدف لو فوق السعر، دعم/اتجاه لو تحته)
+    ma50: Optional[float] = None           # متوسط ٥٠ يومي (سياق اتجاه)
 
 
 @dataclass
@@ -187,6 +193,7 @@ class Candidate:
     ticker_type: str = ""           # CS/ADRC/WARRANT/UNIT/...
     primary_exchange: str = ""      # XNAS/XNYS/OTC...
     is_champion: bool = False       # بطل فترة موروث (أولوية متابعة)
+    is_market_stock: bool = False   # «سهم ماركت» نموذجي: بطل بريماركت + نافذة افتتاح + ضغط
 
     # الفلوت
     float_shares: Optional[float] = None

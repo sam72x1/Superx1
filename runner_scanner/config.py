@@ -152,6 +152,9 @@ class Config:
     regular_start_hour: float = 9.5      # 9:30ص
     regular_end_hour: float = 16.0       # 4:00م
     afterhours_end_hour: float = 20.0    # 8:00م
+    # نافذة الافتتاح: أول N دقيقة من الجلسة الرسمية (منهجية المستخدم: «سهم
+    # الماركت» = صاعد من البري + ضغط أول ربع/نص ساعة). إعلام لا بوّابة.
+    opening_range_minutes: float = 30.0
 
     # ── منع التكرار ───────────────────────────────────────────────
     dedup_per_day: bool = True           # تنبيه واحد/سهم/يوم
@@ -169,6 +172,9 @@ class Config:
     # أيام إرسال التقرير (بتوقيت العرض/الرياض): Mon=0..Sun=6 → الأربعاء+السبت
     dev_report_weekdays: tuple[int, ...] = (2, 5)
     dev_report_hour: int = 5             # ساعة الإرسال (فجرًا بالرياض، بعد الإغلاق)
+    # نافذة مقارنة «قبل/بعد» في تقرير التطوير (أيام): آخر N يوم مقابل الـN السابقة
+    # لقياس أثر تغييرات الفرز على النتائج الحيّة الفعلية (لا المحاكاة).
+    dev_compare_window_days: int = 7     # 7 = أسبوع مقابل أسبوع
 
     # ── المستشار الذكي (Claude) — «العين اللي ما تنام» ────────────
     anthropic_api_key: str = ""
@@ -266,6 +272,18 @@ class Config:
     # جلسة دقّة (8 أشهر: 59% مقابل 87% رسمي)؛ تعطيله يرفع الدقّة الكلية 81.6%→88%.
     # مراقبة المفتوح تبقى. فعّلها بـ PREMARKET_ALERTS_ENABLED=true لتغطية أوسع.
     premarket_alerts_enabled: bool = False
+    # ── منهجية المستخدم: إعلام حسب الجلسة والموجة (دليل لا منفّذ) ──
+    # سطر «الحركة النموذجية لهذه الجلسة» — أرقام تقريبية تاريخية من خبرة
+    # المستخدم (تُعرض كسياق لا كوعد). قابلة للمعايرة عند تراكم بيانات حيّة.
+    session_move_hint_enabled: bool = True
+    session_move_premarket_pct: float = 15.0   # بريماركت ~15%
+    session_move_open_pct: float = 30.0        # أول نص ساعة رسمي (ضغط الافتتاح) ~30%
+    session_move_regular_pct: float = 20.0     # بقية الرسمي ~20%
+    session_move_afterhours_pct: float = 25.0  # أفترهاوس ~20–30% (وسط)
+    # تحذير «الموجة الأخيرة الأضعف»: حركة متقدّمة جدًا اليوم = احتمال موجة خامسة
+    # أضعف/قرب النهاية → إرشاد بمراقبة الجني وتشديد الوقف (لا يمنع التنبيه).
+    late_wave_caution_enabled: bool = True
+    late_wave_run_pct: float = 60.0            # صعد ≥ هذا اليوم = «حركة متقدّمة»
 
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
@@ -321,6 +339,14 @@ class Config:
             regular_start_hour=_f("REGULAR_START_HOUR", 9.5),
             regular_end_hour=_f("REGULAR_END_HOUR", 16.0),
             afterhours_end_hour=_f("AFTERHOURS_END_HOUR", 20.0),
+            opening_range_minutes=_f("OPENING_RANGE_MINUTES", 30.0),
+            session_move_hint_enabled=_b("SESSION_MOVE_HINT_ENABLED", True),
+            session_move_premarket_pct=_f("SESSION_MOVE_PREMARKET_PCT", 15.0),
+            session_move_open_pct=_f("SESSION_MOVE_OPEN_PCT", 30.0),
+            session_move_regular_pct=_f("SESSION_MOVE_REGULAR_PCT", 20.0),
+            session_move_afterhours_pct=_f("SESSION_MOVE_AFTERHOURS_PCT", 25.0),
+            late_wave_caution_enabled=_b("LATE_WAVE_CAUTION_ENABLED", True),
+            late_wave_run_pct=_f("LATE_WAVE_RUN_PCT", 60.0),
             dedup_per_day=_b("DEDUP_PER_DAY", True),
             champions_enabled=_b("CHAMPIONS_ENABLED", True),
             anthropic_api_key=_s("ANTHROPIC_API_KEY", ""),
@@ -383,6 +409,7 @@ class Config:
                 int(x) for x in _s("DEV_REPORT_WEEKDAYS", "2,5").split(",")
                 if x.strip().lstrip("-").isdigit()),
             dev_report_hour=_i("DEV_REPORT_HOUR", 5),
+            dev_compare_window_days=_i("DEV_COMPARE_WINDOW_DAYS", 7),
             halts_enabled=_b("HALTS_ENABLED", True),
             dry_run=_b("DRY_RUN", False),
             log_level=_s("LOG_LEVEL", "INFO"),

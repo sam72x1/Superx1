@@ -256,6 +256,40 @@ def test_dev_report_full_with_segments_and_suggestions():
     assert "RVOL_MIN" in report          # اقتراح خفض البوّابة
 
 
+def _resolved_alert(st, ticker, day_dt, *, win):
+    """ينشئ تنبيهًا محسومًا (فوز/خسارة) في يوم محدّد — لاختبار مقارنة قبل/بعد."""
+    from datetime import timedelta
+    price, stop, t1 = 3.0, 2.7, 3.6      # هدف1 +20% · وقف -10%
+    c = _cand(ticker, price, stop=stop, t1=t1)
+    st.log_candidate(c, day_dt)
+    st.mark_alerted(ticker, 80, day_dt)
+    final = t1 + 0.1 if win else stop - 0.1
+    st.update_outcomes({ticker: final}, day_dt + timedelta(minutes=10))
+
+
+def test_dev_report_week_over_week_compare():
+    """طلب المستخدم: التقرير يعرض مقارنة «قبل/بعد» من النتائج الحيّة الفعلية
+    (أسبوع مقابل أسبوع) لقياس أثر تغييرات الفرز — لا محاكاة."""
+    st = _store()
+    now = datetime(2026, 7, 5, 14, 0, tzinfo=timezone.utc)
+    cur_day = datetime(2026, 7, 1, 14, 0, tzinfo=timezone.utc)    # ضمن آخر 7
+    prev_day = datetime(2026, 6, 24, 14, 0, tzinfo=timezone.utc)  # الأسبوع السابق
+    # الأسبوع الحالي: 2 فوز / 1 خسارة → 67%
+    _resolved_alert(st, "CUR_W1", cur_day, win=True)
+    _resolved_alert(st, "CUR_W2", cur_day, win=True)
+    _resolved_alert(st, "CUR_L1", cur_day, win=False)
+    # الأسبوع السابق: 1 فوز / 1 خسارة → 50%
+    _resolved_alert(st, "PRV_W1", prev_day, win=True)
+    _resolved_alert(st, "PRV_L1", prev_day, win=False)
+    rep = build_dev_report(st, CFG, now)
+    assert "قبل/بعد" in rep
+    assert "الصفقات المحسومة: 3 مقابل 2" in rep
+    assert "نسبة الفوز: 67% مقابل 50%" in rep
+    assert "لمس الوقف: 1/3 مقابل 1/2" in rep
+    assert "عيّنة صغيرة" in rep            # 5 نتائج < dev_min_sample → تحذير صدق
+    st.close()
+
+
 def test_esc_escapes_html():
     assert esc("<b>&") == "&lt;b&gt;&amp;"
 
