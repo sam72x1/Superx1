@@ -290,6 +290,30 @@ def test_dev_report_week_over_week_compare():
     st.close()
 
 
+def test_dev_report_distribution_honesty_tail_warning():
+    """صدق التوزيع (مقتبس من أداة الباكتيست): متوسط ≫ وسيط → تحذير أن الحافة
+    يحملها ذيل قِلّة، والوسيط يظهر في الشرائح."""
+    st = _store()
+    prices = {}
+    # 11 فائزًا صغيرًا (قمة +8%) + فائز واحد ضخم (+300%) = متوسط منفوخ، وسيط صغير
+    for i in range(11):
+        tkr = f"S{i}"
+        c = _cand(tkr, 3.0, stop=2.7, t1=3.24)     # هدف1 +8%
+        st.log_candidate(c, T0)
+        st.mark_alerted(tkr, 80, T0)
+        prices[tkr] = 3.24
+    big = _cand("BIG", 3.0, stop=2.7, t1=3.24)
+    st.log_candidate(big, T0)
+    st.mark_alerted("BIG", 80, T0)
+    prices["BIG"] = 12.0                            # +300% ذيل
+    st.update_outcomes(prices,
+                       datetime(2026, 6, 26, 14, 20, tzinfo=timezone.utc))
+    rep = build_dev_report(st, CFG)
+    assert "وسيط" in rep                            # الوسيط يُعرض
+    assert "صدق التوزيع" in rep and "المتوسط يخدع" in rep
+    st.close()
+
+
 def test_esc_escapes_html():
     assert esc("<b>&") == "&lt;b&gt;&amp;"
 
