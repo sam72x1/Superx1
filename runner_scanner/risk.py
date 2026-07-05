@@ -193,4 +193,6 @@ def build_risk_plan(cfg: Config, entry: float,
         support_deep=support_deep,
         buy_low=buy_low,
         buy_high=buy_high,
+        ma20=(ma_levels or {}).get("متوسط ٢٠"),
+        ma50=(ma_levels or {}).get("متوسط ٥٠"),
     )

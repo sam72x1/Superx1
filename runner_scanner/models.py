@@ -177,6 +177,8 @@ class RiskPlan:
     support_deep: Optional[float] = None   # الدعم الأعمق
     buy_low: Optional[float] = None        # بداية منطقة الشراء
     buy_high: Optional[float] = None       # نهاية منطقة الشراء
+    ma20: Optional[float] = None           # متوسط ٢٠ يومي (هدف لو فوق السعر، دعم/اتجاه لو تحته)
+    ma50: Optional[float] = None           # متوسط ٥٠ يومي (سياق اتجاه)
 
 
 @dataclass

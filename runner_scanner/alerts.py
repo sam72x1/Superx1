@@ -168,6 +168,18 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
                    else "متوازن" if rr < 1.0
                    else "مرتفع — هدف أبعد، مجال أوسع")
             lines.append(f"⚖️ عائد/مخاطرة الهدف1: {rr:.1f} ({tag})")
+        # 📐 المتوسطات ٢٠/٥٠ (منهجية المستخدم) — مؤطّرة بما هي فعلًا للرنر:
+        # فوق السعر = هدف استعادة · تحت السعر = دعم/تأكيد اتجاه صاعد.
+        if rp.ma20 or rp.ma50:
+            parts = []
+            if rp.ma20:
+                parts.append(f"٢٠:{_money(rp.ma20)}")
+            if rp.ma50:
+                parts.append(f"٥٠:{_money(rp.ma50)}")
+            above_price = [x for x in (rp.ma20, rp.ma50) if x and x > entry]
+            rel = ("متوسط فوق السعر (مقاومة/استعادة)"
+                   if above_price else "السعر فوقهما — دعم/اتجاه صاعد")
+            lines.append(f"📐 المتوسطات — {' · '.join(parts)} ({rel})")
 
     # 🧠 رؤية المحلّل الذكي (Claude) — نص حرّ من النموذج → يُهرَّب
     if c.analyst is not None and c.analyst.thesis:
