@@ -28,7 +28,9 @@ from .models import Candidate, Session
 from .monitor import HealthMonitor
 from .pipeline import process_candidate
 from .sec_radar import SecRadar
-from .sessions import classify_session, is_scanning_window, now_et
+from .sessions import (
+    classify_session, is_opening_range, is_scanning_window, now_et,
+)
 from .short_interest import ShortInterestProvider
 from .state import Store, trade_date_str
 from .telegram_bot import TelegramAssistant
@@ -104,6 +106,14 @@ class Scanner:
         logger.info("الجلسة %s — فوق العتبة: %d · أعلى %d + %d بطل موروث",
                     session.value, len(runners), len(top), len(champ_entries))
 
+        # «سهم الماركت» النموذجي (منهجية المستخدم): صاعد من البري + نافذة افتتاح
+        # + ضغط. نجمع أبطال بريماركت اليوم مرّة، ونسم البطاقة لاحقًا (إعلام لا فرز).
+        market_champs: set[str] = set()
+        if is_opening_range(self.cfg, et_now):
+            market_champs = {
+                c["symbol"] for c in self.store.get_session_champions(
+                    Session.PREMARKET.value, et_date)}
+
         # حسم أي تتبّعات معلّقة من أيام سابقة (لم تكتمل نافذتها قبل الإغلاق)
         self.store.finalize_stale(et_now)
 
@@ -157,6 +167,10 @@ class Scanner:
                 logger.exception("معالجة %s فشلت باستثناء غير متوقّع", snap.ticker)
                 continue
             cand.is_champion = snap.ticker in champ_syms
+            # سهم ماركت نموذجي: بطل بريماركت + نافذة افتتاح + ضغط (أحجام متصاعدة)
+            cand.is_market_stock = (
+                snap.ticker in market_champs and cand.momentum is not None
+                and cand.momentum.volume_rising)
             self.store.log_candidate(cand)   # closed-loop لكل مرشّح
             if not cand.is_rejected:
                 accepted.append(cand)

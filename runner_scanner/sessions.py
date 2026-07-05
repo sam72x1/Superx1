@@ -81,6 +81,35 @@ def session_elapsed_fraction(cfg: Config, dt: datetime | None = None) -> float:
     return max(0.02, min(1.0, frac))
 
 
+def is_opening_range(cfg: Config, dt: datetime | None = None) -> bool:
+    """هل نحن في نافذة افتتاح الجلسة الرسمية (أول opening_range_minutes دقيقة)؟
+
+    منهجية المستخدم: «سهم الماركت» يُقيّم في أول ربع/نص ساعة بعد 9:30 — ضغط
+    الافتتاح على سهم صاعد من البري. إعلام لا بوّابة.
+    """
+    dt = dt or now_et()
+    if classify_session(cfg, dt) is not Session.REGULAR:
+        return False
+    elapsed_min = (_hour_float(dt) - cfg.regular_start_hour) * 60.0
+    return 0.0 <= elapsed_min <= cfg.opening_range_minutes
+
+
+def session_move_hint_pct(cfg: Config, session: Session,
+                          dt: datetime | None = None) -> float | None:
+    """الحركة النموذجية التقريبية لهذه الجلسة% (من خبرة المستخدم) — سياق لا وعد.
+
+    الرسمي يُقسَّم: نافذة الافتتاح (ضغط) أعلى من بقية الرسمي. يرجّع None للمغلق.
+    """
+    if session is Session.PREMARKET:
+        return cfg.session_move_premarket_pct
+    if session is Session.AFTERHOURS:
+        return cfg.session_move_afterhours_pct
+    if session is Session.REGULAR:
+        return (cfg.session_move_open_pct if is_opening_range(cfg, dt)
+                else cfg.session_move_regular_pct)
+    return None
+
+
 def session_volume_baselines(
     cfg: Config, hourly_bars: list[Bar], today_et: str | None = None,
 ) -> tuple[float | None, float | None]:

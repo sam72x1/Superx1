@@ -58,19 +58,40 @@ def _round_levels_above(entry: float, n: int) -> list[float]:
     return out
 
 
+# ترتيب عرض أنواع الأهداف (منهجية المستخدم: ه١ مقاومة · ه٢ متوسط · ه٣ قمة موجة)
+_KIND_ORDER = ("مقاومة", "متوسط ٢٠", "متوسط ٥٠", "قمة تأرجح", "رقم نفسي")
+
+
+def _label_kinds(kinds: set[str]) -> str:
+    """يدمج أنواع مستوى واحد بترتيب ثابت (مثلًا «مقاومة+متوسط ٥٠»)."""
+    return "+".join(k for k in _KIND_ORDER if k in kinds) or "مقاومة"
+
+
 def resistance_targets(entry: float, closed_bars: list[Bar],
                        extra: list[float] | None = None,
                        count: int = 3, max_pct: float = 80.0,
-                       min_bar_trades: int = 0) -> list[float]:
-    """أهداف = مقاومات حقيقية فقط (لا مضاعفات حسابية):
-    قمم 5د المحورية · قمة اليوم داخل-الجلسة · قمم يومية مُمرَّرة (أمس/الأسبوع)
-    · أرقام مستديرة. تُدمج المتقاربة (~1.5%) وتُؤخذ الأقرب فوق الدخول، وضمن
-    سقف مسافة معقول (max_pct) كي لا تدخل قمة بعيدة جدًا (سهم انهار من فوق).
-    min_bar_trades: يستبعد قمم الشموع الرقيقة (طبعة واحدة) من مقاومة اليوم."""
+                       min_bar_trades: int = 0,
+                       ma_levels: dict | None = None,
+                       daily_peaks: list[float] | None = None,
+                       return_labeled: bool = False):
+    """أهداف = مقاومات حقيقية فقط (لا مضاعفات حسابية)، **موسومة بنوعها**
+    (منهجية المستخدم):
+    · مقاومة: قمم 5د المحورية · قمة اليوم داخل-الجلسة · قمم يومية مُمرَّرة (أمس/الأسبوع)
+    · متوسط ٢٠/٥٠: `ma_levels` = {نوع: سعر} (متوسطات يومية فوق الدخول فقط)
+    · قمة تأرجح: `daily_peaks` = قمم الموجة السابقة (محورية يومية)
+    · رقم نفسي: تكملة للعدد
+    تُدمج المتقاربة (~1.5%) ضامّةً أنواعها، وتُؤخذ الأقرب فوق الدخول ضمن سقف
+    مسافة معقول (max_pct). min_bar_trades يستبعد قمم الشموع الرقيقة.
+    return_labeled=True يرجّع [(سعر، نوع)] بدل [سعر]."""
     if entry <= 0:
         return []   # سعر غير صالح → لا أهداف (حارس للاستدعاء المباشر)
     ceiling = entry * (1 + max_pct / 100.0)
-    cands: set[float] = set()
+    raw: list[tuple[float, str]] = []
+
+    def _add(level: float | None, kind: str) -> None:
+        # مقاومة حقيقية فقط: فوق الدخول وضمن السقف (لا هدف بعيد سخيف)
+        if level and entry < level <= ceiling:
+            raw.append((float(level), kind))
 
     # قمم 5د المحورية فوق الدخول — من شموع ذات سيولة فعلية فقط (لا طبعة رقيقة)
     def _liquid(b: Bar) -> bool:
@@ -79,27 +100,36 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
     if len(closed_bars) >= 3:
         highs = [b.h for b in closed_bars]
         hi_idx, _ = pivots(highs)
-        cands |= {highs[i] for i in hi_idx
-                  if entry < highs[i] <= ceiling and _liquid(closed_bars[i])}
+        for i in hi_idx:
+            if _liquid(closed_bars[i]):
+                _add(highs[i], "مقاومة")
 
-    # قمة اليوم داخل-الجلسة — من شموع ذات سيولة فعلية فقط (لا طبعة رقيقة)
+    # قمة اليوم داخل-الجلسة — من شموع ذات سيولة فعلية فقط
     if closed_bars:
         liquid = [b for b in closed_bars if _liquid(b)]
         if liquid:
-            day_hi = max(b.h for b in liquid)
-            if entry < day_hi <= ceiling:
-                cands.add(day_hi)
+            _add(max(b.h for b in liquid), "مقاومة")
 
-    # مقاومات يومية مُمرَّرة (قمة أمس، قمة 10 أيام...) — ضمن السقف فقط
+    # مقاومات يومية مُمرَّرة (قمة أمس، قمة 10 أيام...)
     for r in (extra or []):
-        if r and entry < r <= ceiling:
-            cands.add(r)
+        _add(r, "مقاومة")
 
-    # دمج المتقاربة (ضمن ~1.5%) للحفاظ على مستويات متمايزة
-    merged: list[float] = []
-    for lv in sorted(cands):
-        if not merged or lv > merged[-1] * 1.015:
-            merged.append(lv)
+    # متوسطات متحركة يومية كأهداف (منهجية المستخدم: ه٢ متوسط ٢٠/٥٠)
+    for label, lvl in (ma_levels or {}).items():
+        _add(lvl, label)
+
+    # قمم تأرجح يومية سابقة (قمم الموجة السابقة — ه٣ عند المستخدم)
+    for pk in (daily_peaks or []):
+        _add(pk, "قمة تأرجح")
+
+    # دمج المتقاربة (ضمن ~1.5%) مع ضمّ أنواع كل عنقود
+    raw.sort(key=lambda x: x[0])
+    merged: list[list] = []   # [سعر, set(أنواع)]
+    for lv, kind in raw:
+        if merged and lv <= merged[-1][0] * 1.015:
+            merged[-1][1].add(kind)
+        else:
+            merged.append([lv, {kind}])
 
     # تكملة بأرقام مستديرة (مقاومات نفسية) لضمان العدد — السقف يمنع القمم
     # البعيدة فقط، أما الأرقام المستديرة فقريبة بطبعها (تبدأ فوق الدخول).
@@ -107,18 +137,24 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
         for rl in _round_levels_above(entry, count + 6):
             if len(merged) >= count:
                 break
-            if all(abs(rl - m) / m > 0.015 for m in merged):
-                merged.append(rl)
-        merged = sorted(merged)
+            if all(abs(rl - m[0]) / m[0] > 0.015 for m in merged):
+                merged.append([rl, {"رقم نفسي"}])
+        merged.sort(key=lambda x: x[0])
 
-    return [round(t, 4) for t in merged[:count]]
+    picked = merged[:count]
+    if return_labeled:
+        return [(round(lv, 4), _label_kinds(kinds)) for lv, kinds in picked]
+    return [round(lv, 4) for lv, _ in picked]
 
 
 def build_risk_plan(cfg: Config, entry: float,
                     closed_bars_5min: list[Bar],
-                    daily_resistances: list[float] | None = None) -> RiskPlan:
-    """يبني الوقف (نسبة ثابتة من الدخول) والأهداف (مقاومات حقيقية) من الشارت.
-    daily_resistances: مقاومات يومية اختيارية (قمة أمس/الأسبوع) تُدمج كأهداف."""
+                    daily_resistances: list[float] | None = None,
+                    ma_levels: dict | None = None,
+                    daily_peaks: list[float] | None = None) -> RiskPlan:
+    """يبني الوقف (نسبة ثابتة من الدخول) والأهداف (مقاومات حقيقية موسومة) من الشارت.
+    daily_resistances: مقاومات يومية (قمة أمس/الأسبوع) تُدمج كأهداف.
+    ma_levels: متوسطات ٢٠/٥٠ يومية كأهداف. daily_peaks: قمم موجة سابقة."""
     if entry <= 0:   # حارس: سعر غير صالح → خطة فارغة بدل أرقام عبثية
         return RiskPlan(stop_price=0.0, stop_pct=0.0, entry_ref=0.0, targets=[],
                         stop_basis="سعر غير صالح")
@@ -129,11 +165,15 @@ def build_risk_plan(cfg: Config, entry: float,
     stop_price = entry * (1 - stop_pct / 100.0)
     basis = f"ثابت {stop_pct:g}%"
 
-    # ── الأهداف: مقاومات حقيقية فقط (لا مضاعفات حسابية) ──────────
-    targets = resistance_targets(entry, closed_bars_5min,
+    # ── الأهداف: مقاومات حقيقية موسومة بنوعها (منهجية المستخدم) ──
+    labeled = resistance_targets(entry, closed_bars_5min,
                                  extra=daily_resistances, count=3,
                                  max_pct=cfg.target_max_pct,
-                                 min_bar_trades=cfg.min_bar_trades)
+                                 min_bar_trades=cfg.min_bar_trades,
+                                 ma_levels=ma_levels, daily_peaks=daily_peaks,
+                                 return_labeled=True)
+    targets = [lv for lv, _ in labeled]
+    target_kinds = [k for _, k in labeled]
 
     # ── مستويات الدعم ومنطقة الشراء (للعرض) ──────────────────────
     levels = _support_levels(closed_bars_5min, entry)
@@ -147,6 +187,7 @@ def build_risk_plan(cfg: Config, entry: float,
         stop_pct=round(stop_pct, 2),
         entry_ref=round(entry, 4),
         targets=targets,
+        target_kinds=target_kinds,
         stop_basis=basis,
         support_near=support_near,
         support_deep=support_deep,
