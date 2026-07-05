@@ -149,17 +149,18 @@ def _wide(entry, stop, t1, post, min_rr=0.5, window=90):
         entry, _risk(stop, t1), post, 0, window, min_rr)
 
 
-def test_wide_t1_reaches_wider_target():
-    """توسيع هدف1 قريب يصل الهدف الأوسع → ربح أكبر."""
-    # دخول 3.0 · وقف 2.7 (stop_pct=10) · هدف1 قريب 3.06 (R/R=0.2<0.5)
-    # الموسّع = max(3.06, 3.0×(1+0.5×0.10)=3.15) = 3.15
-    post = [Bar(t_ms=1000, o=3.0, h=3.2, l=3.0, c=3.15, v=1)]   # بلغ 3.2 ≥ 3.15
-    assert round(_wide(3.0, 2.7, 3.06, post), 1) == 5.0         # (3.15-3)/3
+def test_wide_t1_skips_to_real_resistance():
+    """تخطّي الهدف الأقرب التافه لأقرب مقاومة حقيقية أبعد (لا مستوى اصطناعي)."""
+    # دخول 3.0 · وقف 2.7 (stop_pct=10) · أهداف [3.06, 3.366, 3.672]
+    # R/R: 3.06→0.2<0.5 (يُتخطّى) · 3.366→1.22≥0.5 → الهدف الفعّال = 3.366
+    post = [Bar(t_ms=1000, o=3.0, h=3.4, l=3.0, c=3.35, v=1)]   # بلغ 3.4 ≥ 3.366
+    assert round(_wide(3.0, 2.7, 3.06, post), 1) == 12.2        # (3.366-3)/3
 
 
-def test_wide_t1_widening_turns_win_into_loss():
-    """توسيع الهدف يمسك أطول: هدف قريب كان سيُصاب ثم انعكس للوقف → خسارة كاملة."""
-    post = [Bar(t_ms=1000, o=3.0, h=3.10, l=3.0, c=3.05, v=1),   # تجاوز 3.06 لا 3.15
+def test_wide_t1_skip_turns_win_into_loss():
+    """التخطّي يمسك أطول: الهدف القريب (3.06) كان سيُصاب ثم انعكس للوقف قبل بلوغ
+    المقاومة الأبعد (3.366) → خسارة كاملة (مقايضة حقيقية لا مجانية)."""
+    post = [Bar(t_ms=1000, o=3.0, h=3.10, l=3.0, c=3.05, v=1),   # تجاوز 3.06 لا 3.366
             Bar(t_ms=2000, o=3.05, h=3.1, l=2.6, c=2.7, v=1)]    # ثم كسر الوقف
     assert round(_wide(3.0, 2.7, 3.06, post), 1) == -10.0        # (2.7-3)/3
 
@@ -242,14 +243,14 @@ def test_report_shows_ratchet_exit_measurement():
 
 
 def test_report_shows_wide_t1_measurement():
-    """اعتماد 2: قسم توسيع هدف1 لـ«دون 0.5» يظهر بالحساب الصحيح وآمن HTML (§5)."""
+    """اعتماد 2: قسم تخطّي هدف1 لمقاومة أبعد لـ«دون 0.5» يظهر بالحساب الصحيح وآمن HTML (§5)."""
     res = backtest.BacktestResult(start="x", end="y", days=1)
     res.trades = [{"result": "win", "max_gain_pct": 5, "t1_rr": 0.3,
                    "realized_pct": 0.4, "realized_wide_t1_pct": 2.0}] * 4
     res.funnel = backtest.new_funnel()
     rep = backtest.format_report(res)
-    assert "توسيع هدف1 لشريحة «دون 0.5»" in rep
-    assert "حالي +0.4% ← هدف أوسع +2.0%" in rep
+    assert "تخطّي هدف1 لمقاومة حقيقية أبعد لشريحة «دون 0.5»" in rep
+    assert "حالي +0.4% ← هدف متخطٍّ +2.0%" in rep
     stripped = rep
     for tag in ("<b>", "</b>", "<i>", "</i>"):
         stripped = stripped.replace(tag, "")
