@@ -211,7 +211,8 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
     # صدق التوزيع (مقتبس من أداة الباكتيست): متوسط ≫ وسيط = الحافة يحملها ذيل
     # قِلّة من الصفقات لا الصفقة النموذجية → المتوسط يخدع.
     if (overall["tail_share"] is not None
-            and overall["avg_gain"] > overall["median_gain"] * 1.5 + 3):
+            and overall["avg_gain"] >
+            overall["median_gain"] * cfg.dev_tail_warn_mult + 3):
         head.append(f"   ⚠️ صدق التوزيع: أعلى 20% من الصفقات = "
                     f"{overall['tail_share']:.0f}% من إجمالي القمم "
                     "(المتوسط يخدع؛ الصفقة النموذجية أضعف — لا تبنِ على المتوسط).")

@@ -139,6 +139,9 @@ class Config:
     stop_min_pct: float = 4.0            # (غير مستخدَم للوقف الثابت؛ مُبقى للتوافق)
     stop_max_pct: float = 20.0           # (غير مستخدَم للوقف الثابت؛ مُبقى للتوافق)
     target_max_pct: float = 80.0         # سقف مسافة الهدف (يمنع أهدافًا بعيدة سخيفة)
+    # هدف = أعلى سعر في آخر N ساعة (منهجية المستخدم: قمة نافذة متدحرجة كهدف
+    # داخل-اليوم) — يُدمج كمرشّح مقاومة إن كان فوق الدخول. 0 = تعطيل.
+    target_recent_high_hours: float = 4.0
     # حد أدنى لسقف ربح الأهداف%: صفقة سقفها (أبعد هدف) أقل = «لا تستحق المخاطرة».
     # قرار المستخدم على 5 أشهر: تحت 10% لا يستحق المخاطرة. 0 = معطّل.
     min_target_profit_pct: float = 10.0
@@ -175,6 +178,9 @@ class Config:
     # نافذة مقارنة «قبل/بعد» في تقرير التطوير (أيام): آخر N يوم مقابل الـN السابقة
     # لقياس أثر تغييرات الفرز على النتائج الحيّة الفعلية (لا المحاكاة).
     dev_compare_window_days: int = 7     # 7 = أسبوع مقابل أسبوع
+    # صدق التوزيع: نُحذّر «الحافة يحملها ذيل» حين المتوسط ≥ الوسيط×هذا المعامل
+    # (المتوسط يخدع مقابل الصفقة النموذجية). مقتبس من أداة الباكتيست الخارجية.
+    dev_tail_warn_mult: float = 1.5
 
     # ── المستشار الذكي (Claude) — «العين اللي ما تنام» ────────────
     anthropic_api_key: str = ""
@@ -332,6 +338,7 @@ class Config:
             stop_min_pct=_f("STOP_MIN_PCT", 4.0),
             stop_max_pct=_f("STOP_MAX_PCT", 20.0),
             target_max_pct=_f("TARGET_MAX_PCT", 80.0),
+            target_recent_high_hours=_f("TARGET_RECENT_HIGH_HOURS", 4.0),
             min_target_profit_pct=_f("MIN_TARGET_PROFIT_PCT", 10.0),
             partial_exit_fraction=_f("PARTIAL_EXIT_FRACTION", 0.5),
             min_bar_trades=_i("MIN_BAR_TRADES", 3),
@@ -410,6 +417,7 @@ class Config:
                 if x.strip().lstrip("-").isdigit()),
             dev_report_hour=_i("DEV_REPORT_HOUR", 5),
             dev_compare_window_days=_i("DEV_COMPARE_WINDOW_DAYS", 7),
+            dev_tail_warn_mult=_f("DEV_TAIL_WARN_MULT", 1.5),
             halts_enabled=_b("HALTS_ENABLED", True),
             dry_run=_b("DRY_RUN", False),
             log_level=_s("LOG_LEVEL", "INFO"),

@@ -116,6 +116,29 @@ def test_targets_labeled_with_kinds():
     assert all(isinstance(t, float) for t in plain)
 
 
+def test_recent_hour_high_target():
+    """منهجية المستخدم (صورة 4س/5د): «أعلى سعر في آخر N ساعة» يظهر كهدف موسوم.
+    قمة اليوم (قديمة) أعلى من قمة النافذة المتدحرجة الأخيرة → مستويان متمايزان."""
+    # 50 شمعة 5د: أول شمعتين (خارج آخر 48) قمتهما 4.5 = قمة اليوم؛ آخر 48 قمتها 3.6
+    bars = [Bar(t_ms=0, o=3.0, h=4.5, l=3.0, c=3.1, v=90_000, n=50),
+            Bar(t_ms=1, o=3.0, h=4.4, l=3.0, c=3.1, v=90_000, n=50)]
+    for i in range(2, 50):
+        h = 3.6 if i == 25 else 3.4
+        bars.append(Bar(t_ms=i, o=3.0, h=h, l=2.9, c=3.1, v=80_000, n=50))
+    rp = build_risk_plan(CFG, 3.05, bars)     # target_recent_high_hours=4 → آخر 48
+    kinds = " ".join(rp.target_kinds)
+    assert "قمة 4س" in kinds                   # قمة النافذة المتدحرجة (3.6) ظهرت هدفًا
+    assert 3.6 in rp.targets
+    # تعطيلها: 0 ساعة → لا هدف «قمة Nس»
+    off = replace_cfg(CFG, target_recent_high_hours=0.0)
+    assert "قمة" not in " ".join(build_risk_plan(off, 3.05, bars).target_kinds)
+
+
+def replace_cfg(cfg, **kw):
+    from dataclasses import replace
+    return replace(cfg, **kw)
+
+
 def test_ma_below_entry_not_a_target():
     """متوسط تحت الدخول ليس هدفًا صاعدًا (الرنر فوق متوسطاته غالبًا)."""
     bars = [Bar(t_ms=i, o=3.0, h=3.2, l=2.9, c=3.1, v=80_000, n=50)
