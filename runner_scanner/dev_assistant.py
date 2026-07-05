@@ -44,16 +44,25 @@ def _human(n) -> str:
 
 # ── إحصاء مجموعة نتائج ────────────────────────────────────────────
 def _stats(rows: list) -> dict:
-    """يرجّع إحصاء مجموعة: العدد، فائز/خاسر/منتهٍ، نسبة النجاح، متوسط أقصى ربح."""
+    """يرجّع إحصاء مجموعة: العدد · فائز/خاسر/منتهٍ · نسبة النجاح · متوسط أقصى ربح
+    + **الوسيط واعتماد الذيل** (صدق التوزيع): المتوسط وحده يخدع — متوسط ≫ وسيط
+    يعني الحافة يحملها ذيل قِلّة من الصفقات، لا الصفقة النموذجية."""
     n = len(rows)
     wins = sum(1 for r in rows if r["result"] == "win")
     losses = sum(1 for r in rows if r["result"] == "loss")
     timeouts = sum(1 for r in rows if r["result"] == "timeout")
     decisive = wins + losses
     win_rate = (wins / decisive * 100.0) if decisive else None
-    avg_gain = (sum((r["max_gain_pct"] or 0) for r in rows) / n) if n else 0.0
+    gains = sorted((r["max_gain_pct"] or 0) for r in rows)
+    avg_gain = (sum(gains) / n) if n else 0.0
+    median_gain = gains[n // 2] if n else 0.0     # الصفقة النموذجية
+    # اعتماد الذيل: حصّة أعلى 20% من الصفقات من إجمالي القمم (>~60% = هشّة)
+    k = max(1, n // 5)
+    total = sum(gains)
+    tail_share = (sum(gains[-k:]) / total * 100.0) if total > 0 else None
     return {"n": n, "wins": wins, "losses": losses, "timeouts": timeouts,
-            "win_rate": win_rate, "avg_gain": avg_gain}
+            "win_rate": win_rate, "avg_gain": avg_gain,
+            "median_gain": median_gain, "tail_share": tail_share}
 
 
 def _bucket(v, edges):
@@ -95,7 +104,7 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
             wr = f"{s['win_rate']:.0f}%" if s["win_rate"] is not None else "—"
             out.append(f"   • {esc(str(k))}: نجاح {wr} "
                        f"({s['wins']}✅/{s['losses']}🛑/{s['timeouts']}⏳ · "
-                       f"{s['avg_gain']:+.0f}% متوسط)")
+                       f"{s['avg_gain']:+.0f}% متوسط · {s['median_gain']:+.0f}% وسيط)")
         return out
 
     # ── الفرص الفائتة (مستقلة عن حجم العيّنة — تظهر فورًا) ─────────
@@ -198,7 +207,14 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
     head.append(f"النجاح الكلي: <b>{wr}</b> "
                 f"({overall['wins']}✅/{overall['losses']}🛑/"
                 f"{overall['timeouts']}⏳) · متوسط أقصى ربح "
-                f"{overall['avg_gain']:+.0f}%")
+                f"{overall['avg_gain']:+.0f}% · وسيط {overall['median_gain']:+.0f}%")
+    # صدق التوزيع (مقتبس من أداة الباكتيست): متوسط ≫ وسيط = الحافة يحملها ذيل
+    # قِلّة من الصفقات لا الصفقة النموذجية → المتوسط يخدع.
+    if (overall["tail_share"] is not None
+            and overall["avg_gain"] > overall["median_gain"] * 1.5 + 3):
+        head.append(f"   ⚠️ صدق التوزيع: أعلى 20% من الصفقات = "
+                    f"{overall['tail_share']:.0f}% من إجمالي القمم "
+                    "(المتوسط يخدع؛ الصفقة النموذجية أضعف — لا تبنِ على المتوسط).")
     head += compare_block()
 
     body = []
