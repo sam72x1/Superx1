@@ -175,6 +175,9 @@ class Config:
     # نافذة مقارنة «قبل/بعد» في تقرير التطوير (أيام): آخر N يوم مقابل الـN السابقة
     # لقياس أثر تغييرات الفرز على النتائج الحيّة الفعلية (لا المحاكاة).
     dev_compare_window_days: int = 7     # 7 = أسبوع مقابل أسبوع
+    # صدق التوزيع: نُحذّر «الحافة يحملها ذيل» حين المتوسط ≥ الوسيط×هذا المعامل
+    # (المتوسط يخدع مقابل الصفقة النموذجية). مقتبس من أداة الباكتيست الخارجية.
+    dev_tail_warn_mult: float = 1.5
 
     # ── المستشار الذكي (Claude) — «العين اللي ما تنام» ────────────
     anthropic_api_key: str = ""
@@ -410,6 +413,7 @@ class Config:
                 if x.strip().lstrip("-").isdigit()),
             dev_report_hour=_i("DEV_REPORT_HOUR", 5),
             dev_compare_window_days=_i("DEV_COMPARE_WINDOW_DAYS", 7),
+            dev_tail_warn_mult=_f("DEV_TAIL_WARN_MULT", 1.5),
             halts_enabled=_b("HALTS_ENABLED", True),
             dry_run=_b("DRY_RUN", False),
             log_level=_s("LOG_LEVEL", "INFO"),
