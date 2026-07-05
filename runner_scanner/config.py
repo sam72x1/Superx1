@@ -139,6 +139,9 @@ class Config:
     stop_min_pct: float = 4.0            # (غير مستخدَم للوقف الثابت؛ مُبقى للتوافق)
     stop_max_pct: float = 20.0           # (غير مستخدَم للوقف الثابت؛ مُبقى للتوافق)
     target_max_pct: float = 80.0         # سقف مسافة الهدف (يمنع أهدافًا بعيدة سخيفة)
+    # هدف = أعلى سعر في آخر N ساعة (منهجية المستخدم: قمة نافذة متدحرجة كهدف
+    # داخل-اليوم) — يُدمج كمرشّح مقاومة إن كان فوق الدخول. 0 = تعطيل.
+    target_recent_high_hours: float = 4.0
     # حد أدنى لسقف ربح الأهداف%: صفقة سقفها (أبعد هدف) أقل = «لا تستحق المخاطرة».
     # قرار المستخدم على 5 أشهر: تحت 10% لا يستحق المخاطرة. 0 = معطّل.
     min_target_profit_pct: float = 10.0
@@ -335,6 +338,7 @@ class Config:
             stop_min_pct=_f("STOP_MIN_PCT", 4.0),
             stop_max_pct=_f("STOP_MAX_PCT", 20.0),
             target_max_pct=_f("TARGET_MAX_PCT", 80.0),
+            target_recent_high_hours=_f("TARGET_RECENT_HIGH_HOURS", 4.0),
             min_target_profit_pct=_f("MIN_TARGET_PROFIT_PCT", 10.0),
             partial_exit_fraction=_f("PARTIAL_EXIT_FRACTION", 0.5),
             min_bar_trades=_i("MIN_BAR_TRADES", 3),
