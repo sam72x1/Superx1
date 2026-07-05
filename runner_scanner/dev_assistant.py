@@ -23,7 +23,7 @@ import csv
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import calibration
 from .config import Config
@@ -134,9 +134,61 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
                    "(الترتيب غير مسجّل) — لا تفتح بوّابة على القمم وحدها.")
         return out
 
+    # ── مقارنة «قبل/بعد» (أسبوع مقابل أسبوع) ──────────────────────
+    # يقيس أثر تغييرات الفرز على النتائج الحيّة الفعلية (لا المحاكاة):
+    # نسبة الفوز · متوسط أقصى ربح · لمس الوقف — آخر نافذة مقابل السابقة.
+    # يُقسَّم حسب trade_date (نصّ ISO فيُقارَن معجميًّا مباشرةً).
+    def compare_block():
+        win = cfg.dev_compare_window_days
+        today = (now.astimezone(timezone.utc) if now.tzinfo else now).date()
+        cur_lo = (today - timedelta(days=win)).isoformat()
+        prev_lo = (today - timedelta(days=2 * win)).isoformat()
+        cur = [r for r in alerts if r["trade_date"] and r["trade_date"] > cur_lo]
+        prev = [r for r in alerts if r["trade_date"]
+                and prev_lo < r["trade_date"] <= cur_lo]
+        if not cur and not prev:
+            return []
+        sc, sp = _stats(cur), _stats(prev)
+
+        def _wr(s):
+            return f"{s['win_rate']:.0f}%" if s["win_rate"] is not None else "—"
+
+        def _arrow(c, p, better_high=True):
+            # سهم اتجاه فقط عند توفّر الطرفين (لا نخترع دلالة من عدم)
+            if c is None or p is None:
+                return ""
+            d = c - p
+            if abs(d) < 0.5:
+                return " ↔️"
+            return " 🔼" if (d > 0) == better_high else " 🔽"
+
+        out = [f"\n📅 <b>قبل/بعد (آخر {win} يوم مقابل الـ{win} السابقة)</b>"]
+        out.append(f"   الصفقات المحسومة: {sc['n']} مقابل {sp['n']}")
+        out.append(f"   نسبة الفوز: {_wr(sc)} مقابل {_wr(sp)}"
+                   f"{_arrow(sc['win_rate'], sp['win_rate'])}")
+        out.append(f"   متوسط أقصى ربح: {sc['avg_gain']:+.0f}% مقابل "
+                   f"{sp['avg_gain']:+.0f}%"
+                   f"{_arrow(sc['avg_gain'], sp['avg_gain'])}")
+        # لمس الوقف: الأدنى أفضل (better_high=False)
+        cur_stop = (sc["losses"] / sc["n"] * 100) if sc["n"] else None
+        prev_stop = (sp["losses"] / sp["n"] * 100) if sp["n"] else None
+        out.append(f"   لمس الوقف: {sc['losses']}/{sc['n']} مقابل "
+                   f"{sp['losses']}/{sp['n']}"
+                   f"{_arrow(cur_stop, prev_stop, better_high=False)}")
+        # صدق العيّنة: نافذة صغيرة لا تحسم (قاعدة «المحاكاة تخدع» تنطبق على
+        # الأرقام الصغيرة أيضًا — تقلّب لا إشارة).
+        if min(sc["n"], sp["n"]) < cfg.dev_min_sample:
+            out.append("   ↳ ⚠️ عيّنة صغيرة — تقلّب لا إشارة؛ راكِم أسابيع "
+                       "أكثر قبل الحكم على أثر التغييرات.")
+        else:
+            out.append("   ↳ نتائج حيّة فعلية (لا محاكاة) — هذا قياس أثر "
+                       "تغييرات الفرز على الأرض.")
+        return out
+
     if len(alerts) < cfg.dev_min_sample:
         head.append(f"⏳ نتائج محسومة قليلة (أقل من {cfg.dev_min_sample}) — "
                     "التشخيص بالشرائح يتراكم. الفرص الفائتة تظهر الآن:")
+        head += compare_block()
         head += missed_block()
         head.append("\n⚠️ <i>أداة تطوير ذاتي — ليست توصية.</i>")
         return "\n".join(head)
@@ -147,6 +199,7 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
                 f"({overall['wins']}✅/{overall['losses']}🛑/"
                 f"{overall['timeouts']}⏳) · متوسط أقصى ربح "
                 f"{overall['avg_gain']:+.0f}%")
+    head += compare_block()
 
     body = []
     body += seg("حسب الجلسة", lambda r: r["session"])
