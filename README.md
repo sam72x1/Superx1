@@ -82,7 +82,7 @@ python -m runner_scanner.dev_assistant
 
 | الاستخدام | الـ endpoint |
 |-----------|-------------|
-| كشف +20% | `GET /v2/snapshot/locale/us/markets/stocks/tickers` (كل السوق بنداء واحد) |
+| كشف عتبة الزناد (+10% افتراضيًا) | `GET /v2/snapshot/locale/us/markets/stocks/tickers` (كل السوق بنداء واحد) |
 | شموع 5د/1د/يومي | `GET /v2/aggs/ticker/{t}/range/...` |
 | الفلوت | `GET /stocks/vX/float` (تجريبي) + fallback `share_class_shares_outstanding` |
 | الخبر | `GET /v2/reference/news` |
@@ -146,7 +146,7 @@ runner_scanner/
   models.py        نماذج البيانات المشتركة (dataclasses)
   massive_client.py غلاف REST لـ Massive
   sessions.py      كشف الجلسة + RVol حسب الجلسة
-  detector.py      كشف عبور +20% من السنابشوت
+  detector.py      كشف عبور عتبة الزناد (+10% افتراضيًا) من السنابشوت
   gates.py         البوابات الصارمة
   indicators.py    مؤشرات بايثون نقية (SMA/EMA/RSI/MACD/VWAP/...)
   intraday_ta.py   ركيزة الزخم اللحظي /50
