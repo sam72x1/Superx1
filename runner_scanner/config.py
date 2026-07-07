@@ -284,6 +284,9 @@ class Config:
     # تحذير البريماركت: الباكتيست أظهر نجاحه التاريخي أضعف بوضوح (≈53% مقابل
     # ≈88% للرسمي). إعلام فقط على البطاقة + أولوية أخفض — لا حذف (دليل لا منفّذ).
     premarket_caution_enabled: bool = True
+    # تحذير الأفترهاوس: عيّنة 6 أشهر ضعيفة (33% نجاحًا متحفّظًا، أغلبها بلا حسم).
+    # إعلام لا حذف (عيّنة 12 صفقة لا تكفي لتعطيل — هوية البوت: يُعلم ويقترح).
+    afterhours_caution_enabled: bool = True
     # تنبيهات البريماركت: **معطّلة** (أولوية المستخدم = الدقّة). البريماركت أقل
     # جلسة دقّة (8 أشهر: 59% مقابل 87% رسمي)؛ تعطيله يرفع الدقّة الكلية 81.6%→88%.
     # مراقبة المفتوح تبقى. فعّلها بـ PREMARKET_ALERTS_ENABLED=true لتغطية أوسع.
@@ -418,6 +421,7 @@ class Config:
             buy_zone_pct=_f("BUY_ZONE_PCT", 1.3),
             short_warn_pct=_f("SHORT_WARN_PCT", 20.0),
             premarket_caution_enabled=_b("PREMARKET_CAUTION_ENABLED", True),
+            afterhours_caution_enabled=_b("AFTERHOURS_CAUTION_ENABLED", True),
             premarket_alerts_enabled=_b("PREMARKET_ALERTS_ENABLED", False),
             top_n_runners=_i("TOP_N_RUNNERS", 15),
             outcome_window_min=_f("OUTCOME_WINDOW_MIN", 90.0),
