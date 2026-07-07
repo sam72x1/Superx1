@@ -75,6 +75,30 @@ def test_parabolic_gate_vwap_extension():
     assert gates.check_parabolic(CFG, c).passed is False
 
 
+# ── بوّابة حركة الدخول ≥40% (قرار المستخدم بالبيانات) ─────────────
+def test_entry_change_gate_rejects_advanced_move():
+    assert gates.check_entry_change(CFG, _cand(change_pct=40.0)).passed is False
+    assert gates.check_entry_change(CFG, _cand(change_pct=75.0)).passed is False
+    # سبب الرفض HTML-آمن (§5): بلا محارف < أو > حرفية
+    res = gates.check_entry_change(CFG, _cand(change_pct=55.0))
+    assert "<" not in res.reason and ">" not in res.reason
+
+
+def test_entry_change_gate_passes_early_move():
+    assert gates.check_entry_change(CFG, _cand(change_pct=39.9)).passed is True
+    assert gates.check_entry_change(CFG, _cand(change_pct=15.0)).passed is True
+
+
+def test_entry_change_gate_disabled():
+    cfg = Config(entry_change_max_pct=0.0)
+    assert gates.check_entry_change(cfg, _cand(change_pct=80.0)).passed is True
+
+
+def test_entry_change_reject_bucket():
+    from runner_scanner.backtest import _reject_bucket
+    assert _reject_bucket("حركة متقدّمة 55% ≥ 40% (شريحة خاسرة)") == "حركة متقدّمة"
+
+
 # ── بوّابة VWAP (قرار المستخدم بالبيانات: تنبيه فوق VWAP فقط) ───────
 def _mom(above, reliable=True):
     return MomentumResult(

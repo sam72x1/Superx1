@@ -91,6 +91,10 @@ class Config:
     # الأيام الهادئة (والبوّابات الأخرى تصفّي الضعيف).
     trigger_change_pct: float = 10.0
     max_change_pct: float = 400.0        # سقف يسقط تشوّه الانقسام العكسي
+    # سقف حركة الدخول: لا تنبيه على سهم صعد ≥ هذا عن أمس (شريحة خاسرة تاريخيًا
+    # −2%/صفقة، 6 أشهر — دخول بعد الإنهاك). قرار المستخدم بالبيانات. 0=تعطيل.
+    # يختلف عن max_change_pct (سلامة بيانات/سبليت) وعن البارابولِك (blow-off 120%).
+    entry_change_max_pct: float = 40.0
     filter_derivatives: bool = True      # استبعاد الوارنتات/اليونتات/الحقوق
     # أنواع الأوراق المقبولة (Polygon type): CS=سهم عادي، ADRC=إيصال إيداع
     allowed_ticker_types: tuple[str, ...] = ("CS", "ADRC")
@@ -293,7 +297,9 @@ class Config:
     # تحذير «الموجة الأخيرة الأضعف»: حركة متقدّمة جدًا اليوم = احتمال موجة خامسة
     # أضعف/قرب النهاية → إرشاد بمراقبة الجني وتشديد الوقف (لا يمنع التنبيه).
     late_wave_caution_enabled: bool = True
-    late_wave_run_pct: float = 60.0            # صعد ≥ هذا اليوم = «حركة متقدّمة»
+    # صعد ≥ هذا اليوم = «حركة متقدّمة». شبكة أمان تظهر فقط لو عُطّلت بوّابة
+    # entry_change_max_pct (وإلا المرفوض ≥40% لا يصل للبطاقة أصلًا).
+    late_wave_run_pct: float = 40.0
 
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
@@ -315,6 +321,7 @@ class Config:
             keepalive_port=_i("KEEPALIVE_PORT", 10000),
             trigger_change_pct=_f("TRIGGER_CHANGE_PCT", 10.0),
             max_change_pct=_f("MAX_CHANGE_PCT", 400.0),
+            entry_change_max_pct=_f("ENTRY_CHANGE_MAX_PCT", 40.0),
             filter_derivatives=_b("FILTER_DERIVATIVES", True),
             allowed_ticker_types=tuple(
                 t.strip() for t in _s("ALLOWED_TICKER_TYPES", "CS,ADRC").split(",")
