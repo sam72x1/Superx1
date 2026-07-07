@@ -139,6 +139,36 @@ def replace_cfg(cfg, **kw):
     return replace(cfg, **kw)
 
 
+def test_target1_skips_trivial_to_real_resistance():
+    """م1 (قرار المستخدم): الهدف1 يتخطّى المقاومة الأقرب التافهة (R/R<العتبة)
+    لأقرب مقاومة **حقيقية** مجدية — لا مستوى مصطنع."""
+    bars = [Bar(t_ms=i, o=3.0, h=3.06, l=2.95, c=3.0, v=90_000, n=50)
+            for i in range(3)]
+    # 3.06 R/R≈0.28 (تافه) · 3.3 · 3.5 — دخول 3.0 وقف 7% → floor=3.105
+    lab = resistance_targets(3.0, bars, extra=[3.3, 3.5], count=3,
+                             min_bar_trades=3, min_first_rr=0.5, stop_pct=7.0,
+                             return_labeled=True)
+    assert lab[0][0] == 3.3          # 3.06 مُتخطّى، الهدف1 مقاومة حقيقية
+    assert 3.06 not in [p for p, _ in lab]
+    # تعطيل (min_first_rr=0) → السلوك القديم (3.06 هدف1)
+    off = resistance_targets(3.0, bars, extra=[3.3, 3.5], count=3,
+                             min_bar_trades=3, return_labeled=True)
+    assert off[0][0] == 3.06
+
+
+def test_target1_skip_keeps_when_none_qualifies():
+    """لا مقاومة تحقّق العتبة → القائمة كما هي (توافق: الأبعد يبقى معروضًا)."""
+    bars = [Bar(t_ms=i, o=3.0, h=3.02, l=2.95, c=3.0, v=90_000, n=50)
+            for i in range(3)]
+    # كل المقاومات قريبة جدًا (تحت floor 3.105) — لا تخطّي مدمّر
+    lab = resistance_targets(3.0, bars, extra=[3.02, 3.05], count=3,
+                             min_bar_trades=3, min_first_rr=0.5, stop_pct=7.0,
+                             return_labeled=True)
+    assert lab                       # لم تُفرَّغ القائمة
+    # الأرقام المستديرة المكمِّلة تحترم الحدّ (لا رقم أقرب من floor يصير هدف1)
+    assert all(p >= 3.0 for p, _ in lab)
+
+
 def test_ma_below_entry_not_a_target():
     """متوسط تحت الدخول ليس هدفًا صاعدًا (الرنر فوق متوسطاته غالبًا)."""
     bars = [Bar(t_ms=i, o=3.0, h=3.2, l=2.9, c=3.1, v=80_000, n=50)

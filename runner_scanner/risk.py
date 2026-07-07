@@ -75,6 +75,7 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
                        min_bar_trades: int = 0,
                        ma_levels: dict | None = None,
                        daily_peaks: list[float] | None = None,
+                       min_first_rr: float = 0.0, stop_pct: float = 0.0,
                        return_labeled: bool = False):
     """أهداف = مقاومات حقيقية فقط (لا مضاعفات حسابية)، **موسومة بنوعها**
     (منهجية المستخدم):
@@ -84,7 +85,8 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
     · رقم نفسي: تكملة للعدد
     تُدمج المتقاربة (~1.5%) ضامّةً أنواعها، وتُؤخذ الأقرب فوق الدخول ضمن سقف
     مسافة معقول (max_pct). min_bar_trades يستبعد قمم الشموع الرقيقة.
-    return_labeled=True يرجّع [(سعر، نوع)] بدل [سعر]."""
+    min_first_rr>0 (مع stop_pct): يتخطّى الأهداف الأقرب من عائد/مخاطرة العتبة
+    فيصير الهدف1 أقرب مقاومة حقيقية مجدية. return_labeled=True يرجّع [(سعر، نوع)]."""
     if entry <= 0:
         return []   # سعر غير صالح → لا أهداف (حارس للاستدعاء المباشر)
     ceiling = entry * (1 + max_pct / 100.0)
@@ -133,12 +135,24 @@ def resistance_targets(entry: float, closed_bars: list[Bar],
         else:
             merged.append([lv, {kind}])
 
-    # تكملة بأرقام مستديرة (مقاومات نفسية) لضمان العدد — السقف يمنع القمم
-    # البعيدة فقط، أما الأرقام المستديرة فقريبة بطبعها (تبدأ فوق الدخول).
+    # تخطّي الهدف1 القريب التافه (قرار المستخدم بالبيانات، 6 أشهر): الهدف الأول
+    # = أقرب مقاومة حقيقية بعائد/مخاطرة ≥ min_first_rr. لا مستوى مصطنع — نختار من
+    # المقاومات القائمة. إن لم تكفِ أي مقاومة نبقيها (الأبعد يبقى ضمن المعروض).
+    floor = (entry * (1 + min_first_rr * stop_pct / 100.0)
+             if min_first_rr > 0 and stop_pct > 0 else 0.0)
+    if floor and merged:
+        start = next((i for i, m in enumerate(merged) if m[0] >= floor), None)
+        if start:                      # start≥1 = تخطّي؛ 0/None = لا تخطّي
+            merged = merged[start:]
+
+    # تكملة بأرقام مستديرة (مقاومات نفسية) لضمان العدد — تحترم حدّ الهدف1 (floor)
+    # فلا يُدخَل رقم مستدير أقرب من الحدّ يصير هدفًا أول تافهًا.
     if len(merged) < count:
         for rl in _round_levels_above(entry, count + 6):
             if len(merged) >= count:
                 break
+            if floor and rl < floor:
+                continue
             if all(abs(rl - m[0]) / m[0] > 0.015 for m in merged):
                 merged.append([rl, {"رقم نفسي"}])
         merged.sort(key=lambda x: x[0])
@@ -182,7 +196,8 @@ def build_risk_plan(cfg: Config, entry: float,
                                  max_pct=cfg.target_max_pct,
                                  min_bar_trades=cfg.min_bar_trades,
                                  ma_levels=levels, daily_peaks=daily_peaks,
-                                 return_labeled=True)
+                                 min_first_rr=cfg.target1_min_rr,
+                                 stop_pct=stop_pct, return_labeled=True)
     targets = [lv for lv, _ in labeled]
     target_kinds = [k for _, k in labeled]
 
