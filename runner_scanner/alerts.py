@@ -212,6 +212,9 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
     # تنبيه البريماركت: أداؤه التاريخي في الباكتيست أضعف بوضوح (إعلام لا حذف)
     if c.session is Session.PREMARKET and cfg.premarket_caution_enabled:
         lines.append("🔅 جلسة بريماركت — نجاحها التاريخي أضعف، تحقّق يدويًا قبل الدخول.")
+    # تنبيه الأفترهاوس: عيّنة 6 أشهر ضعيفة (33% متحفّظًا، أغلبها بلا حسم) — إعلام لا حذف
+    if c.session is Session.AFTERHOURS and cfg.afterhours_caution_enabled:
+        lines.append("🌙 أفترهاوس — عيّنة تاريخية ضعيفة (33% نجاحًا، أغلبها بلا حسم)؛ تحقّق يدويًا.")
 
     # 📊 الحركة النموذجية لهذه الجلسة (سياق تقريبي من خبرة المستخدم، لا وعد)
     if cfg.session_move_hint_enabled:

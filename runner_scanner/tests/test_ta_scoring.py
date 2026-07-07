@@ -87,6 +87,14 @@ def test_scoring_rejects_weak_momentum():
     assert res.passed is False and "زخم" in res.reason
 
 
+def test_weak_momentum_reason_uses_config_trigger():
+    """م5: رسالة الرفض تحمل عتبة الزناد من الإعداد لا رقمًا مثبّتًا (+20% قديم)."""
+    from runner_scanner.config import Config
+    cfg = Config(trigger_change_pct=12.0)
+    res = scoring.score_candidate(cfg, _ready_cand(classic=85.0, momentum=10.0))
+    assert "+12%" in res.reason and "+20%" not in res.reason
+
+
 def test_scoring_accepts_strong_candidate():
     c = _ready_cand(classic=85.0, momentum=40.0)
     res = scoring.score_candidate(CFG, c)

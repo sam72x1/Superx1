@@ -109,6 +109,23 @@ def check_vwap(cfg: Config, c: Candidate) -> GateResult:
     return GateResult(True)
 
 
+def check_entry_change(cfg: Config, c: Candidate) -> GateResult:
+    """سقف حركة الدخول (قرار المستخدم بالبيانات، 6 أشهر): لا تنبيه على سهم صعد
+    ≥ entry_change_max_pct عن أمس — الدخول بعد صعود كبير شريحة خاسرة متّسقة
+    (−2%/صفقة، سالبة 5/6 أشهر)، بينما شريحة 10–20% هي الأقوى (+2.3%).
+
+    أخصّ من البارابولِك (blow-off 120%): هذه عتبة استراتيجية لا سلامة بيانات.
+    0 = تعطيل. §5: «≥» آمنة، بلا محارف < أو > حرفية في السبب."""
+    if cfg.entry_change_max_pct <= 0:
+        return GateResult(True)
+    if c.snapshot.change_pct >= cfg.entry_change_max_pct:
+        return GateResult(
+            False,
+            f"حركة متقدّمة {c.snapshot.change_pct:.0f}% "
+            f"≥ {cfg.entry_change_max_pct:g}% (شريحة خاسرة تاريخيًا −2%/صفقة)")
+    return GateResult(True)
+
+
 def check_parabolic(cfg: Config, c: Candidate) -> GateResult:
     """رفض البارابولِك المنهك (خطر blow-off)."""
     # ابتعاد كبير عن إغلاق أمس
@@ -131,7 +148,7 @@ def check_parabolic(cfg: Config, c: Candidate) -> GateResult:
 
 # بوابات لا تحتاج تحليلًا لحظيًا (تُطبّق مبكرًا قبل جلب الشموع).
 PRE_TA_GATES = (check_listing, check_price, check_volume, check_float,
-                check_parabolic)
+                check_entry_change, check_parabolic)
 # بوابات تحتاج نتيجة الزخم (تُطبّق بعد intraday_ta).
 POST_TA_GATES = (check_rvol, check_parabolic, check_vwap)
 

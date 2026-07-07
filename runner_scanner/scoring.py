@@ -41,7 +41,7 @@ def score_candidate(cfg: Config, c: Candidate) -> ScoreResult:
         return ScoreResult(
             0.0, False,
             f"زخم {c.momentum.score:.0f} < {cfg.momentum_min_floor:.0f} "
-            f"(زخم ضعيف رغم +20%)",
+            f"(زخم ضعيف رغم +{cfg.trigger_change_pct:g}%)",
         )
 
     # ── الدمج ─────────────────────────────────────────────────────

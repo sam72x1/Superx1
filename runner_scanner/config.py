@@ -91,6 +91,10 @@ class Config:
     # الأيام الهادئة (والبوّابات الأخرى تصفّي الضعيف).
     trigger_change_pct: float = 10.0
     max_change_pct: float = 400.0        # سقف يسقط تشوّه الانقسام العكسي
+    # سقف حركة الدخول: لا تنبيه على سهم صعد ≥ هذا عن أمس (شريحة خاسرة تاريخيًا
+    # −2%/صفقة، 6 أشهر — دخول بعد الإنهاك). قرار المستخدم بالبيانات. 0=تعطيل.
+    # يختلف عن max_change_pct (سلامة بيانات/سبليت) وعن البارابولِك (blow-off 120%).
+    entry_change_max_pct: float = 40.0
     filter_derivatives: bool = True      # استبعاد الوارنتات/اليونتات/الحقوق
     # أنواع الأوراق المقبولة (Polygon type): CS=سهم عادي، ADRC=إيصال إيداع
     allowed_ticker_types: tuple[str, ...] = ("CS", "ADRC")
@@ -115,8 +119,10 @@ class Config:
     # دورة، فالسهم يُنبَّه لاحقًا لو استعاد VWAP.
     vwap_gate_enabled: bool = True
 
-    # ── الجاهزية الفنية (قرار المستخدم: ≥ 60/100) ─────────────────
-    tech_readiness_min: float = 60.0     # درجة التحليل الكلاسيكي 0–100
+    # ── الجاهزية الفنية (قرار المستخدم بالبيانات: ≥ 65/100) ────────
+    # 6 أشهر: شريحة 60–65 خاسرة (−0.56%/صفقة)، وعتبة 65 تحسّن التوقّع في كل
+    # شهر من الستّة وتحفظ شريحة 65–70 القوية (+1.84%).
+    tech_readiness_min: float = 65.0     # درجة التحليل الكلاسيكي 0–100
     min_history_bars: int = 50           # أقل تاريخ يومي لتأكيد الجاهزية (وإلا غير مؤكَّدة)
 
     # ── حدود ركيزتي الدرجة ────────────────────────────────────────
@@ -142,6 +148,10 @@ class Config:
     # هدف = أعلى سعر في آخر N ساعة (منهجية المستخدم: قمة نافذة متدحرجة كهدف
     # داخل-اليوم) — يُدمج كمرشّح مقاومة إن كان فوق الدخول. 0 = تعطيل.
     target_recent_high_hours: float = 4.0
+    # الهدف1 = أقرب مقاومة حقيقية بعائد/مخاطرة ≥ هذا (تخطّي الأهداف الأقرب
+    # التافهة). قرار المستخدم بالبيانات (6 أشهر: يرفع التوقّع +2.2%/صفقة).
+    # 0 = تعطيل (السلوك القديم). لا مستوى مصطنع — يُختار من المقاومات القائمة.
+    target1_min_rr: float = 0.5
     # حد أدنى لسقف ربح الأهداف%: صفقة سقفها (أبعد هدف) أقل = «لا تستحق المخاطرة».
     # قرار المستخدم على 5 أشهر: تحت 10% لا يستحق المخاطرة. 0 = معطّل.
     min_target_profit_pct: float = 10.0
@@ -274,6 +284,9 @@ class Config:
     # تحذير البريماركت: الباكتيست أظهر نجاحه التاريخي أضعف بوضوح (≈53% مقابل
     # ≈88% للرسمي). إعلام فقط على البطاقة + أولوية أخفض — لا حذف (دليل لا منفّذ).
     premarket_caution_enabled: bool = True
+    # تحذير الأفترهاوس: عيّنة 6 أشهر ضعيفة (33% نجاحًا متحفّظًا، أغلبها بلا حسم).
+    # إعلام لا حذف (عيّنة 12 صفقة لا تكفي لتعطيل — هوية البوت: يُعلم ويقترح).
+    afterhours_caution_enabled: bool = True
     # تنبيهات البريماركت: **معطّلة** (أولوية المستخدم = الدقّة). البريماركت أقل
     # جلسة دقّة (8 أشهر: 59% مقابل 87% رسمي)؛ تعطيله يرفع الدقّة الكلية 81.6%→88%.
     # مراقبة المفتوح تبقى. فعّلها بـ PREMARKET_ALERTS_ENABLED=true لتغطية أوسع.
@@ -289,7 +302,9 @@ class Config:
     # تحذير «الموجة الأخيرة الأضعف»: حركة متقدّمة جدًا اليوم = احتمال موجة خامسة
     # أضعف/قرب النهاية → إرشاد بمراقبة الجني وتشديد الوقف (لا يمنع التنبيه).
     late_wave_caution_enabled: bool = True
-    late_wave_run_pct: float = 60.0            # صعد ≥ هذا اليوم = «حركة متقدّمة»
+    # صعد ≥ هذا اليوم = «حركة متقدّمة». شبكة أمان تظهر فقط لو عُطّلت بوّابة
+    # entry_change_max_pct (وإلا المرفوض ≥40% لا يصل للبطاقة أصلًا).
+    late_wave_run_pct: float = 40.0
 
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
@@ -311,6 +326,7 @@ class Config:
             keepalive_port=_i("KEEPALIVE_PORT", 10000),
             trigger_change_pct=_f("TRIGGER_CHANGE_PCT", 10.0),
             max_change_pct=_f("MAX_CHANGE_PCT", 400.0),
+            entry_change_max_pct=_f("ENTRY_CHANGE_MAX_PCT", 40.0),
             filter_derivatives=_b("FILTER_DERIVATIVES", True),
             allowed_ticker_types=tuple(
                 t.strip() for t in _s("ALLOWED_TICKER_TYPES", "CS,ADRC").split(",")
@@ -325,7 +341,7 @@ class Config:
             price_max=_f("PRICE_MAX", 30.0),
             parabolic_vwap_ext_pct=_f("PARABOLIC_VWAP_EXT_PCT", 40.0),
             parabolic_day_change_pct=_f("PARABOLIC_DAY_CHANGE_PCT", 120.0),
-            tech_readiness_min=_f("TECH_READINESS_MIN", 60.0),
+            tech_readiness_min=_f("TECH_READINESS_MIN", 65.0),
             min_history_bars=_i("MIN_HISTORY_BARS", 50),
             momentum_pillar_max=_f("MOMENTUM_PILLAR_MAX", 50.0),
             readiness_pillar_max=_f("READINESS_PILLAR_MAX", 50.0),
@@ -339,6 +355,7 @@ class Config:
             stop_max_pct=_f("STOP_MAX_PCT", 20.0),
             target_max_pct=_f("TARGET_MAX_PCT", 80.0),
             target_recent_high_hours=_f("TARGET_RECENT_HIGH_HOURS", 4.0),
+            target1_min_rr=_f("TARGET1_MIN_RR", 0.5),
             min_target_profit_pct=_f("MIN_TARGET_PROFIT_PCT", 10.0),
             partial_exit_fraction=_f("PARTIAL_EXIT_FRACTION", 0.5),
             min_bar_trades=_i("MIN_BAR_TRADES", 3),
@@ -404,6 +421,7 @@ class Config:
             buy_zone_pct=_f("BUY_ZONE_PCT", 1.3),
             short_warn_pct=_f("SHORT_WARN_PCT", 20.0),
             premarket_caution_enabled=_b("PREMARKET_CAUTION_ENABLED", True),
+            afterhours_caution_enabled=_b("AFTERHOURS_CAUTION_ENABLED", True),
             premarket_alerts_enabled=_b("PREMARKET_ALERTS_ENABLED", False),
             top_n_runners=_i("TOP_N_RUNNERS", 15),
             outcome_window_min=_f("OUTCOME_WINDOW_MIN", 90.0),

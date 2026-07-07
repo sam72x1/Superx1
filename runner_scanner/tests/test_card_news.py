@@ -139,6 +139,19 @@ def test_card_late_wave_caution():
     assert "موجة أخيرة أضعف" not in build_card(CFG, _card_candidate())
 
 
+def test_card_afterhours_caution():
+    """م4: الأفترهاوس يحمل تحذير «عيّنة تاريخية ضعيفة» (إعلام لا حذف)."""
+    card = build_card(CFG, _card_candidate(session=Session.AFTERHOURS))
+    assert "أفترهاوس" in card and "ضعيفة" in card
+    # الرسمي بلا هذا التحذير
+    assert "عيّنة تاريخية ضعيفة" not in build_card(
+        CFG, _card_candidate(session=Session.REGULAR))
+    # يمكن تعطيله
+    cfg = Config(code_version="x", afterhours_caution_enabled=False)
+    assert "عيّنة تاريخية ضعيفة" not in build_card(
+        cfg, _card_candidate(session=Session.AFTERHOURS))
+
+
 def test_card_includes_news_summary():
     card = build_card(CFG, _card_candidate(headline="Big Pharma Gets FDA Approval"))
     assert "📰 الخبر —" in card

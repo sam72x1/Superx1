@@ -33,7 +33,7 @@ def test_memo_client_idempotent_wrap():
 
 def test_run_grid_end_to_end():
     cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
-                 backtest_grid_readiness=(55.0, 60.0),
+                 backtest_grid_readiness=(60.0, 65.0),
                  backtest_grid_float_max=(40_000_000, 60_000_000),
                  backtest_grid_parabolic=(120.0,))
     grid = backtest_grid.run_grid(cfg, MockBase(), "2026-06-26", "2026-06-26")
@@ -45,7 +45,7 @@ def test_run_grid_end_to_end():
     # محور الجاهزية له قيمتان مجرَّبتان
     rd_axis = grid["axes"][0]
     assert len(rd_axis["variants"]) == 2
-    # قيمة الأساس (60) مُعلَّمة
+    # قيمة الأساس (65) مُعلَّمة
     assert any(v["is_baseline"] for v in rd_axis["variants"])
 
 
