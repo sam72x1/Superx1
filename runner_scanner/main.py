@@ -126,7 +126,7 @@ class Scanner:
             surge_leg_pct=self.cfg.surge_leg_pct,
             missed_rise_pct=(self.cfg.missed_rise_pct
                              if self.cfg.missed_alert_enabled else 1e9),
-            volume_map=volume_map)
+            volume_map=volume_map, stop_dist_pct=self.cfg.stop_fixed_pct)
         for ev in events:
             if not self.telegram.send(build_followup(self.cfg, ev)):
                 logger.warning("فشل إرسال حدث متابعة محسوم في DB (قد يُفقد): %s %s",

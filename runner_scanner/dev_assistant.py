@@ -126,6 +126,15 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
         def _med(vals):
             s = sorted(vals)
             return s[len(s) // 2] if s else 0.0
+
+        def _order(m):
+            # ترتيب القمة/القاع: None=لا بيانات (صفّ قديم) · True=الوقف أولًا
+            # · False=القمة أولًا. المقارنة نصوص ISO (قابلة للترتيب معجميًّا).
+            pk = m["peak_at"]
+            if not pk:
+                return None
+            sd = m["stop_dist_at"]
+            return bool(sd) and sd < pk
         for reason, items in sorted(by_reason.items(),
                                     key=lambda x: -len(x[1]))[:4]:
             g = _med([m["max_gain_pct"] or 0 for m in items])
@@ -134,13 +143,22 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
             out.append(f"   • {esc(reason)}: {len(items)} سهم · وسيط القمة "
                        f"+{g:.0f}% · وسيط القاع {d:.0f}% · "
                        f"لمس مسافة الوقف ({stop_d:g}%): {hit}/{len(items)}")
+        # حسم مؤكّد بالترتيب الزمني: كم سهم فائت **لُمس وقفه قبل قمته** فعلًا؟
+        # (للصفوف الجديدة فقط — القديمة بلا طوابع تبقى «غير مسجّل»).
+        ordered = [m for m in missed if _order(m) is not None]
+        if ordered:
+            first_stop = sum(1 for m in ordered if _order(m))
+            out.append(f"   ⛔ سُتوقَف قبل القمة (مؤكّد بالترتيب الزمني): "
+                       f"{first_stop}/{len(ordered)} — القمة FOMO لا تعني ربحًا.")
         out.append("   أقوى الفائتة (قمة/قاع):")
         for m in missed[:6]:
+            o = _order(m)
+            tag = " ⛔ الوقف أولًا" if o else (" ✅ القمة أولًا" if o is False else "")
             out.append(f"   • {esc(m['ticker'])}: +{m['max_gain_pct']:.0f}% / "
-                       f"{(m['max_draw_pct'] or 0):.0f}% "
+                       f"{(m['max_draw_pct'] or 0):.0f}%{tag} "
                        f"(رُفض: {esc((m['reject_reason'] or '')[:40])})")
-        out.append("   ↳ قاع أعمق من الوقف = كانت غالبًا سُتوقَف قبل القمة "
-                   "(الترتيب غير مسجّل) — لا تفتح بوّابة على القمم وحدها.")
+        out.append("   ↳ قاع أعمق من الوقف = كانت غالبًا سُتوقَف قبل القمة — "
+                   "لا تفتح بوّابة على القمم وحدها.")
         return out
 
     # ── مقارنة «قبل/بعد» (أسبوع مقابل أسبوع) ──────────────────────

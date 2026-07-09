@@ -107,6 +107,9 @@ CREATE TABLE IF NOT EXISTS tracking (
     result          TEXT DEFAULT '',       -- win / loss / timeout (للتطوير)
     outcome         TEXT DEFAULT 'open',    -- open / closed (دورة حياة التتبّع)
     closed_at       TEXT,
+    -- ترتيب القمة/القاع (لحسم سؤال الفرص الفائتة: هل سُتوقَف قبل القمة؟)
+    peak_at         TEXT,                  -- آخر طابع تحسّنت فيه القمة
+    stop_dist_at    TEXT,                  -- أول طابع لُمست فيه مسافة الوقف من الدخول
     PRIMARY KEY (ticker, trade_date)
 );
 """
@@ -142,7 +145,9 @@ class Store:
                              ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT"),
                              ("notified_missed", "INTEGER DEFAULT 0"),
                              ("first_volume", "REAL"),
-                             ("first_session", "TEXT")):
+                             ("first_session", "TEXT"),
+                             ("peak_at", "TEXT"),
+                             ("stop_dist_at", "TEXT")):
                 try:
                     self._conn.execute(
                         f"ALTER TABLE tracking ADD COLUMN {col} {typ}")
@@ -261,7 +266,8 @@ class Store:
                         window_min: float = 90.0,
                         surge_leg_pct: float = 8.0,
                         missed_rise_pct: float = 1e9,
-                        volume_map: dict[str, float] | None = None) -> list[dict]:
+                        volume_map: dict[str, float] | None = None,
+                        stop_dist_pct: float = 0.0) -> list[dict]:
         """يحدّث كل تتبّع مفتوح ويرجّع أحداث المتابعة:
         [{ticker, type:'target'/'stop'/'surge'/'missed', price, gain_pct, ...}].
         - target/stop/surge: للمُنبَّه عنه فقط.
@@ -285,6 +291,14 @@ class Store:
                 low = min(r["low_after"] or price, price)
                 max_gain = (high - first) / first * 100.0 if first > 0 else 0.0
                 max_draw = (low - first) / first * 100.0 if first > 0 else 0.0
+
+                # ترتيب القمة/القاع (قياس فقط): طابع تحسّن القمة، وأول لمسة
+                # لمسافة الوقف من الدخول — لحسم «هل سُتوقَف قبل القمة؟» في الفائتة.
+                peak_at = _iso(now) if high > (r["high_after"] or 0) else r["peak_at"]
+                stop_dist_at = r["stop_dist_at"]
+                if (stop_dist_pct > 0 and not stop_dist_at and first > 0
+                        and low <= first * (1 - stop_dist_pct / 100.0)):
+                    stop_dist_at = _iso(now)
 
                 targets = [r["target1"], r["target2"], r["target3"]]
                 targets = [t for t in targets if t]
@@ -387,10 +401,12 @@ class Store:
                     "UPDATE tracking SET high_after=?, low_after=?, max_gain_pct=?,"
                     " max_draw_pct=?, hit_target=?, hit_stop=?, notified_targets=?,"
                     " notified_stop=?, notified_high=?, notified_missed=?,"
+                    " peak_at=?, stop_dist_at=?,"
                     " result=?, outcome=?, closed_at=? WHERE ticker=? AND trade_date=?",
                     (high, low, round(max_gain, 2), round(max_draw, 2),
                      hit_target, hit_stop, notified_t, notified_stop,
-                     notified_high, notified_missed, result, outcome, closed_at,
+                     notified_high, notified_missed, peak_at, stop_dist_at,
+                     result, outcome, closed_at,
                      r["ticker"], r["trade_date"]))
             self._conn.commit()
         return events
