@@ -31,7 +31,7 @@ from datetime import date, datetime, timedelta, timezone
 from . import detector, market_calendar
 from .catalyst import NEGATIVE_NEWS
 from .config import Config
-from .massive_client import MassiveClient
+from .massive_client import MassiveClient, MassiveError
 from .models import Bar, Session, SnapshotEntry
 from .pipeline import (
     _closed_daily, _daily_ma_and_peaks, daily_resistance_targets,
@@ -608,6 +608,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     _sh_bucket = _reject_bucket(last_reason)
     if (cfg.backtest_shadow_rvol and last_snap is not None
             and _sh_bucket in ("RVol", "سعر فوق الحد")):
+      # الظل قياس best-effort (§3): فشل شبكة هنا لا يُسقط الرن كاملًا —
+      # وقع فعلًا: 400 على مرفوض سقف السعر أسقط الباكتيست التلقائي كله.
+      try:
         closed = [x for x in full5 if x.t_ms <= last_asof]
         closed5 = closed[:-1] if len(closed) > 1 else closed
         post = [x for x in full5 if x.t_ms > last_asof]
@@ -615,8 +618,12 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         # «العتبة مثبتة/تستحق الدراسة» المبنيّ عليها). نفس _closed_daily الحي.
         last_dt = datetime.fromtimestamp(
             last_asof / 1000, tz=timezone.utc).astimezone(ET)
+        # بداية فعلية لليومي (نافذة الحي 400 يوم): مرفوض «سعر فوق الحد» يُرفض
+        # قبل جلب الشموع فالكاش بارد، وبداية فارغة ترجع 400 من الـAPI.
+        year_ago = (datetime.strptime(day, "%Y-%m-%d")
+                    - timedelta(days=400)).strftime("%Y-%m-%d")
         daily = AsOfClient(base, day, last_asof, closed, [],
-                           static_cache).bars_daily(ticker, "", "")
+                           static_cache).bars_daily(ticker, year_ago, day)
         cdaily = _closed_daily(daily, last_dt)
         daily_res = daily_resistance_targets(cdaily, last_snap.last_price)
         # مطابقة الخط الحي: نفس مصادر الأهداف (متوسطات ٢٠/٥٠ + قمم تأرجح)
@@ -628,6 +635,10 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                                          last_asof, cfg.outcome_window_min)
         kind = "price_cap" if _sh_bucket == "سعر فوق الحد" else "rvol"
         shadow = {"kind": kind, "max_rvol": round(max_rvol, 1), "result": sres}
+      except MassiveError as exc:
+        # تعذّر ≠ صفر: نفقد قياس ظل سهمٍ واحد ويكمل الباكتيست
+        logger.debug("تعذّر قياس ظل %s: %s", ticker, exc)
+        shadow = None
     # رُفض في كل الدورات → سببه من آخر محاولة (أكثر تمثيلًا لقيد نهاية اليوم)
     return {"kind": "rejected", "reason": last_reason, "shadow": shadow}
 
