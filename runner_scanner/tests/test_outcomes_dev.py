@@ -153,6 +153,51 @@ def test_missed_block_shows_draw_and_stop_touch():
     st.close()
 
 
+def test_missed_ordering_stop_before_peak():
+    """ب1: الوقف لُمس قبل القمة → «⛔ الوقف أولًا» + عدّ مؤكّد بالترتيب."""
+    st = _store()
+    c = _cand("STOP1ST", 2.0, rejected=True, reason="جاهزية فنية 45 < 60")
+    st.log_candidate(c, T0)
+    # هبط تحت مسافة الوقف (7%) أولًا، ثم قمّ +40% لاحقًا
+    st.update_outcomes({"STOP1ST": 1.80},   # -10% (لمس مسافة الوقف)
+                       datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc),
+                       stop_dist_pct=CFG.stop_fixed_pct)
+    st.update_outcomes({"STOP1ST": 2.80},   # +40% لاحقًا (القمة بعد الوقف)
+                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc),
+                       stop_dist_pct=CFG.stop_fixed_pct)
+    rep = build_dev_report(st, CFG)
+    assert "⛔ الوقف أولًا" in rep
+    assert "سُتوقَف قبل القمة (مؤكّد بالترتيب الزمني): 1/1" in rep
+    st.close()
+
+
+def test_missed_ordering_peak_first_clean_run():
+    """ب1: قمّ دون لمس الوقف → «✅ القمة أولًا» (فرصة حقيقية فاتت)."""
+    st = _store()
+    c = _cand("PEAK1ST", 2.0, rejected=True, reason="RVol 0.7x < 5.0x")
+    st.log_candidate(c, T0)
+    st.update_outcomes({"PEAK1ST": 2.80},   # +40% نظيف بلا لمس وقف
+                       datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc),
+                       stop_dist_pct=CFG.stop_fixed_pct)
+    rep = build_dev_report(st, CFG)
+    assert "✅ القمة أولًا" in rep
+    assert "سُتوقَف قبل القمة (مؤكّد بالترتيب الزمني): 0/1" in rep
+    st.close()
+
+
+def test_missed_ordering_disabled_no_timestamps():
+    """توافق: بلا stop_dist_pct (الافتراضي) لا طوابع ترتيب → لا وسم مؤكّد."""
+    st = _store()
+    c = _cand("OLD", 2.0, rejected=True, reason="جاهزية فنية 45 < 60")
+    st.log_candidate(c, T0)
+    st.update_outcomes({"OLD": 2.80},        # بلا stop_dist_pct
+                       datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc))
+    rep = build_dev_report(st, CFG)
+    # peak_at يُسجَّل دائمًا، لكن stop_dist_at لا (العتبة 0) → القمة أولًا
+    assert "مؤكّد بالترتيب الزمني" in rep     # يوجد ترتيب (القمة أولًا)
+    st.close()
+
+
 def test_missed_disabled_by_default_threshold():
     st = _store()
     c = _cand("QUIET", 2.0, rejected=True, reason="فلوت كبير")

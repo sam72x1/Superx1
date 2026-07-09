@@ -759,7 +759,46 @@ def test_shadow_eval_records_rvol_rejects():
     assert res.funnel["reject_reasons"].get("RVol", 0) >= 1
     assert len(res.funnel["shadow"]) >= 1
     assert res.funnel["shadow"][0]["result"] in ("win", "loss", "timeout")
+    assert res.funnel["shadow"][0].get("kind") == "rvol"   # ب2: نوع الظل
     assert "قياس الظل" in backtest.format_report(res)
+
+
+def test_shadow_eval_records_price_cap_rejects():
+    """ب2: مرفوض «سعر فوق الحد» ($30) يُسجَّل في ظل منفصل kind=price_cap."""
+
+    class HighBase(MockBase):
+        def grouped_daily(self, date):
+            if date == "2026-06-26":       # سعر ~$41 > 30 · تغيّر ~17% (نظيف)
+                return [{"T": "HIGH", "o": 38, "h": 45, "l": 36, "c": 44, "v": 5e6}]
+            return [{"T": "HIGH", "c": 35.0}]
+
+        def bars_5min(self, t, s, e):
+            from runner_scanner.models import Bar
+            return [Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=40, h=42, l=39, c=41,
+                        v=2e5, n=50),
+                    Bar(t_ms=_tms(2026, 6, 26, 10, 0), o=41, h=45, l=41, c=44,
+                        v=3e5, n=60)]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_shadow_rvol=True)
+    res = backtest.run_backtest(cfg, HighBase(), "2026-06-26", "2026-06-26")
+    assert res.funnel["reject_reasons"].get("سعر فوق الحد", 0) >= 1
+    pc = [x for x in res.funnel["shadow"] if x.get("kind") == "price_cap"]
+    assert len(pc) >= 1 and pc[0]["result"] in ("win", "loss", "timeout")
+    assert "مرفوضو سقف السعر" in backtest.format_report(res)
+
+
+def test_shadow_report_old_records_without_kind_counted_as_rvol():
+    """توافق خلفي: ظل محفوظ قديم (بلا kind) يُحصى في قسم RVol لا يرمي استثناء."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "max_gain_pct": 5}] * 3
+    res.funnel = backtest.new_funnel()
+    res.funnel["shadow"] = [{"max_rvol": 4.0, "result": "loss"}] * 3  # بلا kind
+    rep = backtest.format_report(res)
+    assert "مرفوضو RVol" in rep and "مرفوضو سقف السعر" not in rep
 
 
 def test_shadow_risk_plan_uses_daily_resistances_like_live():
