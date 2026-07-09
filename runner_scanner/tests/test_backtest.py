@@ -1122,3 +1122,67 @@ def test_backtest_merge_command_needs_no_api_key(tmp_path):
     sc.telegram = _FakeTelegram()
     TelegramAssistant(sc)._handle_backtest("دمج")
     assert sent and "لا توجد تشغيلات" in sent[0]   # لا «يحتاج MASSIVE_API_KEY»
+
+
+def test_shadow_daily_fetch_never_sends_empty_start():
+    """إصلاح 400: ظل مرفوض سقف السعر كاشه بارد (يُرفض قبل جلب الشموع)،
+    فطلب اليومي يجب أن يحمل بداية فعلية لا فارغة (فارغة = 400 من الـAPI)."""
+    daily_starts = []
+
+    class HighBase(MockBase):
+        def grouped_daily(self, date):
+            if date == "2026-06-26":       # سعر ~$41 > 30 → رفض «سعر فوق الحد»
+                return [{"T": "HIGH", "o": 38, "h": 45, "l": 36, "c": 44, "v": 5e6}]
+            return [{"T": "HIGH", "c": 35.0}]
+
+        def bars_5min(self, t, s, e):
+            from runner_scanner.models import Bar
+            return [Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=40, h=42, l=39, c=41,
+                        v=2e5, n=50),
+                    Bar(t_ms=_tms(2026, 6, 26, 10, 0), o=41, h=45, l=41, c=44,
+                        v=3e5, n=60)]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+        def bars_daily(self, t, s, e):
+            daily_starts.append(s)
+            return super().bars_daily(t, s, e)
+
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_shadow_rvol=True)
+    res = backtest.run_backtest(cfg, HighBase(), "2026-06-26", "2026-06-26")
+    assert [x for x in res.funnel["shadow"] if x.get("kind") == "price_cap"]
+    assert daily_starts and all(s for s in daily_starts)   # لا بداية فارغة أبدًا
+
+
+def test_shadow_fetch_failure_does_not_abort_run():
+    """best-effort §3: فشل جلب يومي الظل (MassiveError) يفقدنا ظل سهمٍ واحد
+    فقط — الرن يكمل ويسجّل الرفض (كان يُسقط الباكتيست التلقائي كاملًا)."""
+    from runner_scanner.massive_client import MassiveError
+
+    class FailingDailyBase(MockBase):
+        def grouped_daily(self, date):
+            if date == "2026-06-26":
+                return [{"T": "HIGH", "o": 38, "h": 45, "l": 36, "c": 44, "v": 5e6}]
+            return [{"T": "HIGH", "c": 35.0}]
+
+        def bars_5min(self, t, s, e):
+            from runner_scanner.models import Bar
+            return [Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=40, h=42, l=39, c=41,
+                        v=2e5, n=50),
+                    Bar(t_ms=_tms(2026, 6, 26, 10, 0), o=41, h=45, l=41, c=44,
+                        v=3e5, n=60)]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+        def bars_daily(self, t, s, e):
+            raise MassiveError("400 على اليومي (محاكاة عطل الظل)")
+
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_shadow_rvol=True)
+    res = backtest.run_backtest(cfg, FailingDailyBase(), "2026-06-26", "2026-06-26")
+    # الرن اكتمل: الرفض مسجّل، والظل غاب بأمان (تعذّر ≠ صفر)
+    assert res.funnel["reject_reasons"].get("سعر فوق الحد", 0) >= 1
+    assert res.funnel["shadow"] == []
