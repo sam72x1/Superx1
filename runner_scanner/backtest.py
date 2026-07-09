@@ -602,11 +602,12 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         if premarket_skipped:
             return {"kind": "premarket_only"}
         return {"kind": "bad_snapshot"}
-    # قياس الظل: لو الرفض النهائي بسبب RVol، نحسب نتيجة افتراضية (لو دخلنا) +
-    # أقصى RVol بلغه — يكشف لاحقًا إن كانت عتبة RVol=5x تفوّت فرصًا (قياس فقط).
+    # قياس الظل: لرفض RVol أو «سعر فوق الحد» نحسب نتيجة افتراضية (لو دخلنا) —
+    # يكشف هل العتبة تحمي أم تفوّت فرصًا (قياس فقط). نفس مصادر الأهداف الحيّة.
     shadow = None
+    _sh_bucket = _reject_bucket(last_reason)
     if (cfg.backtest_shadow_rvol and last_snap is not None
-            and _reject_bucket(last_reason) == "RVol"):
+            and _sh_bucket in ("RVol", "سعر فوق الحد")):
         closed = [x for x in full5 if x.t_ms <= last_asof]
         closed5 = closed[:-1] if len(closed) > 1 else closed
         post = [x for x in full5 if x.t_ms > last_asof]
@@ -625,7 +626,8 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                                ma_levels=ma_levels, daily_peaks=daily_peaks)
         sres, _, _, _ = simulate_outcome(last_snap.last_price, risk, post,
                                          last_asof, cfg.outcome_window_min)
-        shadow = {"max_rvol": round(max_rvol, 1), "result": sres}
+        kind = "price_cap" if _sh_bucket == "سعر فوق الحد" else "rvol"
+        shadow = {"kind": kind, "max_rvol": round(max_rvol, 1), "result": sres}
     # رُفض في كل الدورات → سببه من آخر محاولة (أكثر تمثيلًا لقيد نهاية اليوم)
     return {"kind": "rejected", "reason": last_reason, "shadow": shadow}
 
@@ -1055,7 +1057,9 @@ def format_report(res: BacktestResult) -> str:
             lines.append(f"      ↳ {reason}: {cnt}")
         lines.append(f"  ✅ نجت كتنبيه: {f['alerts']}")
     # ── قياس الظل: أداء افتراضي لمرفوضي RVol (هل العتبة 5x تفوّت فرصًا؟) ──
-    sh = (res.funnel or {}).get("shadow") or []
+    sh_all = (res.funnel or {}).get("shadow") or []
+    sh = [x for x in sh_all if x.get("kind", "rvol") == "rvol"]   # قديم بلا kind = rvol
+    sh_pc = [x for x in sh_all if x.get("kind") == "price_cap"]
     if sh:
         lines.append(f"\n🌑 قياس الظل — مرفوضو RVol ({len(sh)}) لو دخلناهم:")
 
@@ -1089,6 +1093,23 @@ def format_report(res: BacktestResult) -> str:
             verdict = (f"شريحة 3–5x ({w35:.0f}%) أدنى بكثير من الناجين "
                        f"({s['win_rate']:.0f}%) — عتبة RVol مثبتة؛ لا تُخفَّض.")
         lines.append(f"  <i>↳ {verdict}</i>")
+    # ── قياس الظل: مرفوضو «سقف السعر» ($30) — هل السقف يحمي أم يفوّت؟ ──
+    if sh_pc:
+        decp = [x for x in sh_pc if x["result"] in ("win", "loss")]
+        wp = (sum(1 for x in decp if x["result"] == "win") / len(decp) * 100.0
+              if decp else None)
+        tail = (f"نجاح افتراضي {wp:.0f}% ({len(decp)} محسومة)"
+                if wp is not None else "بلا محسومة")
+        lines.append(f"\n🌑 قياس الظل — مرفوضو سقف السعر ({len(sh_pc)}) "
+                     f"لو دخلناهم: {tail}")
+        if wp is None or len(decp) < 8 or s["win_rate"] is None:
+            vp = "عيّنة الظل غير كافية للحكم بعد."
+        elif wp >= s["win_rate"] - 15:
+            vp = (f"يقارب الناجين ({s['win_rate']:.0f}%) — سقف السعر قد يفوّت "
+                  "فرصًا (قرارك بالبيانات).")
+        else:
+            vp = (f"أدنى من الناجين ({s['win_rate']:.0f}%) — سقف السعر مثبَّت.")
+        lines.append(f"  <i>↳ {vp}</i>")
     # ── إفصاح: حدود المحاكاة (طبقات تُقيَّم حيًّا فقط + حبيبية الزناد) ──
     # الباكتيست يمسح نفس الاستراتيجية الفنية للحي، لكنه يتخطّى طبقات خارجية
     # لا-حتمية/شبكية (محلّل Claude · الشورت · رادار SEC) وتوقّفات LULD/T12 (لا
