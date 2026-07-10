@@ -370,7 +370,7 @@ class Config:
             session_move_regular_pct=_f("SESSION_MOVE_REGULAR_PCT", 20.0),
             session_move_afterhours_pct=_f("SESSION_MOVE_AFTERHOURS_PCT", 25.0),
             late_wave_caution_enabled=_b("LATE_WAVE_CAUTION_ENABLED", True),
-            late_wave_run_pct=_f("LATE_WAVE_RUN_PCT", 60.0),
+            late_wave_run_pct=_f("LATE_WAVE_RUN_PCT", 40.0),
             dedup_per_day=_b("DEDUP_PER_DAY", True),
             champions_enabled=_b("CHAMPIONS_ENABLED", True),
             anthropic_api_key=_s("ANTHROPIC_API_KEY", ""),

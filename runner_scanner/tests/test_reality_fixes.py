@@ -225,3 +225,18 @@ def test_first_price_kept_when_already_alerted():
     st.log_candidate(reg, t0)
     assert st.fetch_row("ALR", day)["first_price"] == 2.0   # يُحفظ سعر التنبيه
     st.close()
+
+
+def test_late_wave_run_pct_env_default_matches_dataclass():
+    """§6/بصمة ت1: بديل from_env يطابق افتراضي الـdataclass — تعارضهما (40 مقابل
+    60) خلّى البوت الحي يحذّر عند 60 بينما الاختبارات تفترض 40 (كشفته البصمة).
+    يمنع عودة الانحراف: بلا متغيّر بيئة، القيمتان يجب أن تتطابقا."""
+    import os
+    from runner_scanner.config import Config
+    saved = os.environ.pop("LATE_WAVE_RUN_PCT", None)
+    try:
+        assert Config.from_env().late_wave_run_pct == Config(
+            massive_api_key="x").late_wave_run_pct == 40.0
+    finally:
+        if saved is not None:
+            os.environ["LATE_WAVE_RUN_PCT"] = saved
