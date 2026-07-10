@@ -1186,3 +1186,104 @@ def test_shadow_fetch_failure_does_not_abort_run():
     # الرن اكتمل: الرفض مسجّل، والظل غاب بأمان (تعذّر ≠ صفر)
     assert res.funnel["reject_reasons"].get("سعر فوق الحد", 0) >= 1
     assert res.funnel["shadow"] == []
+
+
+# ── ت1: بصمة إعدادات + إصدار الكود في الباكتيست ──────────────────
+def test_run_config_persisted_with_effective_thresholds(tmp_path):
+    """ت1: الرن يحفظ بصمة الإعدادات الفعّالة (تميّز أي نشر أنتج الأرقام)."""
+    import json
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 tech_readiness_min=71.0, code_version="abc1234",
+                 backtest_save_dir=str(tmp_path))
+    res = backtest.run_backtest(cfg, MockBase(), "2026-06-26", "2026-06-26")
+    assert res.run_config is not None
+    assert res.run_config["tech_readiness_min"] == 71.0
+    path = backtest.save_run(cfg, res, backtest.format_report(res))
+    data = json.load(open(path, encoding="utf-8"))
+    assert data["run_config"]["tech_readiness_min"] == 71.0
+    assert data["run_config"]["code_version"] == "abc1234"
+
+
+def test_fingerprint_line_shown_when_signed():
+    """ت1: سطر البصمة يظهر بالقيم الفعّالة في رأس التقرير."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.run_config = {"code_version": "abc1234", "tech_readiness_min": 65.0,
+                      "entry_change_max_pct": 40.0, "target1_min_rr": 0.5,
+                      "late_wave_run_pct": 40.0}
+    rep = backtest.format_report(res)
+    assert "abc1234" in rep and "جاهزية≥65" in rep and "حركة≤40%" in rep
+    assert "غير موقّعة" not in rep
+
+
+def test_fingerprint_line_unsigned_when_absent():
+    """ت1: غياب البصمة (رن قديم) يصرّح «غير موقّعة» لا يدّعي إعدادات."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    assert res.run_config is None
+    assert "غير موقّعة" in backtest.format_report(res)
+
+
+def test_fingerprint_line_no_cap_when_gate_disabled():
+    """ت1: بوّابة الحركة معطّلة (≤0) → «حركة: بلا سقف» لا رقم مضلِّل."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.run_config = {"code_version": "—", "tech_readiness_min": 65.0,
+                      "entry_change_max_pct": 0.0, "target1_min_rr": 0.5,
+                      "late_wave_run_pct": 40.0}
+    assert "حركة: بلا سقف" in backtest.format_report(res)
+
+
+def _saved_run_cfg(cfg, start, end, trades, run_config):
+    """يحفظ تشغيلًا وهميًّا ببصمة إعدادات محدّدة (لاختبار خلط الدمج)."""
+    res = backtest.BacktestResult(start=start, end=end, days=20)
+    res.trades = trades
+    res.funnel = backtest.new_funnel()
+    res.funnel["considered"] = 100
+    res.run_config = run_config
+    backtest.save_run(cfg, res, "تقرير")
+
+
+def test_merge_warns_on_mixed_configs(tmp_path):
+    """ت1: دمج رنّين بإعدادات مختلفة → تحذير + بصمة مدموجة None (صادقة)."""
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
+    fp_a = {"tech_readiness_min": 60.0, "entry_change_max_pct": 0.0}
+    fp_b = {"tech_readiness_min": 65.0, "entry_change_max_pct": 40.0}
+    _saved_run_cfg(cfg, "2026-01-01", "2026-01-31",
+                   [{"result": "win", "max_gain_pct": 5}], fp_a)
+    _saved_run_cfg(cfg, "2026-02-01", "2026-02-28",
+                   [{"result": "win", "max_gain_pct": 5}], fp_b)
+    merged, notes = backtest.merge_saved_runs(cfg)
+    assert merged.run_config is None                   # لا ندّعي توحيدًا
+    assert any("بإعدادات مختلفة" in n for n in notes)
+    assert "غير موقّعة" in backtest.format_report(merged)
+
+
+def test_merge_keeps_config_when_uniform(tmp_path):
+    """ت1: دمج رنّات متطابقة الإعدادات → البصمة تُحفظ وتظهر (لا تحذير)."""
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
+    fp = {"code_version": "abc1234", "tech_readiness_min": 65.0,
+          "entry_change_max_pct": 40.0, "target1_min_rr": 0.5,
+          "late_wave_run_pct": 40.0}
+    _saved_run_cfg(cfg, "2026-01-01", "2026-01-31",
+                   [{"result": "win", "max_gain_pct": 5}], fp)
+    _saved_run_cfg(cfg, "2026-02-01", "2026-02-28",
+                   [{"result": "win", "max_gain_pct": 5}], dict(fp))
+    merged, notes = backtest.merge_saved_runs(cfg)
+    assert merged.run_config == fp
+    assert not any("بإعدادات مختلفة" in n for n in notes)
+    assert "abc1234" in backtest.format_report(merged)
+
+
+def test_merge_old_file_without_run_config_is_backward_compatible(tmp_path):
+    """ت1/§7: ملف محفوظ قديم (بلا run_config) يُدمَج بلا كسر ويُصرَّح غير موقّع."""
+    import json
+    cfg = Config(massive_api_key="x", backtest_save_dir=str(tmp_path))
+    # ملف على المخطّط القديم تمامًا (لا مفتاح run_config إطلاقًا)
+    old = {"start": "2026-01-01", "end": "2026-01-31", "days": 20,
+           "funnel": backtest.new_funnel(),
+           "trades": [{"result": "win", "max_gain_pct": 5}],
+           "created_utc": "2026-01-31T00:00:00Z"}
+    (tmp_path / "bt_2026-01-01_2026-01-31.json").write_text(
+        json.dumps(old, ensure_ascii=False), encoding="utf-8")
+    merged, notes = backtest.merge_saved_runs(cfg)
+    assert merged is not None and len(merged.trades) == 1
+    assert merged.run_config is None
+    assert "غير موقّعة" in backtest.format_report(merged)

@@ -700,6 +700,9 @@ class BacktestResult:
     days: int = 0
     trades: list[dict] = field(default_factory=list)
     funnel: dict = field(default_factory=dict)
+    # بصمة الإعدادات الفعّالة وقت الرن (ت1) — None في الرنّات القديمة/الدمج
+    # المختلط. تميّز «أي نشر/عتبات أنتجت هذي الأرقام» بدل الاستنتاج الجنائي.
+    run_config: dict | None = None
 
     def stats(self) -> dict:
         n = len(self.trades)
@@ -725,6 +728,46 @@ def _save_dir(cfg: Config) -> str:
     return os.path.join(os.path.dirname(cfg.db_path) or ".", "backtests")
 
 
+def _run_config(cfg: Config) -> dict:
+    """بصمة الإعدادات المؤثّرة على نتائج الرن (ت1) — للتمييز بين الرنّات.
+    نقرأ الموجود في Config فقط (لا حقول جديدة). أي عتبة تغيّر ماذا يُقبل
+    أو كيف يُقاس تدخل هنا كي يكشف الدمج المختلط اختلافها."""
+    return {
+        "code_version": cfg.code_version or "—",
+        "tech_readiness_min": cfg.tech_readiness_min,
+        "entry_change_max_pct": cfg.entry_change_max_pct,
+        "target1_min_rr": cfg.target1_min_rr,
+        "late_wave_run_pct": cfg.late_wave_run_pct,
+        "stop_fixed_pct": cfg.stop_fixed_pct,
+        "price_min": cfg.price_min,
+        "price_max": cfg.price_max,
+        "backtest_wide_t1_rr": cfg.backtest_wide_t1_rr,
+    }
+
+
+def _fingerprint_line(run_config: dict | None) -> str:
+    """سطر بصمة الإعدادات في رأس التقرير. غياب البصمة = رن قديم/دمج مختلط
+    فنصرّح بذلك بدل ادّعاء إعدادات لا نعرفها (صادق مع الواقع)."""
+    if not run_config:
+        return "⚙️ إعدادات الرن: غير موقّعة (رن قديم)"
+    ver = esc(str(run_config.get("code_version") or "—"))
+    ec = _num2(run_config.get("entry_change_max_pct"))
+    move = f"حركة≤{ec:g}%" if ec and ec > 0 else "حركة: بلا سقف"
+    rd = _num2(run_config.get("tech_readiness_min"))
+    t1 = _num2(run_config.get("target1_min_rr"))
+    lw = _num2(run_config.get("late_wave_run_pct"))
+    return (f"⚙️ نسخة {ver} · جاهزية≥{rd:g} · {move} · "
+            f"تخطّي هدف1 R/R≥{t1:g} · موجة متأخرة {lw:g}%")
+
+
+def _num2(v) -> float:
+    """قيمة عددية آمنة للعرض (0.0 لو غابت/تلفت) — البصمة قد تنقص حقلًا."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def save_run(cfg: Config, res: "BacktestResult", report_text: str,
              now_utc: datetime | None = None) -> str | None:
     """يحفظ تشغيل باكتيست كامل على القرص (best-effort §3): JSON (مصدر الدمج) +
@@ -738,7 +781,7 @@ def save_run(cfg: Config, res: "BacktestResult", report_text: str,
             "%Y-%m-%dT%H:%M:%SZ")
         payload = {"start": res.start, "end": res.end, "days": res.days,
                    "funnel": res.funnel, "trades": res.trades,
-                   "created_utc": created}
+                   "created_utc": created, "run_config": res.run_config}
         json_path = os.path.join(d, stem + ".json")
         with open(json_path, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, ensure_ascii=False)
@@ -805,6 +848,9 @@ def merge_saved_runs(cfg: Config) -> tuple["BacktestResult | None", list[str]]:
     merged.funnel = new_funnel()
     last_end: str | None = None
     used = 0
+    # بصمات الرنّات المدموجة فعلًا (ت1): لكشف خلط إعدادات مختلفة. الملف القديم
+    # بلا بصمة = بصمة مستقلّة «غير موقّع» (فخلطه برن موقّع تحذير أيضًا).
+    fingerprints: list = []
     for data, name in runs:
         if last_end is not None and data["start"] <= last_end:
             notes.append(f"⚠️ تخطّي المتداخل {esc(name)} (يتقاطع مع نطاق سابق)")
@@ -816,6 +862,18 @@ def merge_saved_runs(cfg: Config) -> tuple["BacktestResult | None", list[str]]:
         if data["end"] > merged.end:
             merged.end = data["end"]
         last_end = data["end"]
+        fingerprints.append(data.get("run_config"))
+    # بصمة النتيجة المدموجة: تُملأ فقط لو كل الرنّات متطابقة الإعدادات، وإلا
+    # None (فيظهر «غير موقّعة» — لا ندّعي إعدادات موحّدة ونحن خلطنا).
+    uniq = {json.dumps(fp, sort_keys=True, ensure_ascii=False)
+            for fp in fingerprints}
+    if len(uniq) == 1 and fingerprints[0] is not None:
+        merged.run_config = fingerprints[0]
+    else:
+        merged.run_config = None
+        if len(uniq) > 1:
+            notes.append(f"⚠️ الرنّات المدموجة بإعدادات مختلفة ({len(uniq)} بصمة) "
+                         "— قارن الشرائح بحذر")
     notes.insert(0, f"🧩 دمج {used} تشغيلات باكتيست محفوظة "
                     f"({esc(merged.start)} → {esc(merged.end)})")
     return merged, notes
@@ -853,6 +911,7 @@ def format_report(res: BacktestResult) -> str:
     lines = [
         f"📈 باكتيست {res.start} → {res.end} ({res.days} يوم تداول)",
         f"تنبيهات مُحاكاة: {s['alerts']} (~{s['per_day']:.1f}/يوم)",
+        _fingerprint_line(res.run_config),
         f"النجاح: {wr} ({s['wins']}✅/{s['losses']}🛑/{s['timeouts']}⏳) · "
         f"متوسط أقصى ربح {s['avg_gain']:+.0f}%",
         f"النجاح المتحفّظ (⏳=غير فوز): {wrc} ← الحدّ الأدنى الواقعي",
@@ -1139,7 +1198,7 @@ def run_backtest(cfg: Config, base: MassiveClient, start: str, end: str,
                  progress=None) -> BacktestResult:
     days = trading_days(start, end)
     res = BacktestResult(start=start, end=end, days=len(days),
-                         funnel=new_funnel())
+                         funnel=new_funnel(), run_config=_run_config(cfg))
     for i, day in enumerate(days, 1):
         # كاش جديد لكل يوم ثم يُحرَّر — يمنع تكديس بيانات الشهر كلها في الذاكرة
         # (سوق كامل × 31 يوم + تاريخ كل سهم) الذي يتجاوز حدّ ذاكرة Render.
