@@ -81,14 +81,20 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
                     f"{low_wr:.0f}% مقابل {base_wr:.0f}% للكل ({low_n} محسوم)."),
             confidence=conf))
     else:
-        # وإلا: فرص فائتة كثيرة بسبب بوّابة RVol → خفّضها قليلًا
-        rv_missed = [m for m in missed if "RVol" in (m["reject_reason"] or "")]
+        # وإلا: فرص فائتة كثيرة بسبب بوّابة RVol → خفّضها قليلًا. لكن نعدّ
+        # **القابلين للالتقاط بالعتبة المقترحة فقط** — مرفوض RVol 0.7x لا
+        # يبرّر خفض 5→4 (العتبة الجديدة سترفضه أيضًا). rvol مجهول يُستبعد:
+        # لا نبني اقتراح تعديل على قيمة لا نعرفها (الصدق الحسابي مقدَّم).
+        proposed_rv = max(1.0, round(cfg.rvol_min - 1))
+        rv_missed = [m for m in missed
+                     if "RVol" in (m["reject_reason"] or "")
+                     and m["rvol"] is not None and m["rvol"] >= proposed_rv]
         if len(rv_missed) >= _MIN_MISSED:
             props.append(CalibrationProposal(
                 env="RVOL_MIN", current=cfg.rvol_min,
-                proposed=max(1.0, round(cfg.rvol_min - 1)),
-                reason=(f"{len(rv_missed)} سهم صاعد فاتنا ببوّابة RVol "
-                        "دون ضعف واضح في الشريحة المنخفضة."),
+                proposed=proposed_rv,
+                reason=(f"{len(rv_missed)} سهم صاعد فاتنا كانت العتبة المقترحة "
+                        f"{proposed_rv:g}x ستقبلهم."),
                 confidence="متوسطة"))
 
     # ── 2) TECH_READINESS_MIN: الشريحة فوق العتبة مباشرة (10 نقاط) تخسر →
@@ -121,14 +127,20 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
                     f"{n_wr:.0f}% ({n_n} محسوم) — رفعها يرفع الجودة."),
             confidence=conf))
 
-    # ── 4) FLOAT_MAX: فرص فائتة ببوّابة الفلوت → ارفع السقف ───────
-    fl_missed = [m for m in missed if "فلوت" in (m["reject_reason"] or "")]
+    # ── 4) FLOAT_MAX: فرص فائتة ببوّابة الفلوت → ارفع السقف. نعدّ
+    # **القابلين للالتقاط بالسقف المقترح فقط** — مرفوض فلوته 177M لا يبرّر
+    # رفع السقف إلى 60M (يبقى خارجه). فلوت مجهول يُستبعد (لا نبني على مجهول).
+    proposed_fl = round(cfg.float_max * 1.5)
+    fl_missed = [m for m in missed
+                 if "فلوت" in (m["reject_reason"] or "")
+                 and m["float_shares"] is not None
+                 and m["float_shares"] <= proposed_fl]
     if len(fl_missed) >= _MIN_MISSED:
         props.append(CalibrationProposal(
             env="FLOAT_MAX", current=cfg.float_max,
-            proposed=round(cfg.float_max * 1.5),
-            reason=(f"{len(fl_missed)} سهم صاعد فاتنا ببوّابة الفلوت — "
-                    "توسيع السقف 1.5× يلتقط متوسطات الفلوت الصاعدة."),
+            proposed=proposed_fl,
+            reason=(f"{len(fl_missed)} سهم صاعد فاتنا كان السقف المقترح "
+                    f"{proposed_fl:g} سيقبلهم."),
             confidence="متوسطة"))
 
     # ── 5) OUTCOME_WINDOW_MIN: غلبة انتهاء النوافذ → وسّع النافذة ─
