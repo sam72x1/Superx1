@@ -52,13 +52,66 @@ def test_raises_readiness_when_band_above_threshold_loses():
     assert rd and rd[0].current == 60.0 and rd[0].proposed == 70
 
 
+def _missed(reject_reason, rvol=None, float_shares=None, max_gain_pct=50.0):
+    """صف فرصة فائتة وهمي (بحقلَي rvol/float_shares اللذين يقرؤهما المقترح)."""
+    return {"reject_reason": reject_reason, "max_gain_pct": max_gain_pct,
+            "rvol": rvol, "float_shares": float_shares}
+
+
 def test_raises_float_max_on_missed_opportunities():
+    # فلوت الفائتين تحت السقف المقترح (60M) → يُعدّون ويظهر الاقتراح
     alerts = [_row(result="win", rvol=12.0) for _ in range(4)]
-    missed = [{"reject_reason": "فلوت كبير", "max_gain_pct": 50.0,
-               "ticker": f"M{i}"} for i in range(3)]
+    missed = [_missed("فلوت كبير", float_shares=50e6) for _ in range(3)]
     props = propose_calibrations(_FakeStore(alerts, missed), Config())
     fl = [p for p in props if p.env == "FLOAT_MAX"]
     assert fl and fl[0].proposed > Config().float_max
+
+
+def test_no_rvol_proposal_when_missed_below_proposed_threshold():
+    """ت2 (إعادة إنتاج الحالة الحية 11 يوليو): 6 فائتين بـRVol أغلبهم دون
+    العتبة المقترحة (4x) → القابل للالتقاط 1 فقط < 3 → لا اقتراح خفض.
+    كان الكود القديم يعدّ الستّة ويقترح خطأً."""
+    alerts = [_row(result="win", rvol=12.0) for _ in range(4)]
+    missed = [_missed("RVol 0.7x < 5.0x", rvol=r)
+              for r in (0.7, 0.7, 0.8, 1.6, 1.8, 4.6)]
+    props = propose_calibrations(_FakeStore(alerts, missed), Config())
+    assert not [p for p in props if p.env == "RVOL_MIN"]
+
+
+def test_rvol_proposal_when_enough_catchable_missed():
+    """ت2: 3 فائتين RVol فوق العتبة المقترحة (4x) → يظهر الاقتراح، والنص
+    يذكر العتبة المقترحة والعدد الحقيقي القابل للالتقاط."""
+    alerts = [_row(result="win", rvol=12.0) for _ in range(4)]
+    missed = [_missed("RVol 4.5x < 5.0x", rvol=r) for r in (4.2, 4.5, 4.9)]
+    props = propose_calibrations(_FakeStore(alerts, missed), Config())
+    rv = [p for p in props if p.env == "RVOL_MIN"]
+    assert rv and rv[0].proposed == 4 and "4x" in rv[0].reason and "3" in rv[0].reason
+
+
+def test_float_proposal_ignores_missed_above_proposed_cap():
+    """ت2: فائتون فلوتهم فوق السقف المقترح (60M) لا يُعدّون؛ من هم تحته
+    ≥3 → يظهر. (مثال حي: ILLR فلوته 177M لا يبرّر رفع السقف إلى 60M.)"""
+    alerts = [_row(result="win", rvol=12.0) for _ in range(4)]
+    missed = ([_missed("فلوت كبير", float_shares=177e6) for _ in range(4)]
+              + [_missed("فلوت كبير", float_shares=50e6) for _ in range(3)])
+    props = propose_calibrations(_FakeStore(alerts, missed), Config())
+    fl = [p for p in props if p.env == "FLOAT_MAX"]
+    assert fl and "3" in fl[0].reason   # الثلاثة القابلون فقط
+    # ولو كل الفائتين فوق السقف المقترح → لا اقتراح
+    over = [_missed("فلوت كبير", float_shares=177e6) for _ in range(5)]
+    props2 = propose_calibrations(_FakeStore(alerts, over), Config())
+    assert not [p for p in props2 if p.env == "FLOAT_MAX"]
+
+
+def test_unknown_rvol_or_float_not_counted_as_catchable():
+    """ت2: قيمة مجهولة (None) لا تُعدّ قابلة للالتقاط — لا نبني على مجهول."""
+    alerts = [_row(result="win", rvol=12.0) for _ in range(4)]
+    rv_none = [_missed("RVol", rvol=None) for _ in range(5)]
+    assert not [p for p in propose_calibrations(_FakeStore(alerts, rv_none),
+                                                Config()) if p.env == "RVOL_MIN"]
+    fl_none = [_missed("فلوت", float_shares=None) for _ in range(5)]
+    assert not [p for p in propose_calibrations(_FakeStore(alerts, fl_none),
+                                                Config()) if p.env == "FLOAT_MAX"]
 
 
 def test_lowers_catalyst_bonus_when_news_underperforms():
