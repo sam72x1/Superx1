@@ -28,6 +28,24 @@ def test_finra_vol_pct_from_table():
     assert p._finra_vol_pct("ZZZ") is None
 
 
+def test_finra_cache_keeps_only_latest_day():
+    """تنظيف: كاش RegSHO يُبقي أحدث جدول فقط (لا ينمو كل يوم — كاش ذاكرة قتل
+    الخدمة بحدّ Render مرّة). مفتاح يوم قديم يُستبدَل عند تحميل جديد."""
+    from datetime import date
+    p = ShortInterestProvider()
+    p._finra_cache = {"20200101": {"OLD": (1.0, 2.0)}}   # يوم قديم متراكم
+
+    class _Resp:
+        status_code = 200
+        text = _FINRA_SAMPLE
+
+    p._http.get = lambda url, timeout=0: _Resp()
+    table = p._finra_table()
+    assert table["AAA"] == (30000.0, 100000.0)
+    assert list(p._finra_cache) == [date.today().strftime("%Y%m%d")]
+    assert "20200101" not in p._finra_cache            # القديم أُخلي
+
+
 def test_merge_prefers_fintel_then_fallbacks():
     p = ShortInterestProvider()
     # Fintel يعطي حجم فقط، Yahoo يعطي فلوت، FINRA لا يُستدعى للحجم لأن Fintel غطّاه

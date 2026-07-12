@@ -74,6 +74,18 @@ def test_outcome_target_frozen_after_stop_post_win():
     assert lvl == 1              # لا يُحتسب هدف2 بعد كسر الوقف (قبل الإصلاح=2)
 
 
+def test_outcome_max_gain_frozen_after_loss():
+    """BUG-16: بعد كسر الوقف بخسارة لا تنمو القمة على ارتداد ما بعد الوقف
+    (ربح لم يُمسكه المتداول). كان التجميد للرابحين فقط فتُنفَخ «متوسط أقصى ربح»."""
+    # الشمعة 1: قاع 2.6 يكسر الوقف (خسارة، قمة الشمعة 3.1). الشمعة 2: ارتداد
+    # وهمي إلى 5.0 بعد الخروج — يجب ألّا يُحسب في أقصى ربح.
+    post = [Bar(t_ms=1000, o=3.0, h=3.1, l=2.6, c=2.7, v=1000),
+            Bar(t_ms=2000, o=2.7, h=5.0, l=2.7, c=5.0, v=1000)]
+    res, gain, _, _ = backtest.simulate_outcome(3.0, _risk(2.7, 3.6), post, 0, 90)
+    assert res == "loss"
+    assert round(gain, 1) == round((3.1 - 3.0) / 3.0 * 100, 1)   # مجمّدة عند 3.1
+
+
 # ── الخروج الجزئي (قياس محاكى-المسار) ─────────────────────────────
 def test_partial_exit_held_half_runs_to_t2():
     """نصف عند هدف1 (+20%) + النصف الثاني يبلغ هدف2 (+32%) دون تعادل."""
@@ -323,6 +335,81 @@ def test_asof_client_hourly_excludes_unfinished_window():
     assert cur and cur[0].h == 2.4 and cur[0].c == 2.35 and cur[0].v == 2e4
 
 
+class _NewsBase:
+    """أساس خبر: 3 عناصر بأوقات مختلفة + عدّاد نداءات (لإثبات الكاش)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def news_results(self, ticker, gte, limit=5, published_lte_utc=None):
+        # الطوابع بـUTC؛ asof يُبنى من _tms بتوقيت ET (يونيو = UTC−4):
+        # 10:00 ET=14:00Z · 12:00 ET=16:00Z · 16:00 ET=20:00Z.
+        self.calls += 1
+        return [   # الأحدث أولًا (كما يرجّع الخادم desc)
+            {"title": "متأخر", "published_utc": "2026-06-26T19:00:00Z"},
+            {"title": "وسط", "published_utc": "2026-06-26T15:00:00Z"},
+            {"title": "باكر", "published_utc": "2026-06-26T13:40:00Z"},
+        ]
+
+
+def test_asof_news_no_future_leak_and_cached():
+    """PERF-20: كاش يوم كامل ثم فلترة محلية — أحدث خبر ≤ asof فقط (لا تسرّب)،
+    ونداء الخادم مرّة واحدة لكل (سهم/يوم) رغم تكرار الاستدعاء عبر الشموع."""
+    base = _NewsBase()
+    static = {}
+    gte = "2026-06-24T10:00:00Z"
+    # شمعة 10:00 ET (=14:00Z): «باكر»(13:40Z) فقط ≤ asof؛ «وسط»/«متأخر» بعده
+    c1 = backtest.AsOfClient(base, "2026-06-26", _tms(2026, 6, 26, 10, 0),
+                             [], [], static)
+    cat1 = c1.latest_news("X", gte)
+    assert cat1 and cat1.published_utc == "2026-06-26T13:40:00Z"
+    # شمعة 12:00 ET (=16:00Z، نفس static_cache): «وسط»(15:00Z) مؤهّل — بلا نداء
+    c2 = backtest.AsOfClient(base, "2026-06-26", _tms(2026, 6, 26, 12, 0),
+                             [], [], static)
+    cat2 = c2.latest_news("X", gte)
+    assert cat2 and cat2.published_utc == "2026-06-26T15:00:00Z"
+    assert base.calls == 1                 # نداء واحد للخادم (كاش يوم كامل)
+
+
+def test_asof_news_respects_gte_lower_bound():
+    """PERF-20: الفلترة المحلية تحترم الحدّ الأدنى gte كالخادم — خبر أقدم من
+    نافذة المرشّح لا يُرجَّع رغم أنه ≤ asof."""
+    base = _NewsBase()
+    c = backtest.AsOfClient(base, "2026-06-26", _tms(2026, 6, 26, 16, 0),
+                            [], [], {})   # asof = 20:00Z
+    # gte متأخر (16:00Z) → «باكر»(13:40Z) و«وسط»(15:00Z) خارج النافذة
+    cat = c.latest_news("X", "2026-06-26T16:00:00Z")
+    assert cat and cat.published_utc == "2026-06-26T19:00:00Z"
+
+
+def test_asof_news_caps_fetch_at_day_end_not_realnow():
+    """PERF-20 (تحقّق عدائي): الجلب المكاش يُسقَّف عند نهاية **يوم الباكتيست**،
+    لا يُترك بلا سقف. لولا ذلك، الخادم (order=desc + limit) يرجّع أحدث أخبار
+    «الآن» الحقيقي (بعد اليوم بأشهر) فتحجبها الفلترة المحلية ويرجع None دائمًا.
+    هنا limit=1 وخبر مستقبلي حاضر: يجب أن يُقصَّه السقف فيبقى خبر اليوم مُلتقَطًا."""
+    class _WithFuture:
+        def __init__(self):
+            self.last_lte = None
+
+        def news_results(self, t, gte, limit=5, published_lte_utc=None):
+            self.last_lte = published_lte_utc
+            alln = [{"title": "الآن", "published_utc": "2026-09-01T12:00:00Z"},
+                    {"title": "اليوم", "published_utc": "2026-06-26T13:40:00Z"}]
+            items = [x for x in alln
+                     if (published_lte_utc is None
+                         or x["published_utc"] <= published_lte_utc)
+                     and x["published_utc"] >= gte]
+            items.sort(key=lambda x: x["published_utc"], reverse=True)
+            return items[:limit]
+
+    base = _WithFuture()
+    c = backtest.AsOfClient(base, "2026-06-26", _tms(2026, 6, 26, 10, 0),
+                            [], [], {}, news_fetch_limit=1)
+    cat = c.latest_news("X", "2026-06-24T10:00:00Z")
+    assert cat and cat.published_utc == "2026-06-26T13:40:00Z"   # لُقِط رغم limit=1
+    assert base.last_lte and base.last_lte.startswith("2026-06-27")  # سقف = نهاية اليوم ET
+
+
 # ── تشغيل كامل end-to-end بمحاكاة ─────────────────────────────────
 def _daily_on_runner_scale(n=260, end_close=2.3):
     """سلسلة يومية صاعدة مُعاد تحجيمها لتنتهي قرب سعر الرنر (~$2.3) — كي تتّصل
@@ -372,6 +459,9 @@ class MockBase:
     def latest_news(self, t, gte, limit=5, published_lte_utc=None):
         return None
 
+    def news_results(self, t, gte, limit=5, published_lte_utc=None):
+        return []
+
 
 def test_run_backtest_end_to_end():
     cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
@@ -383,6 +473,8 @@ def test_run_backtest_end_to_end():
     assert runr and runr[0]["result"] in ("win", "loss", "timeout")
     report = backtest.format_report(res)
     assert "باكتيست" in report
+    # BUG-02 (مُصلَح): التقرير يذكر الترتيب اللحظي والقيد المتبقّي على المجمّع
+    assert "يُرتَّب لحظيًّا" in report and "قيد متبقٍّ" in report
 
 
 # ── قمع الترشيح (تشخيص: أين يموت المرشّحون؟) ──────────────────────
@@ -505,6 +597,68 @@ def test_day_candidates_pool_wider_than_live_top_n():
     # لو كان السقف 15 الحي لظهر 15 فقط
     cfg2 = Config(massive_api_key="x", trigger_change_pct=10.0, backtest_top_n=10)
     assert len(backtest._day_candidates(cfg2, grouped, prev)) == 10
+
+
+def test_eval_ranked_out_is_not_ranked_not_empty_rejected():
+    """BUG-02 (تحقّق عدائي): سهم يجتاز البوّابات لكنه خارج أعلى-15 اللحظي في كل
+    شمعة → kind='not_ranked' لا rejected بسبب فارغ (كان يلوّث «أخرى» في القمع).
+    كان تصنيف not_ranked كودًا ميتًا لأن evaluated=True دائمًا قبل ranked_out."""
+    base = MockBase()
+    # نعطّل بوّابة الحركة المتقدّمة كي يجتاز RUNR كل شمعه (وإلا شمعة +55% تُرفض
+    # late_wave فيصير rejected لا ranked_out — نريد اختبار مسار «نجح لكن خارج الأعلى»)
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 entry_change_max_pct=0)
+    res = backtest._eval_candidate(
+        cfg, base, "2026-06-26", {}, 2.0, "RUNR",
+        full5=base.bars_5min("RUNR", "", ""),
+        full1=base.bars_1min("RUNR", "", ""),
+        allowed_asof=set())        # خارج الأعلى في كل الطوابع
+    assert res["kind"] == "not_ranked"
+    # وبلا بوّابة ترتيب (allowed_asof=None) نفس السهم يُنبَّه (تحقّق أنه يجتاز فعلًا)
+    res2 = backtest._eval_candidate(
+        cfg, base, "2026-06-26", {}, 2.0, "RUNR",
+        full5=base.bars_5min("RUNR", "", ""),
+        full1=base.bars_1min("RUNR", "", ""), allowed_asof=None)
+    assert res2["kind"] == "alert"
+
+
+def test_asof_rank_gate_no_cap_when_top_n_nonpositive():
+    """BUG-02 (تحقّق عدائي): top_n_runners ≤ 0 = بلا سقف (مطابقة الحي main.py)
+    لا مجمّع فارغ. لولا الحارس، ranks[:0] فارغ → صفر تنبيهات في كل الباكتيست."""
+    T = _tms(2026, 6, 26, 9, 35)
+    prev = {"A": 2.0, "B": 2.0}
+    bars5 = {"A": [Bar(t_ms=T, o=2.9, h=3.1, l=2.9, c=3.0, v=3e5, n=80)],
+             "B": [Bar(t_ms=T, o=2.2, h=2.4, l=2.2, c=2.3, v=3e5, n=80)]}
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 max_change_pct=400.0, price_min=1.0, price_max=30.0,
+                 top_n_runners=0)
+    allowed = backtest._asof_rank_gate(cfg, [("A", 50.0), ("B", 15.0)], bars5, prev)
+    assert T in allowed["A"] and T in allowed["B"]   # كلاهما (بلا سقف)
+
+
+def test_asof_rank_gate_picks_early_leader_not_late_exploder():
+    """BUG-02 (لا-تسرّب المجمّع): عند الطابع T، أعلى-15 اللحظي = من كان الأعلى
+    **بالتغيّر عند T** لا من انتهى الأعلى بقمة اليوم. سهم A كان الأعلى عند T ثم
+    خفت، وسهم B كان صغيرًا عند T ثم انفجر لاحقًا → مجمّع T يجب أن يحوي A لا B.
+    قبل الإصلاح كان الترتيب بقمة اليوم الكاملة يُدخل B (رابح اليوم) بأثر رجعي."""
+    T1 = _tms(2026, 6, 26, 9, 35)   # الطابع المبكّر
+    T2 = _tms(2026, 6, 26, 15, 0)   # لاحقًا (انفجار B)
+    prev = {"A": 2.0, "B": 2.0}
+    bars5 = {
+        # A: +50% عند T1 (الأعلى لحظتها) ثم يخفت
+        "A": [Bar(t_ms=T1, o=2.9, h=3.1, l=2.9, c=3.0, v=3e5, n=80),
+              Bar(t_ms=T2, o=3.0, h=3.1, l=2.9, c=3.0, v=3e5, n=80)],
+        # B: +11% عند T1 (تحت A) ثم +200% عند T2 (قمة اليوم الأعلى)
+        "B": [Bar(t_ms=T1, o=2.2, h=2.3, l=2.2, c=2.22, v=3e5, n=80),
+              Bar(t_ms=T2, o=2.22, h=6.1, l=2.2, c=6.0, v=9e5, n=90)],
+    }
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 max_change_pct=400.0, price_min=1.0, price_max=30.0,
+                 top_n_runners=1)   # أعلى-1 فقط: يُبرز من يملك المقعد لحظيًّا
+    allowed = backtest._asof_rank_gate(
+        cfg, [("A", 50.0), ("B", 200.0)], bars5, prev)
+    assert T1 in allowed["A"] and T1 not in allowed["B"]   # T1: A لا B
+    assert T2 in allowed["B"] and T2 not in allowed["A"]   # T2: B تجاوز فدخل
 
 
 def test_day_candidates_no_lookahead_on_close_or_dayhigh():
@@ -909,6 +1063,65 @@ def test_reject_bucket_classifies():
     assert backtest._reject_bucket("درجة 55 < عتبة التنبيه 60") == "درجة"
     assert backtest._reject_bucket(
         "تحت VWAP (شريحة أضعف تاريخيًا 55%)") == "تحت VWAP"
+    # DEBT-13: نصّ رفض الزخم الفعلي (scoring.py) لم يعد يقع في «أخرى»
+    assert backtest._reject_bucket(
+        "زخم 18 < 25 (زخم ضعيف رغم +10%)") == "زخم ضعيف"
+
+
+def test_reason_code_maps_to_non_other_bucket():
+    """DEBT-13: كل كود رفض ثابت يُخرَّط لخانة (غير «أخرى» عدا incomplete) —
+    الكود يُقدَّم على النصّ، فوكيلٌ يعيد صياغة رسالة رفض لا يكسر القمع بصمت."""
+    for code, bucket in backtest._CODE_BUCKET.items():
+        assert backtest._reject_bucket("نصّ عشوائي لا إبرة فيه", code) == bucket
+        if code != "incomplete":
+            assert bucket != "أخرى", code
+
+
+def test_gates_and_scoring_emit_mapped_reason_codes():
+    """DEBT-13: البوّابات وscoring تُنتج reason_code مُخرَّطًا لخانة غير «أخرى» —
+    يجعل «بوّابة كاملة عمياء في القمع» (كرفض الزخم سابقًا) صنفًا مستحيلًا."""
+    from runner_scanner import gates, scoring
+    from runner_scanner.models import (
+        Candidate, MomentumResult, ReadinessResult, Session, SnapshotEntry)
+
+    def _snap(price=3.0, change=25.0):
+        return SnapshotEntry("X", price, price * 0.8, price * 0.8, price,
+                             price * 0.78, 1_000_000, price * 0.95, change)
+
+    def _mom(score=35, rvol=8.0, above_vwap=True):
+        return MomentumResult(score=score, rvol=rvol, rvol_5min=22,
+                              change_5min_pct=3, vwap_distance_pct=4,
+                              above_vwap=above_vwap, volume_rising=True,
+                              vwap_reliable=True)
+
+    def _rdy(cs=80):
+        return ReadinessResult(classic_score=cs, pillar_score=40, trend="صاعد",
+                               rsi=60, macd_bull=True, divergence="لا شيء",
+                               above_ma50=True, above_ma200=True, golden_cross=True)
+
+    cfg = Config()
+
+    def _bucket_of(res):
+        assert res.reason_code, "الرفض بلا كود"
+        return backtest._reject_bucket(res.reason, res.reason_code)
+
+    # بوّابة السعر (سنتات) · RVol · فوق VWAP
+    lowp = Candidate(snapshot=_snap(price=0.5), session=Session.REGULAR)
+    assert _bucket_of(gates.check_price(cfg, lowp)) == "سعر تحت الحد"
+    lowrv = Candidate(snapshot=_snap(), session=Session.REGULAR)
+    lowrv.momentum = _mom(rvol=1.0)
+    assert _bucket_of(gates.check_rvol(cfg, lowrv)) == "RVol"
+    belowv = Candidate(snapshot=_snap(), session=Session.REGULAR)
+    belowv.momentum = _mom(above_vwap=False)
+    assert _bucket_of(gates.check_vwap(cfg, belowv)) == "تحت VWAP"
+
+    # scoring: جاهزية منخفضة → «جاهزية» · زخم منخفض → «زخم ضعيف» (كان «أخرى»)
+    weak_rdy = Candidate(snapshot=_snap(), session=Session.REGULAR)
+    weak_rdy.momentum, weak_rdy.readiness = _mom(), _rdy(cs=40)
+    assert _bucket_of(scoring.score_candidate(cfg, weak_rdy)) == "جاهزية"
+    weak_mom = Candidate(snapshot=_snap(), session=Session.REGULAR)
+    weak_mom.momentum, weak_mom.readiness = _mom(score=10), _rdy(cs=80)
+    assert _bucket_of(scoring.score_candidate(cfg, weak_mom)) == "زخم ضعيف"
 
 
 # ── م1: الحفظ الدائم للتشغيلات (مصدر الدمج) ───────────────────────
@@ -1287,3 +1500,25 @@ def test_merge_old_file_without_run_config_is_backward_compatible(tmp_path):
     assert merged is not None and len(merged.trades) == 1
     assert merged.run_config is None
     assert "غير موقّعة" in backtest.format_report(merged)
+
+
+def test_run_config_captures_rvol_min_for_mixed_merge_detection(tmp_path):
+    """BUG-12: بصمة الرن تلتقط rvol_min — رنّان بـRVOL_MIN مختلفين لهما بصمتان
+    مختلفتان، فدمجهما يُحذّر «إعدادات مختلفة» ولا يدّعي إعدادًا موحّدًا."""
+    import json
+    for rv, start, end in ((5.0, "2026-01-01", "2026-01-31"),
+                           (4.0, "2026-02-01", "2026-02-28")):
+        res = backtest.BacktestResult(start=start, end=end, days=20)
+        res.funnel = backtest.new_funnel()
+        res.run_config = backtest._run_config(
+            Config(massive_api_key="x", rvol_min=rv))
+        backtest.save_run(Config(massive_api_key="x",
+                                 backtest_save_dir=str(tmp_path)), res, "تقرير")
+    a = json.load(open(tmp_path / "bt_2026-01-01_2026-01-31.json"))
+    b = json.load(open(tmp_path / "bt_2026-02-01_2026-02-28.json"))
+    assert a["run_config"]["rvol_min"] == 5.0
+    assert b["run_config"]["rvol_min"] == 4.0
+    merged, notes = backtest.merge_saved_runs(
+        Config(massive_api_key="x", backtest_save_dir=str(tmp_path)))
+    assert merged.run_config is None                      # لا يدّعي توحيدًا
+    assert any("بإعدادات مختلفة" in n for n in notes)

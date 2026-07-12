@@ -103,6 +103,44 @@ def test_outcome_timeout_when_window_passes():
     assert row["result"] == "timeout"
 
 
+def test_same_pulse_target_and_stop_records_loss():
+    """§8/BUG-08: نبضة تلمس الهدف والوقف معًا = خسارة (لا ربح). نصنع صفًّا قمّته
+    تجاوزت الهدف وقاعه لمس الوقف قبل الحسم (تراكم عبر فجوة النبضة)، ثم نبضة
+    واحدة تحسمه: يجب loss، مع إصدار حدثَي الهدف والوقف (لا نكبت رسالة).
+    قبل الإصلاح كانت حلقة الأهداف تسبق فرع الوقف فتسجّل win وتنفخ نسبة النجاح."""
+    st = _store()
+    c = _cand("BOTH", 3.0, stop=2.7, t1=3.3)
+    st.log_candidate(c, T0)
+    st.mark_alerted("BOTH", 80, T0)
+    st._conn.execute(
+        "UPDATE tracking SET high_after=3.5, low_after=2.6 WHERE ticker='BOTH'")
+    st._conn.commit()
+    events = st.update_outcomes(
+        {"BOTH": 3.0}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    row = st.fetch_resolved(only_alerts=True)[0]
+    assert row["result"] == "loss"                     # §8: تحفّظ
+    assert row["hit_target"] == 1 and row["hit_stop"] == 1
+    assert any(e["type"] == "target" for e in events)  # كلا الحدثين يُصدَران
+    assert any(e["type"] == "stop" for e in events)
+    st.close()
+
+
+def test_target_then_stop_across_pulses_stays_win():
+    """تمييز مهم: هدف لُمس في نبضة سابقة (result=win) ثم وقف لاحق يبقى win —
+    القاعدة لنفس النبضة فقط، لا للخروج المشروع بعد بلوغ الهدف."""
+    st = _store()
+    c = _cand("SEQ", 3.0, stop=2.7, t1=3.3)
+    st.log_candidate(c, T0)
+    st.mark_alerted("SEQ", 80, T0)
+    st.update_outcomes({"SEQ": 3.4},   # نبضة 1: الهدف → win
+                       datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc))
+    st.update_outcomes({"SEQ": 2.6},   # نبضة 2: الوقف لاحقًا
+                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    row = st.fetch_resolved(only_alerts=True)[0]
+    assert row["result"] == "win"      # يبقى win (الهدف بُلغ أولًا فعلًا)
+    st.close()
+
+
 def test_surge_event_on_new_leg():
     st = _store()
     c = _cand("SURGE", 3.0, stop=2.7, t1=10.0)   # هدف بعيد كي لا يُحسم
@@ -229,6 +267,47 @@ def test_followup_missed_message():
                                "price": 2.8, "gain_pct": 40.0,
                                "reason": "فلوت كبير"})
     assert "فرصة فائتة" in msg and "MISS" in msg and "فلوت كبير" in msg
+
+
+def test_rejected_runner_not_closed_on_stop_keeps_missed_alive():
+    """BUG-15: صفّ مرفوض (غير مُنبَّه) له وقف افتراضي — يُرفض عند بوّابة الحد
+    الأدنى للربح **بعد** بناء خطة المخاطرة، فيُسجَّل بوقف. لو لمس الوقف مبكرًا
+    ثم انطلق +50% لاحقًا، يجب أن يبقى مفتوحًا كي ينطلق تنبيه 👻 الفرصة الفائتة
+    — لا أن يُغلق على الوقف (كان يموت 👻 قبل انطلاقه). نسجّل hit_stop للمعايرة."""
+    st = _store()
+    c = _cand("LATE", 2.0, rejected=True, reason="سقف ربح الأهداف 8% < 12%")
+    st.log_candidate(c, T0)
+    # وقف افتراضي على صفّ مرفوض (يحاكي الرفض عند بوّابة الحد الأدنى للربح)
+    st._conn.execute("UPDATE tracking SET stop_price=1.8 WHERE ticker='LATE'")
+    st._conn.commit()
+    # نبضة 1: يهبط تحت الوقف الافتراضي (1.7 < 1.8) قبل أي صعود
+    ev1 = st.update_outcomes(
+        {"LATE": 1.7}, datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc),
+        missed_rise_pct=30.0)
+    assert not [e for e in ev1 if e["type"] == "missed"]   # لم يصعد بعد
+    row = st.fetch_row("LATE")
+    assert row["outcome"] == "open"        # لم يُغلق على الوقف (BUG-15)
+    assert row["hit_stop"] == 1            # لكن hit_stop سُجِّل للمعايرة
+    # نبضة 2: ينطلق +50% لاحقًا (3.0 من 2.0) — 👻 يجب أن ينطلق رغم لمس الوقف
+    ev2 = st.update_outcomes(
+        {"LATE": 3.0}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc),
+        missed_rise_pct=30.0)
+    missed = [e for e in ev2 if e["type"] == "missed"]
+    assert missed and missed[0]["ticker"] == "LATE"
+    st.close()
+
+
+def test_alert_still_closes_on_stop():
+    """توازن BUG-15: المُنبَّه عنه (لا المرفوض) يبقى يُغلق على الوقف كالمعتاد."""
+    st = _store()
+    c = _cand("ALRT", 5.0, stop=4.5, t1=6.0)
+    st.log_candidate(c, T0)
+    st.mark_alerted("ALRT", 75, T0)
+    st.update_outcomes(
+        {"ALRT": 4.4}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    row = st.fetch_row("ALRT")
+    assert row["outcome"] == "closed" and row["result"] == "loss"
+    st.close()
 
 
 def test_events_only_for_alerts_not_rejected():
@@ -376,3 +455,38 @@ def test_export_csvs_writes_files():
     for path, _ in files:
         content = open(path, encoding="utf-8-sig").read()
         assert "ticker" in content and "MISS" in content
+
+
+def test_dev_bucket_labels_match_bounds():
+    """BUG-14 (فحص وحدة): _bucket يستبعد القيم دون الحدّ لا يُسمّيها بالشريحة."""
+    from runner_scanner.dev_assistant import _bucket
+    rvol_edges = [(5, 8, "5-8x"), (8, 15, "8-15x"), (15, 1e9, "15x أو أكثر")]
+    assert _bucket(2.0, rvol_edges) is None      # دون 5 → مستبعَد لا «5-8x»
+    assert _bucket(6.0, rvol_edges) == "5-8x"
+    score_edges = [(60, 70, "60-70"), (70, 80, "70-80")]
+    assert _bucket(40.0, score_edges) is None    # دون 60 → مستبعَد لا «60-70»
+    assert _bucket(65.0, score_edges) == "60-70"
+
+
+def test_dev_report_excludes_subthreshold_rows_from_labeled_buckets():
+    """BUG-14 (تحقّق عدائي — يُشغّل build_dev_report فعلًا، لا _bucket معزولًا):
+    4 صفقات محسومة بـRVol=2 ودرجة=40 (دون حدّي «5-8x»/«60-70») يجب ألّا تظهر
+    تحت تينك التسميتين في التقرير. قبل إصلاح BUG-14 (حدّ الشريحة 0) كانت تُنسب
+    خطأً فيهيمن أسهم دون البوّابة على شريحة يعاير المستخدم عليها. هذا الاختبار
+    يفشل على الكود قبل الإصلاح (بخلاف فحص الوحدة الذي يمرّر الحدود الصحيحة بنفسه)."""
+    st = _store()
+    prices = {}
+    for i in range(12):   # ≥ dev_min_sample كي تُرسَم شرائح RVol/الدرجة أصلًا
+        tkr = f"SUB{i}"
+        st.log_candidate(_cand(tkr, 3.0, stop=2.7, t1=3.3), T0)
+        st.mark_alerted(tkr, 80, T0)
+        prices[tkr] = 3.4     # فوز (بلغ الهدف)
+        st._conn.execute(     # دون حدّي الشريحتين: RVol=2 (<5) ودرجة=40 (<60)
+            "UPDATE tracking SET rvol=2.0, score=40 WHERE ticker=?", (tkr,))
+    st._conn.commit()
+    st.update_outcomes(prices,
+                       datetime(2026, 6, 26, 14, 20, tzinfo=timezone.utc))
+    rep = build_dev_report(st, CFG)
+    assert "5-8x" not in rep      # RVol=2 مستبعَد لا يُنسب لـ«5-8x»
+    assert "60-70" not in rep     # درجة=40 مستبعَدة لا تُنسب لـ«60-70»
+    st.close()

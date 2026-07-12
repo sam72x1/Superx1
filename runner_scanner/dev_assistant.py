@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import os
+import shutil
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -243,13 +244,17 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
     body += seg("حسب الفلوت", lambda r: _bucket(
         (r["float_shares"] or 0) / 1e6 if r["float_shares"] else None,
         [(0, 5, "أقل من 5م"), (5, 10, "5-10م"), (10, 1e9, "أكثر من 10م")]))
+    # BUG-14: الحدّ الأدنى 5 لا 0 كي يطابق التسمية «5-8x» — صفوف دون 5 (مرفوضون/
+    # أبطال يتجاوزون بوّابة RVol) كانت تُنسب خطأً لـ«5-8x» فيعاير المستخدم عليها.
     body += seg("حسب RVol", lambda r: _bucket(
-        r["rvol"], [(0, 8, "5-8x"), (8, 15, "8-15x"), (15, 1e9, "15x أو أكثر")]))
+        r["rvol"], [(5, 8, "5-8x"), (8, 15, "8-15x"), (15, 1e9, "15x أو أكثر")]))
     body += seg("حسب 5min RVol", lambda r: _bucket(
         r["rvol_5min"], [(0, 5, "أقل من 5x"), (5, 15, "5-15x"),
                          (15, 1e9, "15x أو أكثر")]))
+    # BUG-14: الحدّ الأدنى 60 لا 0 كي يطابق التسمية «60-70» (صفوف دون 60 تُستبعَد
+    # لا تُنسب خطأً للشريحة الدنيا).
     body += seg("حسب الدرجة", lambda r: _bucket(
-        r["score"], [(0, 70, "60-70"), (70, 80, "70-80"), (80, 90, "80-90"),
+        r["score"], [(60, 70, "60-70"), (70, 80, "70-80"), (80, 90, "80-90"),
                      (90, 1e9, "90-100")]))
     body += seg("حسب الجاهزية الفنية", lambda r: _bucket(
         r["readiness"], [(70, 80, "70-80"), (80, 90, "80-90"),
@@ -286,14 +291,16 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
                     f"بوضوح من «بلا محفّز» ({no_news['win_rate']:.0f}%) — "
                     "فكّر برفع وزن الخبر في الدرجة أو جعله بوّابة.")
 
-    # فرص فائتة بسبب RVol → خفّض RVOL_MIN
-    rvol_missed = [m for m in missed if "RVol" in (m["reject_reason"] or "")]
+    # فرص فائتة بسبب RVol → خفّض RVOL_MIN (كود ثابت DEBT-13، وارتداد للنصّ)
+    rvol_missed = [m for m in missed
+                   if calibration._rejected_by(m, "rvol", "RVol")]
     if len(rvol_missed) >= 3:
         sugg.append(f"   • {len(rvol_missed)} سهم فاتنا بسبب بوّابة RVol — "
                     f"فكّر بخفض RVOL_MIN (حاليًا {cfg.rvol_min:g}x).")
 
     # فرص فائتة بسبب الفلوت → ارفع FLOAT_MAX
-    float_missed = [m for m in missed if "فلوت" in (m["reject_reason"] or "")]
+    float_missed = [m for m in missed
+                    if calibration._rejected_by(m, "float", "فلوت")]
     if len(float_missed) >= 3:
         sugg.append(f"   • {len(float_missed)} سهم فاتنا بسبب بوّابة الفلوت — "
                     f"فكّر برفع FLOAT_MAX (حاليًا {_human(cfg.float_max)}).")
@@ -377,6 +384,8 @@ def export_csvs(store, cfg: Config, now: datetime | None = None
                     os.path.join(tmp, f"missed_{day}.csv"))
     if p2:
         out.append((p2, f"📎 الفرص الفائتة (مرفوض صعد) — {day}"))
+    if not out:            # لم يُكتب أي ملف → لا تترك مجلدًا مؤقّتًا فارغًا
+        shutil.rmtree(tmp, ignore_errors=True)
     return out
 
 
@@ -385,8 +394,16 @@ def send_report_and_files(store, cfg: Config, telegram,
     """يبني التقرير، يرسله، ثم يرسل ملفات CSV. يرجّع نص التقرير."""
     report = build_dev_report(store, cfg, now)
     telegram.send(report)
-    for path, caption in export_csvs(store, cfg, now):
-        telegram.send_document(path, caption)
+    tmp_dirs: set[str] = set()
+    try:
+        for path, caption in export_csvs(store, cfg, now):
+            tmp_dirs.add(os.path.dirname(path))
+            telegram.send_document(path, caption)
+    finally:
+        # تنظيف المجلد المؤقّت بعد الإرسال — وإلا نموّ غير محدود على قرص
+        # الحاوية (تقرير مجدوَل + كل /report يخلّف مجلدًا وملفَّي CSV للأبد).
+        for d in tmp_dirs:
+            shutil.rmtree(d, ignore_errors=True)
     return report
 
 

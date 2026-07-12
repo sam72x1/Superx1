@@ -139,6 +139,7 @@ class Config:
     # ── الخبر/المحفّز (قرار المستخدم: إشارة تقوية لا بوابة) ────────
     catalyst_lookback_hours: float = 48.0   # نافذة "خبر حديث"
     catalyst_score_bonus: float = 8.0       # تُضاف للدرجة عند وجود خبر
+    news_cache_ttl_sec: int = 300           # كاش الخبر بالثواني — نظرته الخلفية 48س فمحفّز عمره ~5د مقبول (يمنع آلاف النداءات المتطابقة/يوم)
 
     # ── الوقف والأهداف (القسم 8) ──────────────────────────────────
     stop_fixed_pct: float = 7.0          # الوقف = الدخول − هذه النسبة% بالضبط (قرار المستخدم)
@@ -218,6 +219,10 @@ class Config:
     # مهلة قصيرة لنداءات الباكتيست (ث): النداء البطيء يُتخطّى بسرعة بدل أن
     # تضاعف الإعادات الطويلة الزمن (الباكتيست = آلاف النداءات، فالفشل السريع أهمّ).
     backtest_http_timeout: float = 8.0
+    # عدد عناصر الخبر التي تُجلب وتُكاش ليوم/سهم في الباكتيست: نجلب قائمة اليوم
+    # مرّة (أوسع من الحيّ) ثم نصفّي محليًّا بلا تسرّب لكل شمعة (published ≤ asof)
+    # بدل نداء خبر لكل شمعة — 5 لا تكفي (تحجب أخبارًا أقدم تحتاجها الشموع الباكرة).
+    backtest_news_fetch_limit: int = 50
     # وضع «سريع» للتشغيل اليدوي (/backtest): معاينة عاجلة بدل انتظار ساعات.
     # الوظيفة الأسبوعية تبقى كاملة (45 يوم/45 مرشّح) في الخلفية.
     backtest_quick_days: int = 5          # نافذة المعاينة السريعة (أيام تقويم)
@@ -350,6 +355,7 @@ class Config:
             alert_score_min=_f("ALERT_SCORE_MIN", 60.0),
             catalyst_lookback_hours=_f("CATALYST_LOOKBACK_HOURS", 48.0),
             catalyst_score_bonus=_f("CATALYST_SCORE_BONUS", 8.0),
+            news_cache_ttl_sec=_i("NEWS_CACHE_TTL_SEC", 300),
             stop_fixed_pct=_f("STOP_FIXED_PCT", 7.0),
             stop_min_pct=_f("STOP_MIN_PCT", 4.0),
             stop_max_pct=_f("STOP_MAX_PCT", 20.0),
@@ -389,6 +395,7 @@ class Config:
             backtest_scan_step_bars=_i("BACKTEST_SCAN_STEP_BARS", 1),
             backtest_top_n=_i("BACKTEST_TOP_N", 45),
             backtest_http_timeout=_f("BACKTEST_HTTP_TIMEOUT", 8.0),
+            backtest_news_fetch_limit=_i("BACKTEST_NEWS_FETCH_LIMIT", 50),
             backtest_quick_days=_i("BACKTEST_QUICK_DAYS", 5),
             backtest_quick_top_n=_i("BACKTEST_QUICK_TOP_N", 12),
             backtest_quick_step=_i("BACKTEST_QUICK_STEP", 2),

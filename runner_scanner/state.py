@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS tracking (
     had_news        INTEGER,
     rejected        INTEGER,
     reject_reason   TEXT,
+    reason_code     TEXT,                  -- كود رفض ثابت (DEBT-13): تصنيف آلي لا نصّ
     -- بيانات إضافية لتشريح الفشل (لماذا فشل السهم)
     short_pct       REAL,
     dilution_risk   TEXT,
@@ -115,6 +116,51 @@ CREATE TABLE IF NOT EXISTS tracking (
 """
 
 
+# أعمدة tracking عند أول شحن للجدول (dd7dd34) — مجمّدة كمرجع الاتّساق الذاتي.
+# لا تعدّلها: كل عمود في _SCHEMA يجب أن يكون هنا أو في _MIGRATIONS، وإلا فاته
+# الترحيل على قاعدة قديمة (اختبار الاتّساق يمسك المنسيّ القادم للأبد).
+_ORIGINAL_TRACKING_COLS = frozenset({
+    "ticker", "trade_date", "first_seen_at", "logged_at", "session",
+    "change_pct", "score", "momentum", "readiness", "rvol", "rvol_5min",
+    "float_shares", "float_source", "halt_state", "had_news", "rejected",
+    "reject_reason", "is_alert", "first_price", "stop_price", "target1",
+    "high_after", "low_after", "max_gain_pct", "max_draw_pct", "hit_target",
+    "hit_stop", "outcome", "closed_at",
+})
+
+# ترحيل الأعمدة المضافة بعد شحن الجدول — كل عمود جديد يُضاف هنا **و** لـ_SCHEMA.
+# القرص دائم فـ CREATE TABLE IF NOT EXISTS لا يفعل شيئًا على قاعدة قائمة؛ بلا
+# هذا السطر يرمي INSERT «no such column» كل دورة ويعمى البوت صامتًا (§7 · BUG-01).
+_MIGRATIONS = (
+    ("short_pct", "REAL"), ("dilution_risk", "TEXT"),
+    ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT"),
+    ("notified_missed", "INTEGER DEFAULT 0"),
+    ("first_volume", "REAL"), ("first_session", "TEXT"),
+    ("peak_at", "TEXT"), ("stop_dist_at", "TEXT"),
+    # ── الستة التي فاتها الترحيل (دخلت _SCHEMA في 5a9ab43 بعد شحن الجدول) ──
+    ("target2", "REAL"), ("target3", "REAL"),
+    ("notified_targets", "INTEGER DEFAULT 0"),
+    ("notified_stop", "INTEGER DEFAULT 0"),
+    ("notified_high", "REAL"), ("result", "TEXT DEFAULT ''"),
+    ("reason_code", "TEXT"),   # DEBT-13: كود الرفض الثابت
+)
+
+
+def _tracking_schema_columns() -> set[str]:
+    """أسماء أعمدة جدول tracking كما هي في _SCHEMA (لاختبار الاتّساق الذاتي)."""
+    body = _SCHEMA.split("CREATE TABLE IF NOT EXISTS tracking", 1)[1]
+    body = body.split("(", 1)[1].split("PRIMARY KEY", 1)[0]
+    cols = set()
+    for line in body.splitlines():
+        line = line.strip()
+        if not line or line.startswith("--"):
+            continue
+        first = line.split()[0]
+        if first.isidentifier():
+            cols.add(first)
+    return cols
+
+
 def trade_date_str(now: datetime | None = None) -> str:
     """تاريخ يوم التداول (بتوقيت ET) كمفتاح موحّد."""
     now = now or datetime.now(timezone.utc)
@@ -140,14 +186,8 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_SCHEMA)
-            # ترقية قواعد قديمة: إضافة أعمدة تشريح الفشل إن غابت
-            for col, typ in (("short_pct", "REAL"), ("dilution_risk", "TEXT"),
-                             ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT"),
-                             ("notified_missed", "INTEGER DEFAULT 0"),
-                             ("first_volume", "REAL"),
-                             ("first_session", "TEXT"),
-                             ("peak_at", "TEXT"),
-                             ("stop_dist_at", "TEXT")):
+            # ترقية قواعد قديمة: إضافة الأعمدة المضافة بعد شحن الجدول إن غابت
+            for col, typ in _MIGRATIONS:
                 try:
                     self._conn.execute(
                         f"ALTER TABLE tracking ADD COLUMN {col} {typ}")
@@ -200,11 +240,11 @@ class Store:
                     first_session,
                     change_pct, score, momentum, readiness, rvol, rvol_5min,
                     float_shares, float_source, halt_state, had_news, rejected,
-                    reject_reason, short_pct, dilution_risk, analyst_dir,
+                    reject_reason, reason_code, short_pct, dilution_risk, analyst_dir,
                     catalyst_head, first_price, first_volume, stop_price, target1,
                     target2, target3, high_after, low_after, max_gain_pct,
                     notified_high, outcome)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
                 ON CONFLICT(ticker, trade_date) DO UPDATE SET
                     logged_at=excluded.logged_at, session=excluded.session,
                     -- جلسة أول رصد لا تُمسّ (COALESCE يملأ صفوف ما قبل الترحيل فقط)
@@ -217,6 +257,7 @@ class Store:
                     float_source=excluded.float_source,
                     halt_state=excluded.halt_state, had_news=excluded.had_news,
                     rejected=excluded.rejected, reject_reason=excluded.reject_reason,
+                    reason_code=excluded.reason_code,
                     short_pct=excluded.short_pct,
                     dilution_risk=excluded.dilution_risk,
                     analyst_dir=excluded.analyst_dir,
@@ -254,6 +295,7 @@ class Store:
                     c.momentum.rvol_5min if c.momentum else None,
                     c.float_shares, c.float_source.value, c.halt_state.value,
                     had_news, 1 if c.is_rejected else 0, c.rejected_reason,
+                    c.reject_code or "",
                     c.short_pct, dilution_risk, analyst_dir, catalyst_head,
                     price, c.snapshot.day_volume, stop, t1, t2, t3,
                     price, price, price,
@@ -321,12 +363,19 @@ class Store:
                     participation = ("قوية ⬆️" if g >= 1.5 else
                                      "معتدلة" if g >= 1.1 else "خافتة ⚠️")
 
+                # §8/BUG-08: لمس الهدف + الوقف في **نفس النبضة** = خسارة (لا يمكن
+                # معرفة الترتيب داخل النبضة، فنتحفّظ). نحسب لمسة الوقف الآن **قبل**
+                # حلقة الأهداف كي تسجّل الأهداف «loss» لا «win» إن لُمس الوقف أيضًا.
+                # (هدف لُمس في نبضة سابقة يبقى «win» — القاعدة لنفس النبضة فقط.)
+                stop_now = bool(not notified_stop and r["stop_price"]
+                                and low <= r["stop_price"])
+
                 # 🎯 أهداف: نبلّغ كل هدف عُبر لأول مرة (نرسل للمُنبَّه فقط)
                 while notified_t < len(targets) and high >= targets[notified_t]:
                     notified_t += 1
                     hit_target = 1
                     if not result:
-                        result = "win"
+                        result = "loss" if stop_now else "win"
                     if is_alert:
                         # 🪜 الوقف المُرقّى بعد هذا الهدف: بعد الهدف1 = التعادل (سعر
                         # دخول المستخدم من البطاقة، لا first_price المتتبَّع الذي قد
@@ -343,18 +392,24 @@ class Store:
                             "new_stop": new_stop,
                         })
 
-                # ⛔ الوقف: نبلّغ مرة واحدة (ويغلق التتبّع)
-                if not notified_stop and r["stop_price"] and low <= r["stop_price"]:
-                    notified_stop = 1
+                # ⛔ الوقف: للمُنبَّه = نبلّغ مرة واحدة ويغلق التتبّع. أما الصفوف
+                # المرفوضة (غير المُنبَّهة) فلا تُغلق على الوقف (BUG-15): نسجّل
+                # `hit_stop` للمعايرة فقط وتبقى مفتوحة — كي لا يموت تنبيه 👻 الفرصة
+                # الفائتة لو انطلق السهم لاحقًا بعد لمسه الوقف الافتراضي. النافذة
+                # تغلقها. (`rejected_row` = مرفوض غير مُنبَّه؛ نفس شرط تنبيه 👻.)
+                rejected_row = bool((r["rejected"] or 0) and not is_alert)
+                if r["stop_price"] and low <= r["stop_price"]:
                     hit_stop = 1
-                    if not result:
-                        result = "loss"
-                    if is_alert:
-                        events.append({
-                            "ticker": r["ticker"], "type": "stop",
-                            "price": r["stop_price"],
-                            "gain_pct": (r["stop_price"] - first) / first * 100.0,
-                        })
+                    if not rejected_row and not notified_stop:
+                        notified_stop = 1
+                        if not result:
+                            result = "loss"
+                        if is_alert:
+                            events.append({
+                                "ticker": r["ticker"], "type": "stop",
+                                "price": r["stop_price"],
+                                "gain_pct": (r["stop_price"] - first) / first * 100.0,
+                            })
 
                 # 🚀 قفزة قوية: قمة جديدة ≥ surge فوق آخر قمة مُبلَّغة
                 if high >= notified_high * (1 + surge_leg_pct / 100.0):
@@ -496,10 +551,17 @@ class Store:
 
     def get_session_champions(self, session: str,
                               on_or_before_day: str | None = None,
-                              limit: int = 15) -> list[dict]:
-        """أبطال آخر لقطة محفوظة لفترة (في/قبل يوم)، مرتّبة حسب rank."""
+                              limit: int = 15, exact: bool = False) -> list[dict]:
+        """أبطال آخر لقطة محفوظة لفترة (في/قبل يوم)، مرتّبة حسب rank.
+        exact=True: اليوم بالضبط لا «في/قبل» — فالغياب يتدهور إلى **فارغ** بدل
+        بعث يوم قديم اعتباطيًا (BUG-06: توريث الرسمي من بريماركت-اليوم)."""
         with self._lock:
-            if on_or_before_day:
+            if on_or_before_day and exact:
+                row = self._conn.execute(
+                    "SELECT trade_date FROM session_champions WHERE session=?"
+                    " AND trade_date=? LIMIT 1",
+                    (session, on_or_before_day)).fetchone()
+            elif on_or_before_day:
                 row = self._conn.execute(
                     "SELECT trade_date FROM session_champions WHERE session=?"
                     " AND trade_date<=? ORDER BY trade_date DESC LIMIT 1",
@@ -526,8 +588,11 @@ class Store:
                        + timedelta(days=day_offset)).isoformat()
         except ValueError:
             return []
+        # إزاحة 0 (توريث داخل نفس اليوم، كالرسمي←بريماركت) = اليوم بالضبط —
+        # فالغياب يعطي فارغًا لا يومًا قديمًا (BUG-06).
         return [c["symbol"] for c in
-                self.get_session_champions(prev_sess, ref_day, 15)
+                self.get_session_champions(prev_sess, ref_day, 15,
+                                           exact=(day_offset == 0))
                 if c.get("symbol")]
 
     # ── bot_meta ──────────────────────────────────────────────────

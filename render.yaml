@@ -6,7 +6,9 @@ services:
     runtime: python
     branch: main                         # النشر من الفرع المستقر (main)
     plan: starter            # worker مدفوع يبقى حيًّا (لا يموت بصمت وسط الجلسة)
-    buildCommand: pip install -r requirements.txt
+    # فحص استيراد بثانيتين بعد التثبيت: يحوّل «تبعية ناقصة/خطأ استيراد» من
+    # انهيار وقت التشغيل إلى فشل بناء لا يُبدّل الـworker (نتيجة تدقيق DX-02).
+    buildCommand: pip install -r requirements.txt && python -c "import runner_scanner.main"
     startCommand: python -m runner_scanner.main
     autoDeploy: false
     disk:
@@ -30,3 +32,7 @@ services:
         value: "65"          # قرار المستخدم بالبيانات (كان 70 انجرافًا)
       - key: HALTS_ENABLED
         value: "true"
+      # ثبّت نسخة بايثون: يوم ترفع Render افتراضيها قد لا يوجد wheel لـ
+      # pandas/numpy (تبعية yfinance) فيفشل البناء من المصدر (تأمين رخيص).
+      - key: PYTHON_VERSION
+        value: "3.11.9"

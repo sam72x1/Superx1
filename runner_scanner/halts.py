@@ -202,6 +202,13 @@ class HaltTracker:
             except Exception as exc:  # noqa: BLE001
                 if self._stop.is_set():
                     break
+                # أغلق المقبس المكسور قبل إعادة الاتصال — وإلا تتسرّب مقابس
+                # نظام التشغيل عبر إعادات الاتصال في عملية طويلة العمر.
+                try:
+                    if self._ws is not None:
+                        self._ws.close()
+                except Exception:  # noqa: BLE001 — الإغلاق best-effort
+                    pass
                 logger.warning("WebSocket التوقّفات انقطع: %s — إعادة بعد %.0fث",
                                exc, backoff)
                 time.sleep(backoff)

@@ -68,11 +68,13 @@ def compute_momentum(
             volume_rising = vols[-1] >= vols[-2] >= vols[-3]
 
     # ── RVol حسب الجلسة ──────────────────────────────────────────
-    # في الجلسات الممتدة: الحجم التراكمي من شموع الجلسة الفعلية (snap.day_volume
-    # قد يكون صفرًا/قديمًا = artifact). الرسمي: snap.day_volume موثوق وكامل.
+    # في الجلسات الممتدة: الحجم التراكمي من شموع الجلسة الفعلية **حصرًا**
+    # (BUG-07: `or snap.day_volume` كان يحقن الـartifact عند صفر التراكمي —
+    # أوّل البريماركت بالضبط، وهو مصدر البقّ رقم 1 §4؛ وفي الأفترهاوس يحقن
+    # حجم يوم رسمي كامل مقسومًا على أساس أفترهاوس = RVol منفوخ مئات الأضعاف).
+    # الرسمي: snap.day_volume موثوق وكامل.
     if session in (Session.PREMARKET, Session.AFTERHOURS):
-        cum_vol = session_cumulative_volume(cfg, session, bars_5min) \
-            or snap.day_volume
+        cum_vol = session_cumulative_volume(cfg, session, bars_5min)
     else:
         cum_vol = snap.day_volume
     rvol = compute_rvol(

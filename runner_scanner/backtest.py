@@ -9,7 +9,12 @@
 
 النطاق (v1): يختبر **الاستراتيجية الفنية الأساسية** (كشف + بوّابات + ركيزتان +
 وقف/أهداف). يتخطّى طبقات Claude/SEC/الشورت (تُقيَّم حيًّا). تقريبات موثّقة:
-- «أعلى N» يُقرَّب بأعلى N صعودًا في قمة اليوم (proxy لـ top-gainers اللحظي).
+- «أعلى 15» اللحظي (BUG-02، مُصلَح): المجمّع الأوّلي = أعلى backtest_top_n بقمة
+  اليوم (تقريب رخيص، غير متسرّب — chg_high ≥ trigger شرط لازم)، ثم يُرتَّب داخله
+  عند **كل شمعة 5د** بالتغيّر اللحظي (إغلاق ≤ asof) ويُقصّ إلى top_n_runners —
+  مطابقة detect_runners الحي (لا ترتيب قمة-اليوم المتسرّب). التنبيه فقط لمن دخل
+  أعلى-15 لحظتها؛ قياس الظل يبقى لكل المرفوضين. **قيد متبقٍّ:** المجمّع الأوّلي
+  محدود بقمة-اليوم top_n، فسهم لم يدخل أعلى backtest_top_n بقمته قد يفوت (نادر).
 - نوع الورقة/الفلوت من الحاضر (نادرًا يتغيّران) — best-effort.
 - داخل الشمعة: لو لمست الهدف والوقف معًا نَعُدّها **خسارة** (تحفّظ ضد التفاؤل).
 
@@ -56,13 +61,14 @@ class AsOfClient:
 
     def __init__(self, base: MassiveClient, date_str: str, asof_ms: int,
                  bars_5min: list[Bar], bars_1min: list[Bar],
-                 static_cache: dict):
+                 static_cache: dict, news_fetch_limit: int = 50):
         self._base = base
         self._date = date_str
         self._asof = asof_ms
         self._5 = bars_5min        # مقصوصة مسبقًا حتى asof
         self._1 = bars_1min
         self._static = static_cache
+        self._news_limit = news_fetch_limit
 
     def _cached(self, key, fetch):
         if key not in self._static:
@@ -129,9 +135,25 @@ class AsOfClient:
         return out
 
     def latest_news(self, ticker, published_gte_utc, limit=5):
+        # كاش يوم كامل ثم فلترة محلية بلا تسرّب (PERF-20): نجلب قائمة اليوم مرّة
+        # واحدة (الشموع تُقيَّم تصاعديًّا فأول نداء = أبكر gte = أوسع نافذة سُفلى)،
+        # ثم نصفّي لكل شمعة بـ gte الشمعة ≤ published ≤ asof.
+        # ⚠️ حاسم: نُمرّر سقفًا علويًا = **نهاية يوم الباكتيست** للجلب المكاش. بدونه
+        # كان الخادم (order=desc) يرجّع أحدث `limit` خبرًا منذ gte = أخبار قرب «الآن»
+        # الحقيقي (كلها بعد asof)، فتحجبها الفلترة المحلية ويرجع None دائمًا — أخبار
+        # الأيام التالية تزحم القائمة. السقف عند نهاية اليوم يغطّي كل asof اليوم
+        # ويستبعد المستقبل؛ الفلترة `published ≤ asof` تحفظ لا-التسرّب لكل شمعة.
         lte = _iso_utc(datetime.fromtimestamp(self._asof / 1000, tz=timezone.utc))
-        return self._base.latest_news(ticker, published_gte_utc, limit=limit,
-                                      published_lte_utc=lte)
+        y, mo, dd = (int(x) for x in self._date.split("-"))
+        day_end_lte = _iso_utc(datetime(y, mo, dd, tzinfo=ET) + timedelta(days=1))
+        results = self._cached(
+            f"news:{ticker}:{self._date}",
+            lambda: self._base.news_results(
+                ticker, published_gte_utc, limit=self._news_limit,
+                published_lte_utc=day_end_lte))
+        hits = [r for r in results
+                if published_gte_utc <= (r.get("published_utc") or "") <= lte]
+        return MassiveClient.catalyst_from_item(hits[0]) if hits else None
 
 
 def _bar_date(b: Bar) -> str:
@@ -183,7 +205,9 @@ def simulate_outcome(entry: float, risk, post_bars: list[Bar],
     for b in post_bars:
         if b.t_ms > deadline:
             break
-        low = min(low, b.l)             # القاع يتحدّث دائمًا (لقياس أقصى سحب)
+        # القاع يتحدّث دائمًا: max_draw مقياس excursion (أقصى سحب على النافذة)
+        # ويبقى كذلك عمدًا — بخلاف القمة التي تُجمَّد عند الخروج (لا يُطبَّق حيًّا).
+        low = min(low, b.l)
         # سيناريو الإمساك يفترض وقفًا واقيًا؛ أول شمعة تكسر الوقف بعد الفوز تُجمّد
         # القمة وعدّ الأهداف ابتداءً منها (لا هدف أعلى يُنسب بعد كسر الوقف).
         if decided and result == "win" and stop and b.l <= stop:
@@ -194,6 +218,10 @@ def simulate_outcome(entry: float, risk, post_bars: list[Bar],
             if stop and b.l <= stop:    # تحفّظ: الوقف أولًا حتى لو لمس الهدف
                 result = "loss"
                 decided = True
+                # BUG-16: جمّد القمة عند الخروج بخسارة أيضًا — وإلا نمت high على
+                # كامل النافذة بعد كسر الوقف فنفخت «متوسط أقصى ربح» بالخاسرات
+                # (ربح لم يُمسكه المتداول قط). كان التجميد للرابحين فقط.
+                frozen = True
                 continue                # خرجنا بخسارة → لا نحسب أهدافًا بعدها
             if b.h >= t1:
                 result = "win"
@@ -415,7 +443,7 @@ def _day_candidates(cfg: Config, grouped: list[dict],
 # كم رُفض وبأي بوّابة. مب منطق تداول — تشخيص فقط (لا يغيّر النتائج).
 def new_funnel() -> dict:
     return {"considered": 0, "no_5min": 0, "no_trigger": 0,
-            "bad_snapshot": 0, "premarket_only": 0, "error": 0,
+            "bad_snapshot": 0, "premarket_only": 0, "not_ranked": 0, "error": 0,
             "rejected": 0, "alerts": 0,
             "reject_reasons": {}, "shadow": []}
 
@@ -429,14 +457,33 @@ def _news_label(cand) -> str:
     return "سلبي" if cat.category == NEGATIVE_NEWS else "إيجابي"
 
 
-def _reject_bucket(reason: str) -> str:
-    """يصنّف سبب الرفض لفئة موجزة (لتجميع «أكثر بوّابة ترفض»)."""
+# DEBT-13: خريطة الكود الثابت → الخانة (الطريق المفضّل، بلا هشاشة نصّ عربي).
+_CODE_BUCKET = {
+    "rvol": "RVol", "float": "فلوت", "readiness": "جاهزية",
+    "momentum": "زخم ضعيف", "score": "درجة", "vwap": "تحت VWAP",
+    "parabolic": "بارابولِك", "late_wave": "حركة متقدّمة",
+    "price_low": "سعر تحت الحد", "price_high": "سعر فوق الحد",
+    "type": "نوع/بورصة", "exchange": "نوع/بورصة", "volume": "حجم",
+    "min_profit": "ربح صغير", "t12": "توقّف", "halt": "توقّف",
+    "bars": "نقص شموع", "dilution": "تخفيف SEC", "bearish": "محفّز هبوطي",
+    "incomplete": "أخرى",
+}
+
+
+def _reject_bucket(reason: str, code: str = "") -> str:
+    """يصنّف سبب الرفض لفئة موجزة (لتجميع «أكثر بوّابة ترفض»). يفضّل الكود الثابت
+    (DEBT-13) إن وُجد، ويرتدّ لمطابقة النصّ العربي للصفوف القديمة (code فارغ)."""
+    if code and code in _CODE_BUCKET:
+        return _CODE_BUCKET[code]
     r = reason or ""
     # الترتيب مهمّ: المفاتيح الأدقّ أولًا (كلّ سبب سعر يحوي «سعر»، فنميّز «سنتات»
     # و«فوق نطاق» قبل «سعر» العام)؛ و«جاهزية» و«درجة» مفصولتان (كانتا مدموجتين).
     pairs = [("فلوت", "فلوت"), ("RVol", "RVol"), ("بارابولِك", "بارابولِك"),
              ("حركة متقدّمة", "حركة متقدّمة"),
              ("تحت VWAP", "تحت VWAP"),
+             # DEBT-13: رفض الزخم («زخم {n} < …») كان يقع في «أخرى» — بوّابة كاملة
+             # عمياء في القمع. الآن له خانته (النصّ الوحيد المبتدئ بـ«زخم»).
+             ("زخم", "زخم ضعيف"),
              ("جاهزية", "جاهزية"), ("درجة", "درجة"),
              ("نوع الورقة", "نوع/بورصة"), ("بورصة", "نوع/بورصة"),
              ("سنتات", "سعر تحت الحد"), ("فوق نطاق", "سعر فوق الحد"),
@@ -451,17 +498,26 @@ def _reject_bucket(reason: str) -> str:
 
 
 def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
-                    static_cache: dict, pc: float, ticker: str) -> dict:
+                    static_cache: dict, pc: float, ticker: str,
+                    full5: list[Bar] | None = None,
+                    full1: list[Bar] | None = None,
+                    allowed_asof: set | None = None) -> dict:
     """يقيّم مرشّحًا واحدًا (آمن للتشغيل المتوازي) → نتيجة موسومة.
 
     يحاكي المسح المتكرّر للبوت الحي: يفحص عند كل شمعة 5د يكون فيها رنرًا حتى
     **أول نجاح** (تنبيه واحد/سهم/يوم) — المرفوض يُعاد فحصه مع تراكم الحجم، لا
     يُسقَط للأبد عند أول عبور. لا يلمس حالة مشتركة (التجميع لاحقًا تسلسليًّا).
+
+    full5/full1: شموع مجلوبة مسبقًا (لبناء ترتيب المجمّع اللحظي مرّة واحدة —
+    BUG-02)؛ إن غابت تُجلب هنا. allowed_asof: مجموعة طوابع asof التي كان فيها
+    السهم ضمن أعلى top_n_runners بالتغيّر اللحظي (مطابقة أعلى-15 الحي)؛ خارجها
+    لا يُقيَّم (كالحي الذي لا يرى إلا أعلى-15 كل دورة). None = بلا بوّابة ترتيب.
     """
     # best-effort (القسم 3): فشل شبكي لسهم واحد يتخطّاه ولا يكسر الباكتيست.
     try:
-        full5 = base.bars_5min(ticker, day, day)
-        full1 = base.bars_1min(ticker, day, day)
+        if full5 is None:
+            full5 = base.bars_5min(ticker, day, day)
+            full1 = base.bars_1min(ticker, day, day)
     except Exception as exc:  # noqa: BLE001
         logger.debug("باكتيست جلب شموع %s@%s فشل: %s", ticker, day, exc)
         return {"kind": "error"}
@@ -477,7 +533,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     step = max(1, cfg.backtest_scan_step_bars)
     evaluated = errored = False
     premarket_skipped = False   # تخطّى الحارس شمعةً واحدة على الأقل (رنر بريماركت)
+    ranked_out = False          # كان رنرًا لكنه خارج أعلى-15 اللحظي في كل شمعه (BUG-02)
     last_reason = ""
+    last_code = ""
     max_rvol = 0.0          # أقصى RVol بلغه السهم (لقياس الظل عند رفض RVol)
     last_asof = 0
     last_snap = None
@@ -503,7 +561,8 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         # نمدّ شموع 1د حتى نهاية نافذة الزناد (لا بدايتها) كي يُحسب VWAP الجلسة
         # ومشتقاته على لحظة القرار نفسها كالحي — ليس تسرّبًا (نفس نافذة السنابشوت).
         up_to_1 = [x for x in full1 if x.t_ms < asof + _BAR5_MS]
-        client = AsOfClient(base, day, asof, up_to, up_to_1, static_cache)
+        client = AsOfClient(base, day, asof, up_to, up_to_1, static_cache,
+                            news_fetch_limit=cfg.backtest_news_fetch_limit)
         try:
             cand = process_candidate(
                 cfg, client, snap, halts=None,
@@ -518,7 +577,14 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             max_rvol = max(max_rvol, cand.momentum.rvol)
         last_asof, last_snap = asof, snap
         if not cand.is_rejected:
-            # ✅ نجح في هذه الدورة → تنبيه عند لحظتها (دخول = إغلاق الشمعة)
+            # BUG-02: نجح، لكن هل كان ضمن أعلى-15 اللحظي عند asof؟ إن لا، لم يكن
+            # البوت الحي لينبّه عليه هذه الدورة (يرى أعلى-15 فقط) → لا تنبيه،
+            # نواصل المسح (قد يدخل الأعلى في شمعة لاحقة). البوّابة على **التنبيه**
+            # لا التقييم، كي يبقى قياس الظل للمرفوضين سليمًا.
+            if allowed_asof is not None and asof not in allowed_asof:
+                ranked_out = True
+                continue
+            # ✅ نجح ودخل أعلى-15 → تنبيه عند لحظتها (دخول = إغلاق الشمعة)
             post = [x for x in full5 if x.t_ms > asof]
             entry = snap.last_price
             result, gain, draw, tlevel = simulate_outcome(
@@ -591,8 +657,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "max_draw_pct": round(draw, 1),
             }}
         last_reason = cand.rejected_reason or ""
+        last_code = cand.reject_code or ""
         # بوّابات لا تتغيّر خلال اليوم (فلوت/نوع/بورصة) → لا فائدة من إعادة الفحص
-        if _reject_bucket(last_reason) in ("فلوت", "نوع/بورصة"):
+        if _reject_bucket(last_reason, last_code) in ("فلوت", "نوع/بورصة"):
             break
     if not evaluated:
         if errored:
@@ -602,10 +669,15 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         if premarket_skipped:
             return {"kind": "premarket_only"}
         return {"kind": "bad_snapshot"}
+    # BUG-02: قُيّم لكنه لم يُنبَّه ولم يُرفض بأي بوّابة (last_reason فارغ) → نجح
+    # لكنه بقي خارج أعلى-15 اللحظي في كل شمعة. تصنيف not_ranked منفصل كي لا يُعدّ
+    # رفضًا فارغًا يلوّث «أخرى» في القمع. (evaluated=True دائمًا هنا، فالفحص بعده.)
+    if ranked_out and not last_reason:
+        return {"kind": "not_ranked"}
     # قياس الظل: لرفض RVol أو «سعر فوق الحد» نحسب نتيجة افتراضية (لو دخلنا) —
     # يكشف هل العتبة تحمي أم تفوّت فرصًا (قياس فقط). نفس مصادر الأهداف الحيّة.
     shadow = None
-    _sh_bucket = _reject_bucket(last_reason)
+    _sh_bucket = _reject_bucket(last_reason, last_code)
     if (cfg.backtest_shadow_rvol and last_snap is not None
             and _sh_bucket in ("RVol", "سعر فوق الحد")):
       # الظل قياس best-effort (§3): فشل شبكة هنا لا يُسقط الرن كاملًا —
@@ -640,7 +712,49 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         logger.debug("تعذّر قياس ظل %s: %s", ticker, exc)
         shadow = None
     # رُفض في كل الدورات → سببه من آخر محاولة (أكثر تمثيلًا لقيد نهاية اليوم)
-    return {"kind": "rejected", "reason": last_reason, "shadow": shadow}
+    return {"kind": "rejected", "reason": last_reason,
+            "reason_code": last_code, "shadow": shadow}
+
+
+def _asof_rank_gate(cfg: Config, cands: list[tuple[str, float]],
+                    bars5: dict[str, list[Bar] | None],
+                    prev_close: dict[str, float]) -> dict[str, set]:
+    """ترتيب المجمّع اللحظي (BUG-02) — يزيل تسرّب ترتيب قمة-اليوم.
+
+    عند كل طابع شمعة 5د، يرتّب مرشّحي المجمّع بالتغيّر اللحظي (إغلاق آخر شمعة
+    ≤ الطابع) ويسجّل أعلى top_n_runners — **مطابقة detect_runners الحي** (نفس
+    شرط [trigger, max] ونطاق السعر، ثم أعلى-15). يرجّع {ticker: set(طوابع كان
+    فيها ضمن الأعلى)}. الأساس (قمة-اليوم top_n) يبقى مجمّعًا أوّليًّا رخيصًا غير
+    متسرّب؛ الترتيب/القطع اللحظي هنا هو ما يطابق الحي."""
+    allowed: dict[str, set] = {t: set() for t, _ in cands}
+    times = sorted({b.t_ms for t, _ in cands for b in (bars5.get(t) or [])})
+    # مؤشّر تصاعدي لكل سهم على آخر إغلاق ≤ الطابع (الطوابع مرتّبة) — كفاءة.
+    ptr = {t: 0 for t, _ in cands}
+    last_close: dict[str, float | None] = {t: None for t, _ in cands}
+    for T in times:
+        ranks = []
+        for t, _ in cands:
+            b5 = bars5.get(t) or []
+            i = ptr[t]
+            while i < len(b5) and b5[i].t_ms <= T:
+                last_close[t] = b5[i].c
+                i += 1
+            ptr[t] = i
+            pc = prev_close.get(t)
+            c = last_close[t]
+            if not (pc and pc > 0 and c is not None):
+                continue
+            chg = (c - pc) / pc * 100.0
+            # أهلية أعلى-15 = نفس فلتر detect_runners: رنر ضمن النطاق وسعر مقبول.
+            if (cfg.trigger_change_pct <= chg <= cfg.max_change_pct
+                    and cfg.price_min <= c <= cfg.price_max):
+                ranks.append((t, chg))
+        ranks.sort(key=lambda x: -x[1])
+        # مطابقة الحي (main.py): top_n_runners ≤ 0 = بلا سقف (كل الرنرات).
+        cut = ranks if cfg.top_n_runners <= 0 else ranks[:cfg.top_n_runners]
+        for t, _ in cut:
+            allowed[t].add(T)
+    return allowed
 
 
 def simulate_day(cfg: Config, base: MassiveClient, day: str,
@@ -659,13 +773,38 @@ def simulate_day(cfg: Config, base: MassiveClient, day: str,
     if not cands:
         return []
 
-    def _run(tc):
-        ticker = tc[0]
-        return _eval_candidate(cfg, base, day, static_cache,
-                               prev_close[ticker], ticker)
-
     workers = max(1, cfg.backtest_workers)
-    if workers > 1 and len(cands) > 1:
+    _parallel = workers > 1 and len(cands) > 1
+
+    # ── BUG-02: نجلب شموع كل المجمّع مرّة (متوازيًا) لبناء ترتيب أعلى-15 اللحظي
+    # (المجمّع الحي عند كل شمعة) بدل ترتيب قمة-اليوم المتسرّب. ──
+    def _fetch(tc):
+        t = tc[0]
+        try:
+            return t, base.bars_5min(t, day, day), base.bars_1min(t, day, day)
+        except Exception as exc:  # noqa: BLE001 — سهم واحد لا يكسر اليوم
+            logger.debug("باكتيست جلب شموع %s@%s فشل: %s", t, day, exc)
+            return t, None, None
+
+    if _parallel:
+        with ThreadPoolExecutor(max_workers=min(workers, len(cands))) as ex:
+            fetched = list(ex.map(_fetch, cands))
+    else:
+        fetched = [_fetch(tc) for tc in cands]
+    bars5 = {t: b5 for t, b5, _ in fetched}
+    bars1 = {t: b1 for t, _, b1 in fetched}
+    allowed = _asof_rank_gate(cfg, cands, bars5, prev_close)
+
+    def _run(tc):
+        t = tc[0]
+        b5 = bars5.get(t)
+        if b5 is None:
+            return {"kind": "error"}   # فشل الجلب المسبق (best-effort §3)
+        return _eval_candidate(cfg, base, day, static_cache, prev_close[t], t,
+                               full5=b5, full1=bars1.get(t) or [],
+                               allowed_asof=allowed.get(t, set()))
+
+    if _parallel:
         with ThreadPoolExecutor(max_workers=min(workers, len(cands))) as ex:
             results = list(ex.map(_run, cands))
     else:
@@ -682,13 +821,14 @@ def simulate_day(cfg: Config, base: MassiveClient, day: str,
         elif funnel is not None:
             if kind == "rejected":
                 funnel["rejected"] += 1
-                bucket = _reject_bucket(r.get("reason", ""))
+                bucket = _reject_bucket(r.get("reason", ""), r.get("reason_code", ""))
                 funnel["reject_reasons"][bucket] = \
                     funnel["reject_reasons"].get(bucket, 0) + 1
                 if r.get("shadow"):
                     funnel["shadow"].append(r["shadow"])
             else:
-                funnel[kind] += 1   # no_5min · no_trigger · bad_snapshot · error
+                # no_5min · no_trigger · bad_snapshot · not_ranked · premarket_only · error
+                funnel[kind] = funnel.get(kind, 0) + 1
     return trades
 
 
@@ -742,6 +882,21 @@ def _run_config(cfg: Config) -> dict:
         "price_min": cfg.price_min,
         "price_max": cfg.price_max,
         "backtest_wide_t1_rr": cfg.backtest_wide_t1_rr,
+        # BUG-12: عتبات إضافية تغيّر النتائج — بدونها يُدمج رنّان بإعدادات
+        # مختلفة (RVOL_MIN 5 مقابل 4) بلا تحذير «إعدادات مختلفة». عُدّدت صراحةً
+        # (لا asdict) كي لا يولّد تغيير رمز تيليجرام تحذيرًا كاذبًا.
+        "rvol_min": cfg.rvol_min,
+        "float_max": cfg.float_max,
+        "parabolic_day_change_pct": cfg.parabolic_day_change_pct,
+        "alert_score_min": cfg.alert_score_min,
+        "trigger_change_pct": cfg.trigger_change_pct,
+        "max_change_pct": cfg.max_change_pct,
+        "min_target_profit_pct": cfg.min_target_profit_pct,
+        "catalyst_score_bonus": cfg.catalyst_score_bonus,
+        "outcome_window_min": cfg.outcome_window_min,
+        "backtest_top_n": cfg.backtest_top_n,
+        "backtest_scan_step_bars": cfg.backtest_scan_step_bars,
+        "premarket_alerts_enabled": cfg.premarket_alerts_enabled,
     }
 
 
@@ -1119,6 +1274,10 @@ def format_report(res: BacktestResult) -> str:
             lines.append(
                 f"  • تخطّاها حارس البريماركت (رنر بريماركت فقط): "
                 f"{f['premarket_only']}")
+        if f.get("not_ranked"):
+            lines.append(
+                f"  • خارج أعلى-15 اللحظي (لم يدخل مجمّع الحي): "
+                f"{f['not_ranked']}")
         if f.get("error"):
             lines.append(f"  • خطأ معالجة: {f['error']}")
         lines.append(f"  • رُفضت بالبوّابات: {f['rejected']}")
@@ -1191,6 +1350,9 @@ def format_report(res: BacktestResult) -> str:
         "\n⚠️ تقدير تاريخي (لا يضمن المستقبل؛ بلا انزلاق/دفتر أوامر؛ بلا محلّل "
         "Claude/شورت/رادار SEC؛ بلا محاكاة توريث الأبطال ولا توقّفات LULD/T12؛ "
         "الزناد والدخول على إغلاقات شموع 5د لا اللحظي).")
+    lines.append(
+        "ℹ️ المجمّع يُرتَّب لحظيًّا (أعلى-15 بالتغيّر عند كل شمعة، مطابقة الحي)؛ "
+        "قيد متبقٍّ: المجمّع الأوّلي محدود بأعلى المرشّحين بقمة اليوم.")
     return "\n".join(lines)
 
 

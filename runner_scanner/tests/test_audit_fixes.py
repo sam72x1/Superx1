@@ -45,6 +45,41 @@ def test_cache_resets_on_new_day():
     assert calls["n"] == 2
 
 
+def test_cache_ttl_refetches_after_window():
+    """PERF-19: كاش TTL يعيد الجلب فقط بعد مضيّ المهلة — لا كل دورة (الخبر:
+    نظرته الخلفية 48س فمحفّز عمره ~5د مقبول، ومنعُ آلاف النداءات المتطابقة)."""
+    clock = {"t": 1000.0}
+    cache = DailyCache(clock=lambda: clock["t"])
+    calls = {"n": 0}
+
+    def fetch():
+        calls["n"] += 1
+        return f"news-{calls['n']}"
+
+    assert cache.get_ttl("2026-06-26", "news:X", 300, fetch) == "news-1"
+    clock["t"] = 1200.0                     # +200ث < 300 → إصابة كاش
+    assert cache.get_ttl("2026-06-26", "news:X", 300, fetch) == "news-1"
+    assert calls["n"] == 1
+    clock["t"] = 1400.0                     # +400ث ≥ 300 → إعادة جلب
+    assert cache.get_ttl("2026-06-26", "news:X", 300, fetch) == "news-2"
+    assert calls["n"] == 2
+
+
+def test_cache_ttl_cleared_on_new_day():
+    """PERF-19: مدخلات TTL تُمسح كذلك عند تغيّر اليوم (لا خبر أمس اليوم)."""
+    clock = {"t": 0.0}
+    cache = DailyCache(clock=lambda: clock["t"])
+    calls = {"n": 0}
+
+    def fetch():
+        calls["n"] += 1
+        return calls["n"]
+
+    cache.get_ttl("2026-06-26", "news:X", 300, fetch)
+    cache.get_ttl("2026-06-27", "news:X", 300, fetch)   # يوم جديد → إعادة جلب
+    assert calls["n"] == 2
+
+
 # ── #3 حسم التتبّعات المعلّقة ────────────────────────────────────
 def _store():
     return Store(os.path.join(tempfile.mkdtemp(), "a.sqlite3"))

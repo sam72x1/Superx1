@@ -170,3 +170,45 @@ def test_top_action_empty_when_no_data():
     from runner_scanner.dev_assistant import top_action
     txt = top_action(_FakeStore([]), Config())
     assert "لا إجراء عاجل" in txt
+
+
+def test_rvol_raise_ignores_stocks_proposal_wont_excise():
+    """BUG-09: شريحة رفع RVOL_MIN تُحسب بما سيستأصله المقترَح (rvol<7) لا [5,8).
+    خاسرون عند 7.5x يبقون فوق العتبة المقترحة (7) فلا يبرّرون رفعها."""
+    alerts = ([_row(result="loss", rvol=7.5) for _ in range(8)]
+              + [_row(result="win", rvol=12.0) for _ in range(8)])
+    props = propose_calibrations(_FakeStore(alerts), Config())
+    assert not [p for p in props if p.env == "RVOL_MIN"]
+
+
+def test_rvol_raise_counts_only_excised_slice():
+    """BUG-09 (ضبط موجب): خاسرون داخل الشريحة المستأصَلة (6.5<7) يُنتجون الاقتراح.
+    ملاحظة صدق: يمرّ على الكود قبل الإصلاح أيضًا (6.5 داخل الشريحتين القديمة<8
+    والجديدة<7)؛ التضييق نفسه يثبّته التوأم test_rvol_raise_ignores_… (خاسر 7.5
+    داخل القديمة خارج الجديدة). هذا يضمن ألّا يختفي الاقتراح المشروع فحسب."""
+    alerts = ([_row(result="loss", rvol=6.5) for _ in range(8)]
+              + [_row(result="win", rvol=12.0) for _ in range(8)])
+    rv = [p for p in propose_calibrations(_FakeStore(alerts), Config())
+          if p.env == "RVOL_MIN"]
+    assert rv and rv[0].proposed == 7
+
+
+def test_score_raise_ignores_stocks_proposal_wont_excise():
+    """BUG-09: شريحة رفع ALERT_SCORE_MIN [60, proposed=65) لا [60,70).
+    خاسرون عند درجة 67 يبقون فوق 65 فلا يبرّرون الرفع."""
+    alerts = ([_row(result="loss", score=67.0) for _ in range(8)]
+              + [_row(result="win", score=85.0) for _ in range(8)])
+    props = propose_calibrations(_FakeStore(alerts), Config(alert_score_min=60.0))
+    assert not [p for p in props if p.env == "ALERT_SCORE_MIN"]
+
+
+def test_score_raise_counts_only_excised_slice():
+    """BUG-09 (ضبط موجب): خاسرون داخل الشريحة المستأصَلة (62<65) يُنتجون الاقتراح=65.
+    ملاحظة صدق: يمرّ قبل الإصلاح أيضًا (62 داخل [60,70) و[60,65))؛ التضييق نفسه
+    يثبّته التوأم test_score_raise_ignores_… (خاسر 67 داخل القديمة خارج الجديدة)."""
+    alerts = ([_row(result="loss", score=62.0) for _ in range(8)]
+              + [_row(result="win", score=85.0) for _ in range(8)])
+    sc = [p for p in propose_calibrations(_FakeStore(alerts),
+                                          Config(alert_score_min=60.0))
+          if p.env == "ALERT_SCORE_MIN"]
+    assert sc and sc[0].proposed == 65

@@ -21,12 +21,13 @@ class ScoreResult:
     final_score: float
     passed: bool
     reason: str = ""
+    reason_code: str = ""   # كود ثابت للرفض (DEBT-13) — للتصنيف الآلي لا العرض
 
 
 def score_candidate(cfg: Config, c: Candidate) -> ScoreResult:
     """يحسب الدرجة النهائية ويطبّق شروط القبول. يحدّث c.final_score."""
     if c.momentum is None or c.readiness is None:
-        return ScoreResult(0.0, False, "تحليل ناقص")
+        return ScoreResult(0.0, False, "تحليل ناقص", "incomplete")
 
     # ── شرط الجاهزية الفنية (≥60) ─────────────────────────────────
     if c.readiness.classic_score < cfg.tech_readiness_min:
@@ -34,6 +35,7 @@ def score_candidate(cfg: Config, c: Candidate) -> ScoreResult:
             0.0, False,
             f"جاهزية فنية {c.readiness.classic_score:.0f} < "
             f"{cfg.tech_readiness_min:.0f} (غير جاهز فنيًا)",
+            "readiness",
         )
 
     # ── شرط الزخم الأدنى ──────────────────────────────────────────
@@ -42,6 +44,7 @@ def score_candidate(cfg: Config, c: Candidate) -> ScoreResult:
             0.0, False,
             f"زخم {c.momentum.score:.0f} < {cfg.momentum_min_floor:.0f} "
             f"(زخم ضعيف رغم +{cfg.trigger_change_pct:g}%)",
+            "momentum",
         )
 
     # ── الدمج ─────────────────────────────────────────────────────
@@ -59,6 +62,7 @@ def score_candidate(cfg: Config, c: Candidate) -> ScoreResult:
         return ScoreResult(
             c.final_score, False,
             f"درجة {c.final_score:.0f} < عتبة التنبيه {cfg.alert_score_min:.0f}",
+            "score",
         )
 
     return ScoreResult(c.final_score, True)

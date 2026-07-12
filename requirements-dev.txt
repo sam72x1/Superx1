@@ -1,0 +1,3 @@
+# تبعيات التطوير/الاختبار فقط — لا تُثبَّت في بناء Render (الإنتاج لا يحتاجها).
+# التشغيل: pip install -r requirements-dev.txt ثم python3 -m pytest runner_scanner/tests/ -q
+pytest==9.1.1

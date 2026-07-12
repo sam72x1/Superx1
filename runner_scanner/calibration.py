@@ -23,6 +23,18 @@ _MIN_MEDIUM = 4        # أقلّ من هذا لا نقترح أصلًا
 _MIN_MISSED = 3        # فرص فائتة بنفس البوّابة قبل اقتراح تخفيفها
 
 
+def _rejected_by(m, code: str, needle: str) -> bool:
+    """هل رُفض هذا الصفّ بالبوّابة المعنيّة؟ يفضّل الكود الثابت (DEBT-13) إن
+    وُجد، ويرتدّ لمطابقة النصّ العربي للصفوف القديمة (بلا كود). صفّ dict/Row."""
+    try:
+        rc = m["reason_code"] or ""
+    except (KeyError, IndexError):
+        rc = ""
+    if rc:
+        return rc == code
+    return needle in (m["reject_reason"] or "")
+
+
 @dataclass
 class CalibrationProposal:
     """اقتراح معايرة واحد (للمراجعة البشرية فقط — لا يُطبَّق تلقائيًا)."""
@@ -69,15 +81,19 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
         return props   # لا بيانات كافية لأي اقتراح ذي معنى
 
     # ── 1) RVOL_MIN: الشريحة الدنيا ضعيفة → ارفع العتبة ───────────
+    # BUG-09: شريحة الدليل تُشتقّ من **المقترَح** لا العكس — وإلا عدّ التنبيهات
+    # في [proposed, rvol_min+3) دليلًا على شريحة ضعيفة **سيبقيها المقترَح** (مثل
+    # نمط TECH_READINESS_MIN الصحيح: يقيس بالضبط ما سيستأصله).
+    proposed_rv_up = round(cfg.rvol_min + 2)
     low_rv = [r for r in alerts
-              if r["rvol"] is not None and r["rvol"] < cfg.rvol_min + 3]
+              if r["rvol"] is not None and r["rvol"] < proposed_rv_up]
     low_wr, low_n = _win_rate(low_rv)
     conf = _conf(low_n)
     if low_wr is not None and conf and low_wr <= base_wr - 20:
         props.append(CalibrationProposal(
             env="RVOL_MIN", current=cfg.rvol_min,
-            proposed=round(cfg.rvol_min + 2),
-            reason=(f"شريحة RVol المنخفضة (دون {cfg.rvol_min + 3:g}x) نجاحها "
+            proposed=proposed_rv_up,
+            reason=(f"شريحة RVol دون العتبة المقترحة {proposed_rv_up:g}x نجاحها "
                     f"{low_wr:.0f}% مقابل {base_wr:.0f}% للكل ({low_n} محسوم)."),
             confidence=conf))
     else:
@@ -87,7 +103,7 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
         # لا نبني اقتراح تعديل على قيمة لا نعرفها (الصدق الحسابي مقدَّم).
         proposed_rv = max(1.0, round(cfg.rvol_min - 1))
         rv_missed = [m for m in missed
-                     if "RVol" in (m["reject_reason"] or "")
+                     if _rejected_by(m, "rvol", "RVol")
                      and m["rvol"] is not None and m["rvol"] >= proposed_rv]
         if len(rv_missed) >= _MIN_MISSED:
             props.append(CalibrationProposal(
@@ -114,16 +130,20 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
                         f"— رفع العتبة إلى {hi:g} يصفّي الشريحة الضعيفة."),
                 confidence=conf))
 
-    # ── 3) ALERT_SCORE_MIN: الشريحة فوق العتبة مباشرة تخسر → ارفع ─
-    lo, hi = cfg.alert_score_min, cfg.alert_score_min + 10
-    near = [r for r in alerts if r["score"] is not None and lo <= r["score"] < hi]
+    # ── 3) ALERT_SCORE_MIN: الشريحة التي سيستأصلها الرفع تخسر → ارفع ─
+    # BUG-09: الشريحة [min, proposed) — ما سيرفعه المقترَح بالضبط، لا [min, min+10)
+    # التي تُبقي [proposed, min+10) وتَعُدّها دليلًا.
+    lo = cfg.alert_score_min
+    proposed_score = round(cfg.alert_score_min + 5)
+    near = [r for r in alerts if r["score"] is not None
+            and lo <= r["score"] < proposed_score]
     n_wr, n_n = _win_rate(near)
     conf = _conf(n_n)
     if n_wr is not None and conf and n_wr <= base_wr - 20:
         props.append(CalibrationProposal(
             env="ALERT_SCORE_MIN", current=cfg.alert_score_min,
-            proposed=round(cfg.alert_score_min + 5),
-            reason=(f"درجات {lo:g}-{hi:g} (فوق العتبة مباشرة) نجاحها "
+            proposed=proposed_score,
+            reason=(f"درجات {lo:g}-{proposed_score:g} (تُستأصَل بالرفع) نجاحها "
                     f"{n_wr:.0f}% ({n_n} محسوم) — رفعها يرفع الجودة."),
             confidence=conf))
 
@@ -132,7 +152,7 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
     # رفع السقف إلى 60M (يبقى خارجه). فلوت مجهول يُستبعد (لا نبني على مجهول).
     proposed_fl = round(cfg.float_max * 1.5)
     fl_missed = [m for m in missed
-                 if "فلوت" in (m["reject_reason"] or "")
+                 if _rejected_by(m, "float", "فلوت")
                  and m["float_shares"] is not None
                  and m["float_shares"] <= proposed_fl]
     if len(fl_missed) >= _MIN_MISSED:

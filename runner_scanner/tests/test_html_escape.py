@@ -68,6 +68,20 @@ def test_build_card_html_safe_with_hostile_ticker():
     assert "&lt;" in card and "&amp;" in card   # هُرِّبت لا أُسقِطت
 
 
+# ── ⚠️ سطر التخفيف (SEC): note من سلسلة نموذج JSON خام خارجي ───────
+def test_build_card_dilution_note_html_safe():
+    """تنظيف: سطر تخفيف SEC كان يحقن c.dilution.note (سلسلة نموذج من JSON خام
+    خارجي) بلا esc — < واحد يُسقط البطاقة كلها. الآن مُهرَّب."""
+    from runner_scanner.models import DilutionResult
+    cand = _card_candidate()
+    cand.dilution = DilutionResult(risk="مرتفع", latest_form="S-1",
+                                   note="طرح <ATM> بقيمة $50M & رفّ مُسجّل")
+    card = build_card(Config(code_version="x"), cand,
+                      now=datetime(2026, 6, 26, 15, 31, tzinfo=timezone.utc))
+    _assert_html_safe(card)
+    assert "&lt;ATM&gt;" in card and "&amp;" in card   # هُرِّب لا أُسقِط
+
+
 # ── 🎯 رسائل المتابعة: رمز السهم في كل الفروع ─────────────────────
 def test_build_followup_html_safe_all_branches():
     cfg = Config()
@@ -128,3 +142,17 @@ def test_calibration_proposals_html_safe():
     text = format_proposals(propose_calibrations(_Store(), Config()))
     assert "RVOL_MIN" in text
     _assert_html_safe(text)
+
+
+# ── 🚨 تنبيه العطل: جسم استجابة خام فيه <>& يُسقط الرسالة (BUG-05) ─────
+def test_fault_alert_html_safe():
+    """raise_fault برسالة فيها HTML خام (جسم خطأ مزوّد) → المُرسَل مُهرَّب.
+    قبل الإصلاح: < واحد يُسقط الرسالة الوحيدة التي تخبرك أن البوت عمي —
+    وهي مزيلة التكرار فلا تُعاد أبدًا."""
+    from runner_scanner.monitor import HealthMonitor
+    sent = []
+    mon = HealthMonitor(notify=sent.append)
+    mon.raise_fault("api", 'خطأ 500 على /x: <html><body>Bad & Gateway</body></html>')
+    assert sent
+    _assert_html_safe(sent[0])
+    assert "&amp;" in sent[0] and "&lt;html&gt;" in sent[0]   # الكيانات سليمة

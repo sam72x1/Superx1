@@ -39,7 +39,7 @@
                        Stochastic RSI · دايفرجنس · ADX/DMI · بولينجر %B ·
                        نماذج الشموع (بسياق الاتجاه) · الحجم
 4) الدرجة النهائية   = زخم + جاهزية + تقوية الخبر، بشرط:
-                       • الجاهزية الفنية ≥ 60/100
+                       • الجاهزية الفنية ≥ 65/100
                        • الزخم فوق الحد الأدنى
 ```
 
@@ -116,8 +116,8 @@ python -m runner_scanner.main
 ### الاختبارات (بلا إنترنت)
 
 ```bash
-pip install pytest
-python -m pytest runner_scanner/tests/ -q
+pip install -r requirements-dev.txt
+python3 -m pytest runner_scanner/tests/ -q
 ```
 
 ---

@@ -34,6 +34,7 @@ from .sessions import (
 from .short_interest import ShortInterestProvider
 from .state import Store, trade_date_str
 from .telegram_bot import TelegramAssistant
+from .textutil import esc
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class Scanner:
         self.last_scan_et = None
         self.assistant = TelegramAssistant(self)   # مساعد تيليجرام تفاعلي
         self._stop = threading.Event()
+        self._shutdown_done = False    # حارس تفكيك idempotent (BUG-25)
 
     # ── دورة مسح واحدة ────────────────────────────────────────────
     def run_cycle(self, et_now=None) -> int:
@@ -140,6 +142,18 @@ class Scanner:
         if events:
             logger.info("أُرسل %d تحديث متابعة", len(events))
 
+        # حفظ أبطال هذي الفترة (أعلى 15 صعودًا) للتوريث للفترة التالية — **قبل**
+        # رجوع البريماركت (BUG-06): الأبطال رصدٌ للسنابشوت لا فعل تنبيه، فحفظهم
+        # لا يخالف تعطيل تنبيهات البريماركت. الرسمي يرث بريماركت-اليوم
+        # (_CHAMP_INHERIT[REGULAR]=(PREMARKET,0))، وبلا هذا الحفظ يكون التوريث
+        # ميتًا (لا يُكتب أبدًا في المسار الحيّ) أو يبعث يومًا قديمًا اعتباطيًا.
+        if self.cfg.champions_enabled and top:
+            # أبطال بحجم تداول فعلي فقط (لا طبعة بريماركت رقيقة تُورَّث كأولوية)
+            self.store.save_champions(
+                session.value, et_date,
+                [(e.ticker, e.change_pct, e.last_price) for e in top
+                 if e.day_volume > 0])
+
         # جلسة البريماركت معطّلة (قرار المستخدم بالبيانات: 8 أشهر → بريماركت 59%
         # مقابل رسمي 87%؛ تعطيلها يرفع النجاح الكلي ~6 نقاط). نحدّث المفتوح فوق
         # وننهي هنا بلا تنبيهات جديدة. /top لا يزال يعرض رنرات البريماركت (إعلام).
@@ -174,14 +188,6 @@ class Scanner:
             self.store.log_candidate(cand)   # closed-loop لكل مرشّح
             if not cand.is_rejected:
                 accepted.append(cand)
-
-        # حفظ أبطال هذي الفترة (أعلى 15 صعودًا) للتوريث للفترة التالية
-        if self.cfg.champions_enabled and top:
-            # أبطال بحجم تداول فعلي فقط (لا طبعة بريماركت رقيقة تُورَّث كأولوية)
-            self.store.save_champions(
-                session.value, et_date,
-                [(e.ticker, e.change_pct, e.last_price) for e in top
-                 if e.day_volume > 0])
 
         # ترتيب الأولوية ثم الإرسال
         sent = 0
@@ -377,9 +383,16 @@ class Scanner:
                 logger.info("أُرسلت ملاحظات الباكتيست")
         except Exception as exc:  # noqa: BLE001
             logger.exception("الباكتيست التلقائي فشل")
-            self.telegram.send(f"⚠️ تعذّر الباكتيست التلقائي: {exc}")
+            # §5: exc قد يحمل جسم استجابة خام فيه <>& → هرّبه قبل HTML (BUG-05)
+            self.telegram.send(f"⚠️ تعذّر الباكتيست التلقائي: {esc(exc)}")
 
     def shutdown(self) -> None:
+        # idempotent (BUG-25): يُنادى من finally الحلقة، وقد يُنادى مرّة ثانية —
+        # تفكيك مزدوج يغلق القاعدة تحت خيوط حيّة (ProgrammingError). المعالج
+        # الإشاري يكتفي بـ_stop.set()، والتفكيك الفعلي هنا مرّة واحدة فقط.
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
         logger.info("إيقاف الماسح...")
         self._stop.set()
         self.halts.stop()
@@ -404,8 +417,10 @@ def main() -> int:
     scanner = Scanner(cfg)
 
     def _handle_signal(signum, _frame):
-        logger.info("استلمنا إشارة %s", signum)
-        scanner.shutdown()
+        # لا نفكّك من داخل المعالج (قد ينفَّذ وسط run_cycle على الخيط الرئيسي)
+        # — نكتفي بطلب التوقّف، ويتكفّل finally الحلقة بالتفكيك مرّة واحدة (BUG-25).
+        logger.info("استلمنا إشارة %s — طلب توقّف", signum)
+        scanner._stop.set()
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
