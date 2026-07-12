@@ -473,8 +473,8 @@ def test_run_backtest_end_to_end():
     assert runr and runr[0]["result"] in ("win", "loss", "timeout")
     report = backtest.format_report(res)
     assert "باكتيست" in report
-    # BUG-02 (إفصاح): التقرير يذكر انحياز مجمّع المرشّحين (قمة اليوم الكاملة)
-    assert "انحياز تفاؤلي معروف" in report and "قمة اليوم الكاملة" in report
+    # BUG-02 (مُصلَح): التقرير يذكر الترتيب اللحظي والقيد المتبقّي على المجمّع
+    assert "يُرتَّب لحظيًّا" in report and "قيد متبقٍّ" in report
 
 
 # ── قمع الترشيح (تشخيص: أين يموت المرشّحون؟) ──────────────────────
@@ -597,6 +597,31 @@ def test_day_candidates_pool_wider_than_live_top_n():
     # لو كان السقف 15 الحي لظهر 15 فقط
     cfg2 = Config(massive_api_key="x", trigger_change_pct=10.0, backtest_top_n=10)
     assert len(backtest._day_candidates(cfg2, grouped, prev)) == 10
+
+
+def test_asof_rank_gate_picks_early_leader_not_late_exploder():
+    """BUG-02 (لا-تسرّب المجمّع): عند الطابع T، أعلى-15 اللحظي = من كان الأعلى
+    **بالتغيّر عند T** لا من انتهى الأعلى بقمة اليوم. سهم A كان الأعلى عند T ثم
+    خفت، وسهم B كان صغيرًا عند T ثم انفجر لاحقًا → مجمّع T يجب أن يحوي A لا B.
+    قبل الإصلاح كان الترتيب بقمة اليوم الكاملة يُدخل B (رابح اليوم) بأثر رجعي."""
+    T1 = _tms(2026, 6, 26, 9, 35)   # الطابع المبكّر
+    T2 = _tms(2026, 6, 26, 15, 0)   # لاحقًا (انفجار B)
+    prev = {"A": 2.0, "B": 2.0}
+    bars5 = {
+        # A: +50% عند T1 (الأعلى لحظتها) ثم يخفت
+        "A": [Bar(t_ms=T1, o=2.9, h=3.1, l=2.9, c=3.0, v=3e5, n=80),
+              Bar(t_ms=T2, o=3.0, h=3.1, l=2.9, c=3.0, v=3e5, n=80)],
+        # B: +11% عند T1 (تحت A) ثم +200% عند T2 (قمة اليوم الأعلى)
+        "B": [Bar(t_ms=T1, o=2.2, h=2.3, l=2.2, c=2.22, v=3e5, n=80),
+              Bar(t_ms=T2, o=2.22, h=6.1, l=2.2, c=6.0, v=9e5, n=90)],
+    }
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 max_change_pct=400.0, price_min=1.0, price_max=30.0,
+                 top_n_runners=1)   # أعلى-1 فقط: يُبرز من يملك المقعد لحظيًّا
+    allowed = backtest._asof_rank_gate(
+        cfg, [("A", 50.0), ("B", 200.0)], bars5, prev)
+    assert T1 in allowed["A"] and T1 not in allowed["B"]   # T1: A لا B
+    assert T2 in allowed["B"] and T2 not in allowed["A"]   # T2: B تجاوز فدخل
 
 
 def test_day_candidates_no_lookahead_on_close_or_dayhigh():
