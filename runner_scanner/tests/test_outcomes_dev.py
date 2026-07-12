@@ -103,6 +103,44 @@ def test_outcome_timeout_when_window_passes():
     assert row["result"] == "timeout"
 
 
+def test_same_pulse_target_and_stop_records_loss():
+    """§8/BUG-08: نبضة تلمس الهدف والوقف معًا = خسارة (لا ربح). نصنع صفًّا قمّته
+    تجاوزت الهدف وقاعه لمس الوقف قبل الحسم (تراكم عبر فجوة النبضة)، ثم نبضة
+    واحدة تحسمه: يجب loss، مع إصدار حدثَي الهدف والوقف (لا نكبت رسالة).
+    قبل الإصلاح كانت حلقة الأهداف تسبق فرع الوقف فتسجّل win وتنفخ نسبة النجاح."""
+    st = _store()
+    c = _cand("BOTH", 3.0, stop=2.7, t1=3.3)
+    st.log_candidate(c, T0)
+    st.mark_alerted("BOTH", 80, T0)
+    st._conn.execute(
+        "UPDATE tracking SET high_after=3.5, low_after=2.6 WHERE ticker='BOTH'")
+    st._conn.commit()
+    events = st.update_outcomes(
+        {"BOTH": 3.0}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    row = st.fetch_resolved(only_alerts=True)[0]
+    assert row["result"] == "loss"                     # §8: تحفّظ
+    assert row["hit_target"] == 1 and row["hit_stop"] == 1
+    assert any(e["type"] == "target" for e in events)  # كلا الحدثين يُصدَران
+    assert any(e["type"] == "stop" for e in events)
+    st.close()
+
+
+def test_target_then_stop_across_pulses_stays_win():
+    """تمييز مهم: هدف لُمس في نبضة سابقة (result=win) ثم وقف لاحق يبقى win —
+    القاعدة لنفس النبضة فقط، لا للخروج المشروع بعد بلوغ الهدف."""
+    st = _store()
+    c = _cand("SEQ", 3.0, stop=2.7, t1=3.3)
+    st.log_candidate(c, T0)
+    st.mark_alerted("SEQ", 80, T0)
+    st.update_outcomes({"SEQ": 3.4},   # نبضة 1: الهدف → win
+                       datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc))
+    st.update_outcomes({"SEQ": 2.6},   # نبضة 2: الوقف لاحقًا
+                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    row = st.fetch_resolved(only_alerts=True)[0]
+    assert row["result"] == "win"      # يبقى win (الهدف بُلغ أولًا فعلًا)
+    st.close()
+
+
 def test_surge_event_on_new_leg():
     st = _store()
     c = _cand("SURGE", 3.0, stop=2.7, t1=10.0)   # هدف بعيد كي لا يُحسم

@@ -359,12 +359,19 @@ class Store:
                     participation = ("قوية ⬆️" if g >= 1.5 else
                                      "معتدلة" if g >= 1.1 else "خافتة ⚠️")
 
+                # §8/BUG-08: لمس الهدف + الوقف في **نفس النبضة** = خسارة (لا يمكن
+                # معرفة الترتيب داخل النبضة، فنتحفّظ). نحسب لمسة الوقف الآن **قبل**
+                # حلقة الأهداف كي تسجّل الأهداف «loss» لا «win» إن لُمس الوقف أيضًا.
+                # (هدف لُمس في نبضة سابقة يبقى «win» — القاعدة لنفس النبضة فقط.)
+                stop_now = bool(not notified_stop and r["stop_price"]
+                                and low <= r["stop_price"])
+
                 # 🎯 أهداف: نبلّغ كل هدف عُبر لأول مرة (نرسل للمُنبَّه فقط)
                 while notified_t < len(targets) and high >= targets[notified_t]:
                     notified_t += 1
                     hit_target = 1
                     if not result:
-                        result = "win"
+                        result = "loss" if stop_now else "win"
                     if is_alert:
                         # 🪜 الوقف المُرقّى بعد هذا الهدف: بعد الهدف1 = التعادل (سعر
                         # دخول المستخدم من البطاقة، لا first_price المتتبَّع الذي قد
