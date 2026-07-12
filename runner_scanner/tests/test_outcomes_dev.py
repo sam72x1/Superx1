@@ -414,3 +414,15 @@ def test_export_csvs_writes_files():
     for path, _ in files:
         content = open(path, encoding="utf-8-sig").read()
         assert "ticker" in content and "MISS" in content
+
+
+def test_dev_bucket_labels_match_bounds():
+    """BUG-14: تسميات الشرائح تطابق حدودها — RVol=2 لا يُسمّى «5-8x»،
+    ودرجة 40 لا تُسمّى «60-70» (القيم دون الحدّ تُستبعَد لا تُنسب خطأً)."""
+    from runner_scanner.dev_assistant import _bucket
+    rvol_edges = [(5, 8, "5-8x"), (8, 15, "8-15x"), (15, 1e9, "15x أو أكثر")]
+    assert _bucket(2.0, rvol_edges) is None      # دون 5 → مستبعَد لا «5-8x»
+    assert _bucket(6.0, rvol_edges) == "5-8x"
+    score_edges = [(60, 70, "60-70"), (70, 80, "70-80")]
+    assert _bucket(40.0, score_edges) is None    # دون 60 → مستبعَد لا «60-70»
+    assert _bucket(65.0, score_edges) == "60-70"
