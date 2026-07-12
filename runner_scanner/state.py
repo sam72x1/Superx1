@@ -115,6 +115,50 @@ CREATE TABLE IF NOT EXISTS tracking (
 """
 
 
+# أعمدة tracking عند أول شحن للجدول (dd7dd34) — مجمّدة كمرجع الاتّساق الذاتي.
+# لا تعدّلها: كل عمود في _SCHEMA يجب أن يكون هنا أو في _MIGRATIONS، وإلا فاته
+# الترحيل على قاعدة قديمة (اختبار الاتّساق يمسك المنسيّ القادم للأبد).
+_ORIGINAL_TRACKING_COLS = frozenset({
+    "ticker", "trade_date", "first_seen_at", "logged_at", "session",
+    "change_pct", "score", "momentum", "readiness", "rvol", "rvol_5min",
+    "float_shares", "float_source", "halt_state", "had_news", "rejected",
+    "reject_reason", "is_alert", "first_price", "stop_price", "target1",
+    "high_after", "low_after", "max_gain_pct", "max_draw_pct", "hit_target",
+    "hit_stop", "outcome", "closed_at",
+})
+
+# ترحيل الأعمدة المضافة بعد شحن الجدول — كل عمود جديد يُضاف هنا **و** لـ_SCHEMA.
+# القرص دائم فـ CREATE TABLE IF NOT EXISTS لا يفعل شيئًا على قاعدة قائمة؛ بلا
+# هذا السطر يرمي INSERT «no such column» كل دورة ويعمى البوت صامتًا (§7 · BUG-01).
+_MIGRATIONS = (
+    ("short_pct", "REAL"), ("dilution_risk", "TEXT"),
+    ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT"),
+    ("notified_missed", "INTEGER DEFAULT 0"),
+    ("first_volume", "REAL"), ("first_session", "TEXT"),
+    ("peak_at", "TEXT"), ("stop_dist_at", "TEXT"),
+    # ── الستة التي فاتها الترحيل (دخلت _SCHEMA في 5a9ab43 بعد شحن الجدول) ──
+    ("target2", "REAL"), ("target3", "REAL"),
+    ("notified_targets", "INTEGER DEFAULT 0"),
+    ("notified_stop", "INTEGER DEFAULT 0"),
+    ("notified_high", "REAL"), ("result", "TEXT DEFAULT ''"),
+)
+
+
+def _tracking_schema_columns() -> set[str]:
+    """أسماء أعمدة جدول tracking كما هي في _SCHEMA (لاختبار الاتّساق الذاتي)."""
+    body = _SCHEMA.split("CREATE TABLE IF NOT EXISTS tracking", 1)[1]
+    body = body.split("(", 1)[1].split("PRIMARY KEY", 1)[0]
+    cols = set()
+    for line in body.splitlines():
+        line = line.strip()
+        if not line or line.startswith("--"):
+            continue
+        first = line.split()[0]
+        if first.isidentifier():
+            cols.add(first)
+    return cols
+
+
 def trade_date_str(now: datetime | None = None) -> str:
     """تاريخ يوم التداول (بتوقيت ET) كمفتاح موحّد."""
     now = now or datetime.now(timezone.utc)
@@ -140,14 +184,8 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_SCHEMA)
-            # ترقية قواعد قديمة: إضافة أعمدة تشريح الفشل إن غابت
-            for col, typ in (("short_pct", "REAL"), ("dilution_risk", "TEXT"),
-                             ("analyst_dir", "TEXT"), ("catalyst_head", "TEXT"),
-                             ("notified_missed", "INTEGER DEFAULT 0"),
-                             ("first_volume", "REAL"),
-                             ("first_session", "TEXT"),
-                             ("peak_at", "TEXT"),
-                             ("stop_dist_at", "TEXT")):
+            # ترقية قواعد قديمة: إضافة الأعمدة المضافة بعد شحن الجدول إن غابت
+            for col, typ in _MIGRATIONS:
                 try:
                     self._conn.execute(
                         f"ALTER TABLE tracking ADD COLUMN {col} {typ}")
