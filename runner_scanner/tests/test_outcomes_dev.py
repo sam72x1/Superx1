@@ -458,8 +458,7 @@ def test_export_csvs_writes_files():
 
 
 def test_dev_bucket_labels_match_bounds():
-    """BUG-14: تسميات الشرائح تطابق حدودها — RVol=2 لا يُسمّى «5-8x»،
-    ودرجة 40 لا تُسمّى «60-70» (القيم دون الحدّ تُستبعَد لا تُنسب خطأً)."""
+    """BUG-14 (فحص وحدة): _bucket يستبعد القيم دون الحدّ لا يُسمّيها بالشريحة."""
     from runner_scanner.dev_assistant import _bucket
     rvol_edges = [(5, 8, "5-8x"), (8, 15, "8-15x"), (15, 1e9, "15x أو أكثر")]
     assert _bucket(2.0, rvol_edges) is None      # دون 5 → مستبعَد لا «5-8x»
@@ -467,3 +466,27 @@ def test_dev_bucket_labels_match_bounds():
     score_edges = [(60, 70, "60-70"), (70, 80, "70-80")]
     assert _bucket(40.0, score_edges) is None    # دون 60 → مستبعَد لا «60-70»
     assert _bucket(65.0, score_edges) == "60-70"
+
+
+def test_dev_report_excludes_subthreshold_rows_from_labeled_buckets():
+    """BUG-14 (تحقّق عدائي — يُشغّل build_dev_report فعلًا، لا _bucket معزولًا):
+    4 صفقات محسومة بـRVol=2 ودرجة=40 (دون حدّي «5-8x»/«60-70») يجب ألّا تظهر
+    تحت تينك التسميتين في التقرير. قبل إصلاح BUG-14 (حدّ الشريحة 0) كانت تُنسب
+    خطأً فيهيمن أسهم دون البوّابة على شريحة يعاير المستخدم عليها. هذا الاختبار
+    يفشل على الكود قبل الإصلاح (بخلاف فحص الوحدة الذي يمرّر الحدود الصحيحة بنفسه)."""
+    st = _store()
+    prices = {}
+    for i in range(12):   # ≥ dev_min_sample كي تُرسَم شرائح RVol/الدرجة أصلًا
+        tkr = f"SUB{i}"
+        st.log_candidate(_cand(tkr, 3.0, stop=2.7, t1=3.3), T0)
+        st.mark_alerted(tkr, 80, T0)
+        prices[tkr] = 3.4     # فوز (بلغ الهدف)
+        st._conn.execute(     # دون حدّي الشريحتين: RVol=2 (<5) ودرجة=40 (<60)
+            "UPDATE tracking SET rvol=2.0, score=40 WHERE ticker=?", (tkr,))
+    st._conn.commit()
+    st.update_outcomes(prices,
+                       datetime(2026, 6, 26, 14, 20, tzinfo=timezone.utc))
+    rep = build_dev_report(st, CFG)
+    assert "5-8x" not in rep      # RVol=2 مستبعَد لا يُنسب لـ«5-8x»
+    assert "60-70" not in rep     # درجة=40 مستبعَدة لا تُنسب لـ«60-70»
+    st.close()

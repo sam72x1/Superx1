@@ -182,7 +182,10 @@ def test_rvol_raise_ignores_stocks_proposal_wont_excise():
 
 
 def test_rvol_raise_counts_only_excised_slice():
-    """BUG-09: خاسرون تحت العتبة المقترحة (6.5<7) يبرّرون الرفع ويظهر الاقتراح."""
+    """BUG-09 (ضبط موجب): خاسرون داخل الشريحة المستأصَلة (6.5<7) يُنتجون الاقتراح.
+    ملاحظة صدق: يمرّ على الكود قبل الإصلاح أيضًا (6.5 داخل الشريحتين القديمة<8
+    والجديدة<7)؛ التضييق نفسه يثبّته التوأم test_rvol_raise_ignores_… (خاسر 7.5
+    داخل القديمة خارج الجديدة). هذا يضمن ألّا يختفي الاقتراح المشروع فحسب."""
     alerts = ([_row(result="loss", rvol=6.5) for _ in range(8)]
               + [_row(result="win", rvol=12.0) for _ in range(8)])
     rv = [p for p in propose_calibrations(_FakeStore(alerts), Config())
@@ -200,7 +203,9 @@ def test_score_raise_ignores_stocks_proposal_wont_excise():
 
 
 def test_score_raise_counts_only_excised_slice():
-    """BUG-09: خاسرون تحت المقترَح (62<65) يبرّرون الرفع ويظهر الاقتراح=65."""
+    """BUG-09 (ضبط موجب): خاسرون داخل الشريحة المستأصَلة (62<65) يُنتجون الاقتراح=65.
+    ملاحظة صدق: يمرّ قبل الإصلاح أيضًا (62 داخل [60,70) و[60,65))؛ التضييق نفسه
+    يثبّته التوأم test_score_raise_ignores_… (خاسر 67 داخل القديمة خارج الجديدة)."""
     alerts = ([_row(result="loss", score=62.0) for _ in range(8)]
               + [_row(result="win", score=85.0) for _ in range(8)])
     sc = [p for p in propose_calibrations(_FakeStore(alerts),
