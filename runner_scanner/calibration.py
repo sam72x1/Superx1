@@ -69,15 +69,19 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
         return props   # لا بيانات كافية لأي اقتراح ذي معنى
 
     # ── 1) RVOL_MIN: الشريحة الدنيا ضعيفة → ارفع العتبة ───────────
+    # BUG-09: شريحة الدليل تُشتقّ من **المقترَح** لا العكس — وإلا عدّ التنبيهات
+    # في [proposed, rvol_min+3) دليلًا على شريحة ضعيفة **سيبقيها المقترَح** (مثل
+    # نمط TECH_READINESS_MIN الصحيح: يقيس بالضبط ما سيستأصله).
+    proposed_rv_up = round(cfg.rvol_min + 2)
     low_rv = [r for r in alerts
-              if r["rvol"] is not None and r["rvol"] < cfg.rvol_min + 3]
+              if r["rvol"] is not None and r["rvol"] < proposed_rv_up]
     low_wr, low_n = _win_rate(low_rv)
     conf = _conf(low_n)
     if low_wr is not None and conf and low_wr <= base_wr - 20:
         props.append(CalibrationProposal(
             env="RVOL_MIN", current=cfg.rvol_min,
-            proposed=round(cfg.rvol_min + 2),
-            reason=(f"شريحة RVol المنخفضة (دون {cfg.rvol_min + 3:g}x) نجاحها "
+            proposed=proposed_rv_up,
+            reason=(f"شريحة RVol دون العتبة المقترحة {proposed_rv_up:g}x نجاحها "
                     f"{low_wr:.0f}% مقابل {base_wr:.0f}% للكل ({low_n} محسوم)."),
             confidence=conf))
     else:
@@ -114,16 +118,20 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
                         f"— رفع العتبة إلى {hi:g} يصفّي الشريحة الضعيفة."),
                 confidence=conf))
 
-    # ── 3) ALERT_SCORE_MIN: الشريحة فوق العتبة مباشرة تخسر → ارفع ─
-    lo, hi = cfg.alert_score_min, cfg.alert_score_min + 10
-    near = [r for r in alerts if r["score"] is not None and lo <= r["score"] < hi]
+    # ── 3) ALERT_SCORE_MIN: الشريحة التي سيستأصلها الرفع تخسر → ارفع ─
+    # BUG-09: الشريحة [min, proposed) — ما سيرفعه المقترَح بالضبط، لا [min, min+10)
+    # التي تُبقي [proposed, min+10) وتَعُدّها دليلًا.
+    lo = cfg.alert_score_min
+    proposed_score = round(cfg.alert_score_min + 5)
+    near = [r for r in alerts if r["score"] is not None
+            and lo <= r["score"] < proposed_score]
     n_wr, n_n = _win_rate(near)
     conf = _conf(n_n)
     if n_wr is not None and conf and n_wr <= base_wr - 20:
         props.append(CalibrationProposal(
             env="ALERT_SCORE_MIN", current=cfg.alert_score_min,
-            proposed=round(cfg.alert_score_min + 5),
-            reason=(f"درجات {lo:g}-{hi:g} (فوق العتبة مباشرة) نجاحها "
+            proposed=proposed_score,
+            reason=(f"درجات {lo:g}-{proposed_score:g} (تُستأصَل بالرفع) نجاحها "
                     f"{n_wr:.0f}% ({n_n} محسوم) — رفعها يرفع الجودة."),
             confidence=conf))
 
