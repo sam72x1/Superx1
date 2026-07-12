@@ -1299,3 +1299,25 @@ def test_merge_old_file_without_run_config_is_backward_compatible(tmp_path):
     assert merged is not None and len(merged.trades) == 1
     assert merged.run_config is None
     assert "غير موقّعة" in backtest.format_report(merged)
+
+
+def test_run_config_captures_rvol_min_for_mixed_merge_detection(tmp_path):
+    """BUG-12: بصمة الرن تلتقط rvol_min — رنّان بـRVOL_MIN مختلفين لهما بصمتان
+    مختلفتان، فدمجهما يُحذّر «إعدادات مختلفة» ولا يدّعي إعدادًا موحّدًا."""
+    import json
+    for rv, start, end in ((5.0, "2026-01-01", "2026-01-31"),
+                           (4.0, "2026-02-01", "2026-02-28")):
+        res = backtest.BacktestResult(start=start, end=end, days=20)
+        res.funnel = backtest.new_funnel()
+        res.run_config = backtest._run_config(
+            Config(massive_api_key="x", rvol_min=rv))
+        backtest.save_run(Config(massive_api_key="x",
+                                 backtest_save_dir=str(tmp_path)), res, "تقرير")
+    a = json.load(open(tmp_path / "bt_2026-01-01_2026-01-31.json"))
+    b = json.load(open(tmp_path / "bt_2026-02-01_2026-02-28.json"))
+    assert a["run_config"]["rvol_min"] == 5.0
+    assert b["run_config"]["rvol_min"] == 4.0
+    merged, notes = backtest.merge_saved_runs(
+        Config(massive_api_key="x", backtest_save_dir=str(tmp_path)))
+    assert merged.run_config is None                      # لا يدّعي توحيدًا
+    assert any("بإعدادات مختلفة" in n for n in notes)

@@ -748,6 +748,21 @@ def _run_config(cfg: Config) -> dict:
         "price_min": cfg.price_min,
         "price_max": cfg.price_max,
         "backtest_wide_t1_rr": cfg.backtest_wide_t1_rr,
+        # BUG-12: عتبات إضافية تغيّر النتائج — بدونها يُدمج رنّان بإعدادات
+        # مختلفة (RVOL_MIN 5 مقابل 4) بلا تحذير «إعدادات مختلفة». عُدّدت صراحةً
+        # (لا asdict) كي لا يولّد تغيير رمز تيليجرام تحذيرًا كاذبًا.
+        "rvol_min": cfg.rvol_min,
+        "float_max": cfg.float_max,
+        "parabolic_day_change_pct": cfg.parabolic_day_change_pct,
+        "alert_score_min": cfg.alert_score_min,
+        "trigger_change_pct": cfg.trigger_change_pct,
+        "max_change_pct": cfg.max_change_pct,
+        "min_target_profit_pct": cfg.min_target_profit_pct,
+        "catalyst_score_bonus": cfg.catalyst_score_bonus,
+        "outcome_window_min": cfg.outcome_window_min,
+        "backtest_top_n": cfg.backtest_top_n,
+        "backtest_scan_step_bars": cfg.backtest_scan_step_bars,
+        "premarket_alerts_enabled": cfg.premarket_alerts_enabled,
     }
 
 
