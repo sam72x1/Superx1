@@ -183,7 +183,9 @@ def simulate_outcome(entry: float, risk, post_bars: list[Bar],
     for b in post_bars:
         if b.t_ms > deadline:
             break
-        low = min(low, b.l)             # القاع يتحدّث دائمًا (لقياس أقصى سحب)
+        # القاع يتحدّث دائمًا: max_draw مقياس excursion (أقصى سحب على النافذة)
+        # ويبقى كذلك عمدًا — بخلاف القمة التي تُجمَّد عند الخروج (لا يُطبَّق حيًّا).
+        low = min(low, b.l)
         # سيناريو الإمساك يفترض وقفًا واقيًا؛ أول شمعة تكسر الوقف بعد الفوز تُجمّد
         # القمة وعدّ الأهداف ابتداءً منها (لا هدف أعلى يُنسب بعد كسر الوقف).
         if decided and result == "win" and stop and b.l <= stop:
@@ -194,6 +196,10 @@ def simulate_outcome(entry: float, risk, post_bars: list[Bar],
             if stop and b.l <= stop:    # تحفّظ: الوقف أولًا حتى لو لمس الهدف
                 result = "loss"
                 decided = True
+                # BUG-16: جمّد القمة عند الخروج بخسارة أيضًا — وإلا نمت high على
+                # كامل النافذة بعد كسر الوقف فنفخت «متوسط أقصى ربح» بالخاسرات
+                # (ربح لم يُمسكه المتداول قط). كان التجميد للرابحين فقط.
+                frozen = True
                 continue                # خرجنا بخسارة → لا نحسب أهدافًا بعدها
             if b.h >= t1:
                 result = "win"
