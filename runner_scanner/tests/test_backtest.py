@@ -382,6 +382,34 @@ def test_asof_news_respects_gte_lower_bound():
     assert cat and cat.published_utc == "2026-06-26T19:00:00Z"
 
 
+def test_asof_news_caps_fetch_at_day_end_not_realnow():
+    """PERF-20 (تحقّق عدائي): الجلب المكاش يُسقَّف عند نهاية **يوم الباكتيست**،
+    لا يُترك بلا سقف. لولا ذلك، الخادم (order=desc + limit) يرجّع أحدث أخبار
+    «الآن» الحقيقي (بعد اليوم بأشهر) فتحجبها الفلترة المحلية ويرجع None دائمًا.
+    هنا limit=1 وخبر مستقبلي حاضر: يجب أن يُقصَّه السقف فيبقى خبر اليوم مُلتقَطًا."""
+    class _WithFuture:
+        def __init__(self):
+            self.last_lte = None
+
+        def news_results(self, t, gte, limit=5, published_lte_utc=None):
+            self.last_lte = published_lte_utc
+            alln = [{"title": "الآن", "published_utc": "2026-09-01T12:00:00Z"},
+                    {"title": "اليوم", "published_utc": "2026-06-26T13:40:00Z"}]
+            items = [x for x in alln
+                     if (published_lte_utc is None
+                         or x["published_utc"] <= published_lte_utc)
+                     and x["published_utc"] >= gte]
+            items.sort(key=lambda x: x["published_utc"], reverse=True)
+            return items[:limit]
+
+    base = _WithFuture()
+    c = backtest.AsOfClient(base, "2026-06-26", _tms(2026, 6, 26, 10, 0),
+                            [], [], {}, news_fetch_limit=1)
+    cat = c.latest_news("X", "2026-06-24T10:00:00Z")
+    assert cat and cat.published_utc == "2026-06-26T13:40:00Z"   # لُقِط رغم limit=1
+    assert base.last_lte and base.last_lte.startswith("2026-06-27")  # سقف = نهاية اليوم ET
+
+
 # ── تشغيل كامل end-to-end بمحاكاة ─────────────────────────────────
 def _daily_on_runner_scale(n=260, end_close=2.3):
     """سلسلة يومية صاعدة مُعاد تحجيمها لتنتهي قرب سعر الرنر (~$2.3) — كي تتّصل

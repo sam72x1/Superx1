@@ -136,14 +136,21 @@ class AsOfClient:
 
     def latest_news(self, ticker, published_gte_utc, limit=5):
         # كاش يوم كامل ثم فلترة محلية بلا تسرّب (PERF-20): نجلب قائمة اليوم مرّة
-        # واحدة بحدّ أوسع (الشموع تُقيَّم تصاعديًّا فأول نداء = أبكر gte = أوسع
-        # نافذة)، ثم نصفّي لكل شمعة بـ gte الشمعة ≤ published ≤ asof — مكافئ
-        # تمامًا لمرشّح الخادم gte/lte، ويلغي ~شمعة/نداء لكل رنر (أكبر مضخّم API).
+        # واحدة (الشموع تُقيَّم تصاعديًّا فأول نداء = أبكر gte = أوسع نافذة سُفلى)،
+        # ثم نصفّي لكل شمعة بـ gte الشمعة ≤ published ≤ asof.
+        # ⚠️ حاسم: نُمرّر سقفًا علويًا = **نهاية يوم الباكتيست** للجلب المكاش. بدونه
+        # كان الخادم (order=desc) يرجّع أحدث `limit` خبرًا منذ gte = أخبار قرب «الآن»
+        # الحقيقي (كلها بعد asof)، فتحجبها الفلترة المحلية ويرجع None دائمًا — أخبار
+        # الأيام التالية تزحم القائمة. السقف عند نهاية اليوم يغطّي كل asof اليوم
+        # ويستبعد المستقبل؛ الفلترة `published ≤ asof` تحفظ لا-التسرّب لكل شمعة.
         lte = _iso_utc(datetime.fromtimestamp(self._asof / 1000, tz=timezone.utc))
+        y, mo, dd = (int(x) for x in self._date.split("-"))
+        day_end_lte = _iso_utc(datetime(y, mo, dd, tzinfo=ET) + timedelta(days=1))
         results = self._cached(
             f"news:{ticker}:{self._date}",
             lambda: self._base.news_results(
-                ticker, published_gte_utc, limit=self._news_limit))
+                ticker, published_gte_utc, limit=self._news_limit,
+                published_lte_utc=day_end_lte))
         hits = [r for r in results
                 if published_gte_utc <= (r.get("published_utc") or "") <= lte]
         return MassiveClient.catalyst_from_item(hits[0]) if hits else None
