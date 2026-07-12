@@ -388,18 +388,24 @@ class Store:
                             "new_stop": new_stop,
                         })
 
-                # ⛔ الوقف: نبلّغ مرة واحدة (ويغلق التتبّع)
-                if not notified_stop and r["stop_price"] and low <= r["stop_price"]:
-                    notified_stop = 1
+                # ⛔ الوقف: للمُنبَّه = نبلّغ مرة واحدة ويغلق التتبّع. أما الصفوف
+                # المرفوضة (غير المُنبَّهة) فلا تُغلق على الوقف (BUG-15): نسجّل
+                # `hit_stop` للمعايرة فقط وتبقى مفتوحة — كي لا يموت تنبيه 👻 الفرصة
+                # الفائتة لو انطلق السهم لاحقًا بعد لمسه الوقف الافتراضي. النافذة
+                # تغلقها. (`rejected_row` = مرفوض غير مُنبَّه؛ نفس شرط تنبيه 👻.)
+                rejected_row = bool((r["rejected"] or 0) and not is_alert)
+                if r["stop_price"] and low <= r["stop_price"]:
                     hit_stop = 1
-                    if not result:
-                        result = "loss"
-                    if is_alert:
-                        events.append({
-                            "ticker": r["ticker"], "type": "stop",
-                            "price": r["stop_price"],
-                            "gain_pct": (r["stop_price"] - first) / first * 100.0,
-                        })
+                    if not rejected_row and not notified_stop:
+                        notified_stop = 1
+                        if not result:
+                            result = "loss"
+                        if is_alert:
+                            events.append({
+                                "ticker": r["ticker"], "type": "stop",
+                                "price": r["stop_price"],
+                                "gain_pct": (r["stop_price"] - first) / first * 100.0,
+                            })
 
                 # 🚀 قفزة قوية: قمة جديدة ≥ surge فوق آخر قمة مُبلَّغة
                 if high >= notified_high * (1 + surge_leg_pct / 100.0):

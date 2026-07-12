@@ -269,6 +269,47 @@ def test_followup_missed_message():
     assert "فرصة فائتة" in msg and "MISS" in msg and "فلوت كبير" in msg
 
 
+def test_rejected_runner_not_closed_on_stop_keeps_missed_alive():
+    """BUG-15: صفّ مرفوض (غير مُنبَّه) له وقف افتراضي — يُرفض عند بوّابة الحد
+    الأدنى للربح **بعد** بناء خطة المخاطرة، فيُسجَّل بوقف. لو لمس الوقف مبكرًا
+    ثم انطلق +50% لاحقًا، يجب أن يبقى مفتوحًا كي ينطلق تنبيه 👻 الفرصة الفائتة
+    — لا أن يُغلق على الوقف (كان يموت 👻 قبل انطلاقه). نسجّل hit_stop للمعايرة."""
+    st = _store()
+    c = _cand("LATE", 2.0, rejected=True, reason="سقف ربح الأهداف 8% < 12%")
+    st.log_candidate(c, T0)
+    # وقف افتراضي على صفّ مرفوض (يحاكي الرفض عند بوّابة الحد الأدنى للربح)
+    st._conn.execute("UPDATE tracking SET stop_price=1.8 WHERE ticker='LATE'")
+    st._conn.commit()
+    # نبضة 1: يهبط تحت الوقف الافتراضي (1.7 < 1.8) قبل أي صعود
+    ev1 = st.update_outcomes(
+        {"LATE": 1.7}, datetime(2026, 6, 26, 14, 5, tzinfo=timezone.utc),
+        missed_rise_pct=30.0)
+    assert not [e for e in ev1 if e["type"] == "missed"]   # لم يصعد بعد
+    row = st.fetch_row("LATE")
+    assert row["outcome"] == "open"        # لم يُغلق على الوقف (BUG-15)
+    assert row["hit_stop"] == 1            # لكن hit_stop سُجِّل للمعايرة
+    # نبضة 2: ينطلق +50% لاحقًا (3.0 من 2.0) — 👻 يجب أن ينطلق رغم لمس الوقف
+    ev2 = st.update_outcomes(
+        {"LATE": 3.0}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc),
+        missed_rise_pct=30.0)
+    missed = [e for e in ev2 if e["type"] == "missed"]
+    assert missed and missed[0]["ticker"] == "LATE"
+    st.close()
+
+
+def test_alert_still_closes_on_stop():
+    """توازن BUG-15: المُنبَّه عنه (لا المرفوض) يبقى يُغلق على الوقف كالمعتاد."""
+    st = _store()
+    c = _cand("ALRT", 5.0, stop=4.5, t1=6.0)
+    st.log_candidate(c, T0)
+    st.mark_alerted("ALRT", 75, T0)
+    st.update_outcomes(
+        {"ALRT": 4.4}, datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    row = st.fetch_row("ALRT")
+    assert row["outcome"] == "closed" and row["result"] == "loss"
+    st.close()
+
+
 def test_events_only_for_alerts_not_rejected():
     st = _store()
     c = _cand("REJ", 2.0, rejected=True, reason="RVol 3x < 5x")
