@@ -1,0 +1,22 @@
+# فحص آلي: يشغّل كل الاختبارات على كل دفعة/طلب دمج.
+# غرضه الوحيد: منع دمج تغيير يكسر مجموعة الاختبارات (26 ملفًا) دون أن يُلاحَظ —
+# فمجموعة لا تُشغَّل تصنع «وهم التغطية». (نتيجة تدقيق DX-01.)
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: تثبيت التبعيات
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: تشغيل الاختبارات
+        run: python3 -m pytest runner_scanner/tests/ -q

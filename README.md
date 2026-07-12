@@ -116,8 +116,8 @@ python -m runner_scanner.main
 ### الاختبارات (بلا إنترنت)
 
 ```bash
-pip install pytest
-python -m pytest runner_scanner/tests/ -q
+pip install -r requirements-dev.txt
+python3 -m pytest runner_scanner/tests/ -q
 ```
 
 ---
