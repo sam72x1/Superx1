@@ -599,6 +599,43 @@ def test_day_candidates_pool_wider_than_live_top_n():
     assert len(backtest._day_candidates(cfg2, grouped, prev)) == 10
 
 
+def test_eval_ranked_out_is_not_ranked_not_empty_rejected():
+    """BUG-02 (تحقّق عدائي): سهم يجتاز البوّابات لكنه خارج أعلى-15 اللحظي في كل
+    شمعة → kind='not_ranked' لا rejected بسبب فارغ (كان يلوّث «أخرى» في القمع).
+    كان تصنيف not_ranked كودًا ميتًا لأن evaluated=True دائمًا قبل ranked_out."""
+    base = MockBase()
+    # نعطّل بوّابة الحركة المتقدّمة كي يجتاز RUNR كل شمعه (وإلا شمعة +55% تُرفض
+    # late_wave فيصير rejected لا ranked_out — نريد اختبار مسار «نجح لكن خارج الأعلى»)
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 entry_change_max_pct=0)
+    res = backtest._eval_candidate(
+        cfg, base, "2026-06-26", {}, 2.0, "RUNR",
+        full5=base.bars_5min("RUNR", "", ""),
+        full1=base.bars_1min("RUNR", "", ""),
+        allowed_asof=set())        # خارج الأعلى في كل الطوابع
+    assert res["kind"] == "not_ranked"
+    # وبلا بوّابة ترتيب (allowed_asof=None) نفس السهم يُنبَّه (تحقّق أنه يجتاز فعلًا)
+    res2 = backtest._eval_candidate(
+        cfg, base, "2026-06-26", {}, 2.0, "RUNR",
+        full5=base.bars_5min("RUNR", "", ""),
+        full1=base.bars_1min("RUNR", "", ""), allowed_asof=None)
+    assert res2["kind"] == "alert"
+
+
+def test_asof_rank_gate_no_cap_when_top_n_nonpositive():
+    """BUG-02 (تحقّق عدائي): top_n_runners ≤ 0 = بلا سقف (مطابقة الحي main.py)
+    لا مجمّع فارغ. لولا الحارس، ranks[:0] فارغ → صفر تنبيهات في كل الباكتيست."""
+    T = _tms(2026, 6, 26, 9, 35)
+    prev = {"A": 2.0, "B": 2.0}
+    bars5 = {"A": [Bar(t_ms=T, o=2.9, h=3.1, l=2.9, c=3.0, v=3e5, n=80)],
+             "B": [Bar(t_ms=T, o=2.2, h=2.4, l=2.2, c=2.3, v=3e5, n=80)]}
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 max_change_pct=400.0, price_min=1.0, price_max=30.0,
+                 top_n_runners=0)
+    allowed = backtest._asof_rank_gate(cfg, [("A", 50.0), ("B", 15.0)], bars5, prev)
+    assert T in allowed["A"] and T in allowed["B"]   # كلاهما (بلا سقف)
+
+
 def test_asof_rank_gate_picks_early_leader_not_late_exploder():
     """BUG-02 (لا-تسرّب المجمّع): عند الطابع T، أعلى-15 اللحظي = من كان الأعلى
     **بالتغيّر عند T** لا من انتهى الأعلى بقمة اليوم. سهم A كان الأعلى عند T ثم

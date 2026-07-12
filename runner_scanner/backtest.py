@@ -668,11 +668,12 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         # فاسدًا؛ السهم صالح لكنه خارج ساعات التنبيه. تصنيف منفصل كي لا يلوّث القمع.
         if premarket_skipped:
             return {"kind": "premarket_only"}
-        # BUG-02: كان رنرًا لكنه لم يدخل أعلى-15 اللحظي في أي شمعة → لم يكن البوت
-        # الحي ليفحصه. تصنيف منفصل (لا bad_snapshot) كي لا يلوّث القمع.
-        if ranked_out:
-            return {"kind": "not_ranked"}
         return {"kind": "bad_snapshot"}
+    # BUG-02: قُيّم لكنه لم يُنبَّه ولم يُرفض بأي بوّابة (last_reason فارغ) → نجح
+    # لكنه بقي خارج أعلى-15 اللحظي في كل شمعة. تصنيف not_ranked منفصل كي لا يُعدّ
+    # رفضًا فارغًا يلوّث «أخرى» في القمع. (evaluated=True دائمًا هنا، فالفحص بعده.)
+    if ranked_out and not last_reason:
+        return {"kind": "not_ranked"}
     # قياس الظل: لرفض RVol أو «سعر فوق الحد» نحسب نتيجة افتراضية (لو دخلنا) —
     # يكشف هل العتبة تحمي أم تفوّت فرصًا (قياس فقط). نفس مصادر الأهداف الحيّة.
     shadow = None
@@ -749,7 +750,9 @@ def _asof_rank_gate(cfg: Config, cands: list[tuple[str, float]],
                     and cfg.price_min <= c <= cfg.price_max):
                 ranks.append((t, chg))
         ranks.sort(key=lambda x: -x[1])
-        for t, _ in ranks[:cfg.top_n_runners]:
+        # مطابقة الحي (main.py): top_n_runners ≤ 0 = بلا سقف (كل الرنرات).
+        cut = ranks if cfg.top_n_runners <= 0 else ranks[:cfg.top_n_runners]
+        for t, _ in cut:
             allowed[t].add(T)
     return allowed
 
