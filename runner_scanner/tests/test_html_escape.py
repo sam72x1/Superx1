@@ -128,3 +128,17 @@ def test_calibration_proposals_html_safe():
     text = format_proposals(propose_calibrations(_Store(), Config()))
     assert "RVOL_MIN" in text
     _assert_html_safe(text)
+
+
+# ── 🚨 تنبيه العطل: جسم استجابة خام فيه <>& يُسقط الرسالة (BUG-05) ─────
+def test_fault_alert_html_safe():
+    """raise_fault برسالة فيها HTML خام (جسم خطأ مزوّد) → المُرسَل مُهرَّب.
+    قبل الإصلاح: < واحد يُسقط الرسالة الوحيدة التي تخبرك أن البوت عمي —
+    وهي مزيلة التكرار فلا تُعاد أبدًا."""
+    from runner_scanner.monitor import HealthMonitor
+    sent = []
+    mon = HealthMonitor(notify=sent.append)
+    mon.raise_fault("api", 'خطأ 500 على /x: <html><body>Bad & Gateway</body></html>')
+    assert sent
+    _assert_html_safe(sent[0])
+    assert "&amp;" in sent[0] and "&lt;html&gt;" in sent[0]   # الكيانات سليمة

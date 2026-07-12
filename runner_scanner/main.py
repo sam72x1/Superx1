@@ -34,6 +34,7 @@ from .sessions import (
 from .short_interest import ShortInterestProvider
 from .state import Store, trade_date_str
 from .telegram_bot import TelegramAssistant
+from .textutil import esc
 
 logger = logging.getLogger(__name__)
 
@@ -377,7 +378,8 @@ class Scanner:
                 logger.info("أُرسلت ملاحظات الباكتيست")
         except Exception as exc:  # noqa: BLE001
             logger.exception("الباكتيست التلقائي فشل")
-            self.telegram.send(f"⚠️ تعذّر الباكتيست التلقائي: {exc}")
+            # §5: exc قد يحمل جسم استجابة خام فيه <>& → هرّبه قبل HTML (BUG-05)
+            self.telegram.send(f"⚠️ تعذّر الباكتيست التلقائي: {esc(exc)}")
 
     def shutdown(self) -> None:
         logger.info("إيقاف الماسح...")

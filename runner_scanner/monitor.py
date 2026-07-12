@@ -10,6 +10,8 @@ import logging
 import time
 from typing import Callable
 
+from .textutil import esc
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +39,11 @@ class HealthMonitor:
             return
         self._active_faults.add(key)
         logger.error("🚨 عطل [%s]: %s", key, message)
-        self._notify(f"🚨 <b>عطل في الماسح</b>\n[{key}] {message}")
+        # §5: message نصّ خارجي (جسم استجابة المزوّد الخام — قد يكون HTML وقت
+        # عطل 4xx/5xx) → يُهرَّب، وإلا < واحد يُسقط بـ400 الرسالةَ الوحيدة
+        # المصمَّمة لإخبارك أن البوت عمي، وهي مزيلة التكرار فلا تُعاد (BUG-05).
+        self._notify(
+            f"🚨 <b>عطل في الماسح</b>\n[{esc(key)}] {esc(message)}")
 
     def _clear_fault(self, key: str) -> None:
         if key in self._active_faults:
