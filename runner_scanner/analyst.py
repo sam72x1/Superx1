@@ -111,18 +111,26 @@ class ClaudeAnalyst:
             return None
         try:
             direction = str(data.get("direction", ""))
-            # SEC-22: هذا المخرَج الوحيد الذي يعبر إلى قرار (خصم 12 نقطة) — نتحقّق
-            # من الاتجاه مقابل الـenum ونطرح النتيجة عند أي قيمة غير متوقّعة (بدل
-            # التخمين). يبقى حارس التخفيف (SEC) الحتمي يعمل بمعزل عن هذا.
+            warning = str(data.get("warning", ""))
+            # SEC-22: هذا المخرَج الوحيد الذي يعبر إلى قرار (خصم 12 نقطة) — لا نثق
+            # باتجاه مشوّه (خارج الـenum؛ قد يكون حقنًا). لكن **لا نزيل الحذر**:
+            # النموذج يُسمح له أن يجعل البوت أحذر لا أقلّ. فإن حضر تحذير هبوطي مع
+            # اتجاه مشوّه، نُبقيه ونعامله هبوطيًا؛ وإلا (لا تحذير) نطرح النتيجة
+            # كاملةً (تدهور best-effort). حارس التخفيف (SEC) الحتمي مستقلّ عن هذا.
             if direction not in _DIRECTIONS:
-                logger.debug("المحلّل: اتجاه غير متوقّع %r — طُرحت النتيجة", direction)
-                return None
+                if not warning:
+                    logger.debug("المحلّل: اتجاه غير متوقّع %r بلا تحذير — طُرح",
+                                 direction)
+                    return None
+                logger.debug("المحلّل: اتجاه مشوّه %r مع تحذير — يُعامَل هبوطيًا",
+                             direction)
+                direction = "هبوطي"
             return AnalystResult(
                 catalyst_type=str(data.get("catalyst_type", "")),
                 direction=direction,
                 materiality=int(data.get("materiality") or 0),
                 thesis=str(data.get("thesis", "")),
-                warning=str(data.get("warning", "")),
+                warning=warning,
             )
         except (TypeError, ValueError):
             return None

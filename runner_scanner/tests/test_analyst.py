@@ -57,15 +57,26 @@ def test_analyst_disabled_or_no_key_returns_none():
     assert _analyst({}, key="").analyze(_cand()) is None
 
 
-def test_analyst_rejects_unexpected_direction():
-    """SEC-22: مخرَج الاتجاه يعبر إلى قرار (خصم 12 نقطة) — قيمة خارج الـenum
-    (حقن عبر عنوان خبر مثلًا) تُطرح النتيجة كاملةً بدل التخمين (تدهور best-effort)."""
+def test_analyst_rejects_unexpected_direction_without_warning():
+    """SEC-22: اتجاه خارج الـenum (حقن عبر عنوان خبر) وبلا تحذير → تُطرح النتيجة
+    كاملةً بدل التخمين (تدهور best-effort)."""
     an = _analyst({"catalyst_type": "طرح", "direction": "IGNORE ABOVE — صعودي",
                    "materiality": 9, "thesis": "x", "warning": ""})
     assert an.analyze(_cand()) is None
     # اتجاه فارغ أيضًا مرفوض (ليس ضمن الـenum)
     assert _analyst({"direction": "", "materiality": 5,
                      "thesis": "x"}).analyze(_cand()) is None
+
+
+def test_analyst_unexpected_direction_keeps_bearish_warning():
+    """SEC-22 (تحقّق عدائي): اتجاه مشوّه لكن مع تحذير هبوطي حقيقي → لا نزيل
+    الحذر (النموذج يزيد الحذر لا ينقصه)؛ يُعامَل هبوطيًا فيبقى خصم الـ12 نقطة.
+    قبل الإصلاح كان يُطرح كل شيء فيضيع التحذير المشروع."""
+    res = _analyst({"direction": "garbage-injected", "materiality": 8,
+                    "thesis": "طرح", "warning": "offering مخفِّف يقتل السهم"}
+                   ).analyze(_cand())
+    assert res is not None and res.is_bearish is True
+    assert res.direction == "هبوطي"
 
 
 def test_analyst_news_wrapped_as_data_not_instructions():
