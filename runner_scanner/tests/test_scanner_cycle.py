@@ -68,6 +68,19 @@ def test_premarket_alerts_disabled_by_default():
     sc.shutdown()
 
 
+def _premarket_5min_bars():
+    """شموع 5د في نافذة البريماركت (2026-06-25) بحجم عالٍ → RVol يعبر شرعيًا.
+    بعد BUG-07 (إزالة ارتداد snap.day_volume) لم يعد الحجم اليومي يفبرك RVol
+    البريماركت؛ فالتغطية الحقيقية تتطلّب حجم جلسة فعلي في نافذة البريماركت."""
+    from datetime import timedelta
+
+    from runner_scanner.models import Bar
+    base = datetime(2026, 6, 25, 7, 0, tzinfo=ET)
+    return [Bar(t_ms=int((base + timedelta(minutes=5 * i)).timestamp() * 1000),
+                o=2.4, h=2.55, l=2.35, c=2.5, v=2_000_000, n=200)
+            for i in range(6)]
+
+
 def test_premarket_alerts_when_explicitly_enabled():
     """مع PREMARKET_ALERTS_ENABLED=true يُنبّه البريماركت (تغطية أوسع)."""
     db = os.path.join(tempfile.mkdtemp(), "pm.sqlite3")
@@ -75,7 +88,7 @@ def test_premarket_alerts_when_explicitly_enabled():
                  telegram_chat_id="x", massive_api_key="x", halts_enabled=False,
                  premarket_alerts_enabled=True)
     sc = Scanner(cfg)
-    sc.client = CycleClient()
+    sc.client = CycleClient(bars5=_premarket_5min_bars())
     sc.short = None
     et_pm = datetime(2026, 6, 25, 7, 0, tzinfo=ET)
     assert sc.run_cycle(et_now=et_pm) == 1            # STRONG يُنبّه في البريماركت

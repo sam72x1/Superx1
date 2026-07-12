@@ -240,3 +240,16 @@ def test_late_wave_run_pct_env_default_matches_dataclass():
     finally:
         if saved is not None:
             os.environ["LATE_WAVE_RUN_PCT"] = saved
+
+
+# ── BUG-07: `or snap.day_volume` كان يحقن artifact في بسط RVol ─────
+def test_premarket_rvol_ignores_day_volume_artifact():
+    """بريماركت بلا شموع جلسة (تراكمي=0) → day_volume الضخم (artifact) يجب
+    ألّا ينفخ RVol بعد إزالة الارتداد. day_volume لم يعد يؤثّر في البريماركت."""
+    m_big = compute_momentum(CFG, make_snapshot(vol=5_000_000),
+                             Session.PREMARKET, [], bars_1min=None,
+                             avg_daily_volume=1_000_000)
+    m_zero = compute_momentum(CFG, make_snapshot(vol=0),
+                              Session.PREMARKET, [], bars_1min=None,
+                              avg_daily_volume=1_000_000)
+    assert m_big.rvol == m_zero.rvol == 0.0   # لا artifact محقون
