@@ -72,7 +72,10 @@ class MassiveClient:
                     raise MassiveError(
                         "تجاوز حدّ الطلبات (429) — خفّض معدّل الاستدعاء",
                         retry_after=ra)
-                time.sleep(ra if ra else min(2.0 ** attempt, 8.0))
+                # سقف 30ث على تلميح المزوّد (BUG-23): Retry-After: 3600 كان
+                # يجمّد خيط المسح ساعة داخل sleep يتجاهل SIGTERM → يُقتل الـworker
+                # بـSIGKILL وسط دورة، ومراقب التعثّر لا يُبلَغ (نفس الحلقة مجمّدة).
+                time.sleep(min(ra or min(2.0 ** attempt, 8.0), 30.0))
                 continue
             if resp.status_code >= 500:    # خطأ خادم عابر → أعد المحاولة
                 if last:

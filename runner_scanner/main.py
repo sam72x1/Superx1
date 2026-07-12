@@ -79,6 +79,7 @@ class Scanner:
         self.last_scan_et = None
         self.assistant = TelegramAssistant(self)   # مساعد تيليجرام تفاعلي
         self._stop = threading.Event()
+        self._shutdown_done = False    # حارس تفكيك idempotent (BUG-25)
 
     # ── دورة مسح واحدة ────────────────────────────────────────────
     def run_cycle(self, et_now=None) -> int:
@@ -382,6 +383,12 @@ class Scanner:
             self.telegram.send(f"⚠️ تعذّر الباكتيست التلقائي: {esc(exc)}")
 
     def shutdown(self) -> None:
+        # idempotent (BUG-25): يُنادى من finally الحلقة، وقد يُنادى مرّة ثانية —
+        # تفكيك مزدوج يغلق القاعدة تحت خيوط حيّة (ProgrammingError). المعالج
+        # الإشاري يكتفي بـ_stop.set()، والتفكيك الفعلي هنا مرّة واحدة فقط.
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
         logger.info("إيقاف الماسح...")
         self._stop.set()
         self.halts.stop()
@@ -406,8 +413,10 @@ def main() -> int:
     scanner = Scanner(cfg)
 
     def _handle_signal(signum, _frame):
-        logger.info("استلمنا إشارة %s", signum)
-        scanner.shutdown()
+        # لا نفكّك من داخل المعالج (قد ينفَّذ وسط run_cycle على الخيط الرئيسي)
+        # — نكتفي بطلب التوقّف، ويتكفّل finally الحلقة بالتفكيك مرّة واحدة (BUG-25).
+        logger.info("استلمنا إشارة %s — طلب توقّف", signum)
+        scanner._stop.set()
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
