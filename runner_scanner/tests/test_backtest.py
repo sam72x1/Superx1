@@ -973,6 +973,9 @@ def test_reject_bucket_classifies():
     assert backtest._reject_bucket("درجة 55 < عتبة التنبيه 60") == "درجة"
     assert backtest._reject_bucket(
         "تحت VWAP (شريحة أضعف تاريخيًا 55%)") == "تحت VWAP"
+    # DEBT-13: نصّ رفض الزخم الفعلي (scoring.py) لم يعد يقع في «أخرى»
+    assert backtest._reject_bucket(
+        "زخم 18 < 25 (زخم ضعيف رغم +10%)") == "زخم ضعيف"
 
 
 # ── م1: الحفظ الدائم للتشغيلات (مصدر الدمج) ───────────────────────
