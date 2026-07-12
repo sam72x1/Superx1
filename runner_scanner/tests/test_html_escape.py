@@ -68,6 +68,20 @@ def test_build_card_html_safe_with_hostile_ticker():
     assert "&lt;" in card and "&amp;" in card   # هُرِّبت لا أُسقِطت
 
 
+# ── ⚠️ سطر التخفيف (SEC): note من سلسلة نموذج JSON خام خارجي ───────
+def test_build_card_dilution_note_html_safe():
+    """تنظيف: سطر تخفيف SEC كان يحقن c.dilution.note (سلسلة نموذج من JSON خام
+    خارجي) بلا esc — < واحد يُسقط البطاقة كلها. الآن مُهرَّب."""
+    from runner_scanner.models import DilutionResult
+    cand = _card_candidate()
+    cand.dilution = DilutionResult(risk="مرتفع", latest_form="S-1",
+                                   note="طرح <ATM> بقيمة $50M & رفّ مُسجّل")
+    card = build_card(Config(code_version="x"), cand,
+                      now=datetime(2026, 6, 26, 15, 31, tzinfo=timezone.utc))
+    _assert_html_safe(card)
+    assert "&lt;ATM&gt;" in card and "&amp;" in card   # هُرِّب لا أُسقِط
+
+
 # ── 🎯 رسائل المتابعة: رمز السهم في كل الفروع ─────────────────────
 def test_build_followup_html_safe_all_branches():
     cfg = Config()

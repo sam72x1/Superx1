@@ -119,7 +119,10 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
     # ⚠️ التخفيف (SEC) — طرح/إصدار أسهم يضرّ السهم الصاعد (كالشورت)
     if c.dilution is not None and c.dilution.is_active:
         icon = "🔴" if c.dilution.risk == "مرتفع" else "🟠"
-        lines.append(f"{icon} تخفيف {c.dilution.risk} (SEC): {c.dilution.note}")
+        # §5: note مبنيّ من سلسلة نموذج SEC الخام (JSON خارجي) — لولا esc()
+        # لأسقط محرف < واحد البطاقة كلها (400). risk مضبوط داخليًا، نهرّبه للاتّساق.
+        lines.append(
+            f"{icon} تخفيف {esc(c.dilution.risk)} (SEC): {esc(c.dilution.note)}")
     lines.append(f"📦 الحجم: {_human(s.day_volume)}")
     if m is not None:
         lines.append(f"📊 RVol: {m.rvol:.1f}x")

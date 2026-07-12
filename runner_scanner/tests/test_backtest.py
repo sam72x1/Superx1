@@ -445,6 +445,8 @@ def test_run_backtest_end_to_end():
     assert runr and runr[0]["result"] in ("win", "loss", "timeout")
     report = backtest.format_report(res)
     assert "باكتيست" in report
+    # BUG-02 (إفصاح): التقرير يذكر انحياز مجمّع المرشّحين (قمة اليوم الكاملة)
+    assert "انحياز تفاؤلي معروف" in report and "قمة اليوم الكاملة" in report
 
 
 # ── قمع الترشيح (تشخيص: أين يموت المرشّحون؟) ──────────────────────

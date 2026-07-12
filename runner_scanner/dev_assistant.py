@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import os
+import shutil
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -381,6 +382,8 @@ def export_csvs(store, cfg: Config, now: datetime | None = None
                     os.path.join(tmp, f"missed_{day}.csv"))
     if p2:
         out.append((p2, f"📎 الفرص الفائتة (مرفوض صعد) — {day}"))
+    if not out:            # لم يُكتب أي ملف → لا تترك مجلدًا مؤقّتًا فارغًا
+        shutil.rmtree(tmp, ignore_errors=True)
     return out
 
 
@@ -389,8 +392,16 @@ def send_report_and_files(store, cfg: Config, telegram,
     """يبني التقرير، يرسله، ثم يرسل ملفات CSV. يرجّع نص التقرير."""
     report = build_dev_report(store, cfg, now)
     telegram.send(report)
-    for path, caption in export_csvs(store, cfg, now):
-        telegram.send_document(path, caption)
+    tmp_dirs: set[str] = set()
+    try:
+        for path, caption in export_csvs(store, cfg, now):
+            tmp_dirs.add(os.path.dirname(path))
+            telegram.send_document(path, caption)
+    finally:
+        # تنظيف المجلد المؤقّت بعد الإرسال — وإلا نموّ غير محدود على قرص
+        # الحاوية (تقرير مجدوَل + كل /report يخلّف مجلدًا وملفَّي CSV للأبد).
+        for d in tmp_dirs:
+            shutil.rmtree(d, ignore_errors=True)
     return report
 
 

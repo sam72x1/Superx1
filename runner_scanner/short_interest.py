@@ -145,7 +145,10 @@ class ShortInterestProvider:
                 continue
             table = _parse_finra(resp.text)
             if table:
-                self._finra_cache[ymd] = table
+                # أبقِ أحدث جدول فقط: القاموس بمفتاح ymd كان ينمو كل يوم تعيشه
+                # العملية (~10 آلاف رمز/جدول) بلا إخلاء — وكاش ذاكرة قتل الخدمة
+                # بحدّ ذاكرة Render مرّة من قبل.
+                self._finra_cache = {ymd: table}
                 return table
         return {}
 
