@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS tracking (
     had_news        INTEGER,
     rejected        INTEGER,
     reject_reason   TEXT,
+    reason_code     TEXT,                  -- كود رفض ثابت (DEBT-13): تصنيف آلي لا نصّ
     -- بيانات إضافية لتشريح الفشل (لماذا فشل السهم)
     short_pct       REAL,
     dilution_risk   TEXT,
@@ -141,6 +142,7 @@ _MIGRATIONS = (
     ("notified_targets", "INTEGER DEFAULT 0"),
     ("notified_stop", "INTEGER DEFAULT 0"),
     ("notified_high", "REAL"), ("result", "TEXT DEFAULT ''"),
+    ("reason_code", "TEXT"),   # DEBT-13: كود الرفض الثابت
 )
 
 
@@ -238,11 +240,11 @@ class Store:
                     first_session,
                     change_pct, score, momentum, readiness, rvol, rvol_5min,
                     float_shares, float_source, halt_state, had_news, rejected,
-                    reject_reason, short_pct, dilution_risk, analyst_dir,
+                    reject_reason, reason_code, short_pct, dilution_risk, analyst_dir,
                     catalyst_head, first_price, first_volume, stop_price, target1,
                     target2, target3, high_after, low_after, max_gain_pct,
                     notified_high, outcome)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?, 'open')
                 ON CONFLICT(ticker, trade_date) DO UPDATE SET
                     logged_at=excluded.logged_at, session=excluded.session,
                     -- جلسة أول رصد لا تُمسّ (COALESCE يملأ صفوف ما قبل الترحيل فقط)
@@ -255,6 +257,7 @@ class Store:
                     float_source=excluded.float_source,
                     halt_state=excluded.halt_state, had_news=excluded.had_news,
                     rejected=excluded.rejected, reject_reason=excluded.reject_reason,
+                    reason_code=excluded.reason_code,
                     short_pct=excluded.short_pct,
                     dilution_risk=excluded.dilution_risk,
                     analyst_dir=excluded.analyst_dir,
@@ -292,6 +295,7 @@ class Store:
                     c.momentum.rvol_5min if c.momentum else None,
                     c.float_shares, c.float_source.value, c.halt_state.value,
                     had_news, 1 if c.is_rejected else 0, c.rejected_reason,
+                    c.reject_code or "",
                     c.short_pct, dilution_risk, analyst_dir, catalyst_head,
                     price, c.snapshot.day_volume, stop, t1, t2, t3,
                     price, price, price,

@@ -457,8 +457,24 @@ def _news_label(cand) -> str:
     return "سلبي" if cat.category == NEGATIVE_NEWS else "إيجابي"
 
 
-def _reject_bucket(reason: str) -> str:
-    """يصنّف سبب الرفض لفئة موجزة (لتجميع «أكثر بوّابة ترفض»)."""
+# DEBT-13: خريطة الكود الثابت → الخانة (الطريق المفضّل، بلا هشاشة نصّ عربي).
+_CODE_BUCKET = {
+    "rvol": "RVol", "float": "فلوت", "readiness": "جاهزية",
+    "momentum": "زخم ضعيف", "score": "درجة", "vwap": "تحت VWAP",
+    "parabolic": "بارابولِك", "late_wave": "حركة متقدّمة",
+    "price_low": "سعر تحت الحد", "price_high": "سعر فوق الحد",
+    "type": "نوع/بورصة", "exchange": "نوع/بورصة", "volume": "حجم",
+    "min_profit": "ربح صغير", "t12": "توقّف", "halt": "توقّف",
+    "bars": "نقص شموع", "dilution": "تخفيف SEC", "bearish": "محفّز هبوطي",
+    "incomplete": "أخرى",
+}
+
+
+def _reject_bucket(reason: str, code: str = "") -> str:
+    """يصنّف سبب الرفض لفئة موجزة (لتجميع «أكثر بوّابة ترفض»). يفضّل الكود الثابت
+    (DEBT-13) إن وُجد، ويرتدّ لمطابقة النصّ العربي للصفوف القديمة (code فارغ)."""
+    if code and code in _CODE_BUCKET:
+        return _CODE_BUCKET[code]
     r = reason or ""
     # الترتيب مهمّ: المفاتيح الأدقّ أولًا (كلّ سبب سعر يحوي «سعر»، فنميّز «سنتات»
     # و«فوق نطاق» قبل «سعر» العام)؛ و«جاهزية» و«درجة» مفصولتان (كانتا مدموجتين).
@@ -509,6 +525,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     evaluated = errored = False
     premarket_skipped = False   # تخطّى الحارس شمعةً واحدة على الأقل (رنر بريماركت)
     last_reason = ""
+    last_code = ""
     max_rvol = 0.0          # أقصى RVol بلغه السهم (لقياس الظل عند رفض RVol)
     last_asof = 0
     last_snap = None
@@ -623,8 +640,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "max_draw_pct": round(draw, 1),
             }}
         last_reason = cand.rejected_reason or ""
+        last_code = cand.reject_code or ""
         # بوّابات لا تتغيّر خلال اليوم (فلوت/نوع/بورصة) → لا فائدة من إعادة الفحص
-        if _reject_bucket(last_reason) in ("فلوت", "نوع/بورصة"):
+        if _reject_bucket(last_reason, last_code) in ("فلوت", "نوع/بورصة"):
             break
     if not evaluated:
         if errored:
@@ -637,7 +655,7 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     # قياس الظل: لرفض RVol أو «سعر فوق الحد» نحسب نتيجة افتراضية (لو دخلنا) —
     # يكشف هل العتبة تحمي أم تفوّت فرصًا (قياس فقط). نفس مصادر الأهداف الحيّة.
     shadow = None
-    _sh_bucket = _reject_bucket(last_reason)
+    _sh_bucket = _reject_bucket(last_reason, last_code)
     if (cfg.backtest_shadow_rvol and last_snap is not None
             and _sh_bucket in ("RVol", "سعر فوق الحد")):
       # الظل قياس best-effort (§3): فشل شبكة هنا لا يُسقط الرن كاملًا —
@@ -672,7 +690,8 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         logger.debug("تعذّر قياس ظل %s: %s", ticker, exc)
         shadow = None
     # رُفض في كل الدورات → سببه من آخر محاولة (أكثر تمثيلًا لقيد نهاية اليوم)
-    return {"kind": "rejected", "reason": last_reason, "shadow": shadow}
+    return {"kind": "rejected", "reason": last_reason,
+            "reason_code": last_code, "shadow": shadow}
 
 
 def simulate_day(cfg: Config, base: MassiveClient, day: str,
@@ -714,7 +733,7 @@ def simulate_day(cfg: Config, base: MassiveClient, day: str,
         elif funnel is not None:
             if kind == "rejected":
                 funnel["rejected"] += 1
-                bucket = _reject_bucket(r.get("reason", ""))
+                bucket = _reject_bucket(r.get("reason", ""), r.get("reason_code", ""))
                 funnel["reject_reasons"][bucket] = \
                     funnel["reject_reasons"].get(bucket, 0) + 1
                 if r.get("shadow"):

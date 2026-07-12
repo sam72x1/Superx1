@@ -129,9 +129,10 @@ def process_candidate(
         st = halts.state_of(snap.ticker)
         c.halt_state = st
         if st is HaltState.T12:
-            return c.reject("T12 — استبعاد نهائي")
+            return c.reject("T12 — استبعاد نهائي", "t12")
         if st in (HaltState.HALTED, HaltState.RESUMED):
-            return c.reject(f"توقّف ({st.value}) — لا بطاقة، انتظر استئنافًا نظيفًا")
+            return c.reject(f"توقّف ({st.value}) — لا بطاقة، انتظر استئنافًا نظيفًا",
+                            "halt")
 
     # ── 2) تفاصيل الورقة (نوع/بورصة/أسهم) + الفلوت + الماركت كاب ──
     # بطيئة لا تتغيّر خلال اليوم → تُكاش لكل (سهم/يوم).
@@ -159,7 +160,7 @@ def process_candidate(
     # ── 3) بوابات ما-قبل-التحليل (رخيصة، قبل جلب الشموع) ─────────
     pre = gates.apply_gates(cfg, c, gates.PRE_TA_GATES)
     if not pre.passed:
-        return c.reject(pre.reason)
+        return c.reject(pre.reason, pre.reason_code)
 
     # ── 4) جلب الشموع ────────────────────────────────────────────
     year_ago = _et_date(et_now - timedelta(days=400))
@@ -173,7 +174,7 @@ def process_candidate(
         hourly = _cached(
             f"h:{tkr}", lambda: client.aggregates(tkr, 1, "hour", two_months, today))
     except MassiveError as exc:
-        return c.reject(f"تعذّر جلب الشموع: {exc}")
+        return c.reject(f"تعذّر جلب الشموع: {exc}", "bars")
 
     # ── 5) التحليل: الركيزتان ────────────────────────────────────
     # متوسط الحجم اليومي من الأيام **المغلقة** فقط (استبعاد شمعة اليوم الجزئية
@@ -199,7 +200,7 @@ def process_candidate(
     # ── 6) بوابات ما-بعد-التحليل (RVol + بارابولِك بعد VWAP) ─────
     post = gates.apply_gates(cfg, c, gates.POST_TA_GATES)
     if not post.passed:
-        return c.reject(post.reason)
+        return c.reject(post.reason, post.reason_code)
 
     # ── 7) الخبر/المحفّز (إشارة تقوية) ───────────────────────────
     gte = catalyst_mod.lookback_iso(cfg, et_now.astimezone(timezone.utc))
@@ -213,7 +214,7 @@ def process_candidate(
     # ── 8) الدرجة (جاهزية ≥60 + زخم فوق الحد) ───────────────────
     result = scoring.score_candidate(cfg, c)
     if not result.passed:
-        return c.reject(result.reason)
+        return c.reject(result.reason, result.reason_code)
 
     # ── 8.5) المحلّل الذكي (Claude) — للمقبولين فقط ──────────────
     # يقيّم المحفّز؛ خبر هبوطي (طرح/تخفيف) يخصم الدرجة وقد يُسقط التنبيه.
@@ -228,7 +229,7 @@ def process_candidate(
             if c.final_score < cfg.alert_score_min:
                 return c.reject(
                     f"محفّز هبوطي ({c.analyst.warning or c.analyst.direction})"
-                    f" → درجة {c.final_score:.0f} تحت العتبة")
+                    f" → درجة {c.final_score:.0f} تحت العتبة", "bearish")
 
     # ── 8.6) رادار التخفيف (SEC) — للمقبولين فقط ─────────────────
     # طرح/تخفيف فعّال (S-1/424B/EFFECT) يضرّ السهم الصاعد كالشورت تمامًا
@@ -245,7 +246,7 @@ def process_candidate(
             if c.final_score < cfg.alert_score_min:
                 return c.reject(
                     f"تخفيف {c.dilution.risk} ({c.dilution.latest_form})"
-                    f" → درجة {c.final_score:.0f} تحت العتبة")
+                    f" → درجة {c.final_score:.0f} تحت العتبة", "dilution")
 
     # ── 9) الوقف (دعم 5د) والأهداف (مقاومات حقيقية) ─────────────
     from . import risk
@@ -267,7 +268,7 @@ def process_candidate(
         if top_gain is not None and top_gain < cfg.min_target_profit_pct:
             return c.reject(
                 f"سقف ربح الأهداف {top_gain:.0f}% < {cfg.min_target_profit_pct:.0f}%"
-                " — لا يستحق المخاطرة")
+                " — لا يستحق المخاطرة", "min_profit")
 
     # ── 10) الشورت (يضرّ السهم) — للمقبولين فقط (تجنّب تعليق الحلقة) ─
     # عرض فقط لا يؤثّر على الفرز؛ best-effort، تعذّر ≠ صفر. كاش يومي.

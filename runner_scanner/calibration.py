@@ -23,6 +23,18 @@ _MIN_MEDIUM = 4        # أقلّ من هذا لا نقترح أصلًا
 _MIN_MISSED = 3        # فرص فائتة بنفس البوّابة قبل اقتراح تخفيفها
 
 
+def _rejected_by(m, code: str, needle: str) -> bool:
+    """هل رُفض هذا الصفّ بالبوّابة المعنيّة؟ يفضّل الكود الثابت (DEBT-13) إن
+    وُجد، ويرتدّ لمطابقة النصّ العربي للصفوف القديمة (بلا كود). صفّ dict/Row."""
+    try:
+        rc = m["reason_code"] or ""
+    except (KeyError, IndexError):
+        rc = ""
+    if rc:
+        return rc == code
+    return needle in (m["reject_reason"] or "")
+
+
 @dataclass
 class CalibrationProposal:
     """اقتراح معايرة واحد (للمراجعة البشرية فقط — لا يُطبَّق تلقائيًا)."""
@@ -91,7 +103,7 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
         # لا نبني اقتراح تعديل على قيمة لا نعرفها (الصدق الحسابي مقدَّم).
         proposed_rv = max(1.0, round(cfg.rvol_min - 1))
         rv_missed = [m for m in missed
-                     if "RVol" in (m["reject_reason"] or "")
+                     if _rejected_by(m, "rvol", "RVol")
                      and m["rvol"] is not None and m["rvol"] >= proposed_rv]
         if len(rv_missed) >= _MIN_MISSED:
             props.append(CalibrationProposal(
@@ -140,7 +152,7 @@ def propose_calibrations(store, cfg: Config) -> list[CalibrationProposal]:
     # رفع السقف إلى 60M (يبقى خارجه). فلوت مجهول يُستبعد (لا نبني على مجهول).
     proposed_fl = round(cfg.float_max * 1.5)
     fl_missed = [m for m in missed
-                 if "فلوت" in (m["reject_reason"] or "")
+                 if _rejected_by(m, "float", "فلوت")
                  and m["float_shares"] is not None
                  and m["float_shares"] <= proposed_fl]
     if len(fl_missed) >= _MIN_MISSED:

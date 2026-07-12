@@ -1006,6 +1006,62 @@ def test_reject_bucket_classifies():
         "زخم 18 < 25 (زخم ضعيف رغم +10%)") == "زخم ضعيف"
 
 
+def test_reason_code_maps_to_non_other_bucket():
+    """DEBT-13: كل كود رفض ثابت يُخرَّط لخانة (غير «أخرى» عدا incomplete) —
+    الكود يُقدَّم على النصّ، فوكيلٌ يعيد صياغة رسالة رفض لا يكسر القمع بصمت."""
+    for code, bucket in backtest._CODE_BUCKET.items():
+        assert backtest._reject_bucket("نصّ عشوائي لا إبرة فيه", code) == bucket
+        if code != "incomplete":
+            assert bucket != "أخرى", code
+
+
+def test_gates_and_scoring_emit_mapped_reason_codes():
+    """DEBT-13: البوّابات وscoring تُنتج reason_code مُخرَّطًا لخانة غير «أخرى» —
+    يجعل «بوّابة كاملة عمياء في القمع» (كرفض الزخم سابقًا) صنفًا مستحيلًا."""
+    from runner_scanner import gates, scoring
+    from runner_scanner.models import (
+        Candidate, MomentumResult, ReadinessResult, Session, SnapshotEntry)
+
+    def _snap(price=3.0, change=25.0):
+        return SnapshotEntry("X", price, price * 0.8, price * 0.8, price,
+                             price * 0.78, 1_000_000, price * 0.95, change)
+
+    def _mom(score=35, rvol=8.0, above_vwap=True):
+        return MomentumResult(score=score, rvol=rvol, rvol_5min=22,
+                              change_5min_pct=3, vwap_distance_pct=4,
+                              above_vwap=above_vwap, volume_rising=True,
+                              vwap_reliable=True)
+
+    def _rdy(cs=80):
+        return ReadinessResult(classic_score=cs, pillar_score=40, trend="صاعد",
+                               rsi=60, macd_bull=True, divergence="لا شيء",
+                               above_ma50=True, above_ma200=True, golden_cross=True)
+
+    cfg = Config()
+
+    def _bucket_of(res):
+        assert res.reason_code, "الرفض بلا كود"
+        return backtest._reject_bucket(res.reason, res.reason_code)
+
+    # بوّابة السعر (سنتات) · RVol · فوق VWAP
+    lowp = Candidate(snapshot=_snap(price=0.5), session=Session.REGULAR)
+    assert _bucket_of(gates.check_price(cfg, lowp)) == "سعر تحت الحد"
+    lowrv = Candidate(snapshot=_snap(), session=Session.REGULAR)
+    lowrv.momentum = _mom(rvol=1.0)
+    assert _bucket_of(gates.check_rvol(cfg, lowrv)) == "RVol"
+    belowv = Candidate(snapshot=_snap(), session=Session.REGULAR)
+    belowv.momentum = _mom(above_vwap=False)
+    assert _bucket_of(gates.check_vwap(cfg, belowv)) == "تحت VWAP"
+
+    # scoring: جاهزية منخفضة → «جاهزية» · زخم منخفض → «زخم ضعيف» (كان «أخرى»)
+    weak_rdy = Candidate(snapshot=_snap(), session=Session.REGULAR)
+    weak_rdy.momentum, weak_rdy.readiness = _mom(), _rdy(cs=40)
+    assert _bucket_of(scoring.score_candidate(cfg, weak_rdy)) == "جاهزية"
+    weak_mom = Candidate(snapshot=_snap(), session=Session.REGULAR)
+    weak_mom.momentum, weak_mom.readiness = _mom(score=10), _rdy(cs=80)
+    assert _bucket_of(scoring.score_candidate(cfg, weak_mom)) == "زخم ضعيف"
+
+
 # ── م1: الحفظ الدائم للتشغيلات (مصدر الدمج) ───────────────────────
 def test_save_run_persists_json_and_report(tmp_path):
     """م1: التشغيل الكامل يُحفَظ JSON (بالأنواع الدقيقة) + نص التقرير على القرص."""

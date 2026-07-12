@@ -291,14 +291,16 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
                     f"بوضوح من «بلا محفّز» ({no_news['win_rate']:.0f}%) — "
                     "فكّر برفع وزن الخبر في الدرجة أو جعله بوّابة.")
 
-    # فرص فائتة بسبب RVol → خفّض RVOL_MIN
-    rvol_missed = [m for m in missed if "RVol" in (m["reject_reason"] or "")]
+    # فرص فائتة بسبب RVol → خفّض RVOL_MIN (كود ثابت DEBT-13، وارتداد للنصّ)
+    rvol_missed = [m for m in missed
+                   if calibration._rejected_by(m, "rvol", "RVol")]
     if len(rvol_missed) >= 3:
         sugg.append(f"   • {len(rvol_missed)} سهم فاتنا بسبب بوّابة RVol — "
                     f"فكّر بخفض RVOL_MIN (حاليًا {cfg.rvol_min:g}x).")
 
     # فرص فائتة بسبب الفلوت → ارفع FLOAT_MAX
-    float_missed = [m for m in missed if "فلوت" in (m["reject_reason"] or "")]
+    float_missed = [m for m in missed
+                    if calibration._rejected_by(m, "float", "فلوت")]
     if len(float_missed) >= 3:
         sugg.append(f"   • {len(float_missed)} سهم فاتنا بسبب بوّابة الفلوت — "
                     f"فكّر برفع FLOAT_MAX (حاليًا {_human(cfg.float_max)}).")

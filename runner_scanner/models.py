@@ -213,7 +213,10 @@ class Candidate:
 
     # الدرجة
     final_score: float = 0.0
-    rejected_reason: Optional[str] = None   # لو رُفض، سبب الرفض (للـ closed-loop)
+    rejected_reason: Optional[str] = None   # لو رُفض، سبب الرفض (نصّ للعرض)
+    # كود رفض ثابت (DEBT-13): للتصنيف الآلي (قمع/معايرة/تشريح) بدل مطابقة النصّ
+    # العربي الهشّة. النصّ يبقى للعرض؛ الكود هو الحكم. "" = صفوف قديمة (ارتداد للنصّ).
+    reject_code: str = ""
 
     @property
     def ticker(self) -> str:
@@ -223,6 +226,7 @@ class Candidate:
     def is_rejected(self) -> bool:
         return self.rejected_reason is not None
 
-    def reject(self, reason: str) -> "Candidate":
+    def reject(self, reason: str, code: str = "") -> "Candidate":
         self.rejected_reason = reason
+        self.reject_code = code
         return self
