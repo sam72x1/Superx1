@@ -118,6 +118,12 @@ def process_candidate(
         """يكاش البيانات البطيئة لكل (سهم/يوم) إن وُجد كاش."""
         return cache.get(today, key, fetch) if cache is not None else fetch()
 
+    def _cached_ttl(key: str, ttl_sec: float, fetch):
+        """يكاش بحبيبة ثوانٍ (TTL) — للخبر: نظرته الخلفية 48س فمحفّز عمره
+        بضع دقائق مقبول، وبلا كاش = آلاف النداءات المتطابقة يوميًا (PERF-19)."""
+        return (cache.get_ttl(today, key, ttl_sec, fetch)
+                if cache is not None else fetch())
+
     # ── 1) التوقّف ───────────────────────────────────────────────
     if halts is not None:
         st = halts.state_of(snap.ticker)
@@ -197,7 +203,10 @@ def process_candidate(
 
     # ── 7) الخبر/المحفّز (إشارة تقوية) ───────────────────────────
     gte = catalyst_mod.lookback_iso(cfg, et_now.astimezone(timezone.utc))
-    raw_news = client.latest_news(snap.ticker, gte)
+    # كاش TTL: نظرة الخبر الخلفية 48س، فإعادة نداءه كل 45ث لكل مرشّح هدر
+    # (~ثلث ميزانية API). المفتاح بلا gte (يتغيّر كل دورة) كي يُصيب الكاش.
+    raw_news = _cached_ttl(f"news:{tkr}", cfg.news_cache_ttl_sec,
+                           lambda: client.latest_news(snap.ticker, gte))
     c.catalyst = catalyst_mod.evaluate_catalyst(
         cfg, raw_news, et_now.astimezone(timezone.utc))
 

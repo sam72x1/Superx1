@@ -335,6 +335,53 @@ def test_asof_client_hourly_excludes_unfinished_window():
     assert cur and cur[0].h == 2.4 and cur[0].c == 2.35 and cur[0].v == 2e4
 
 
+class _NewsBase:
+    """أساس خبر: 3 عناصر بأوقات مختلفة + عدّاد نداءات (لإثبات الكاش)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def news_results(self, ticker, gte, limit=5, published_lte_utc=None):
+        # الطوابع بـUTC؛ asof يُبنى من _tms بتوقيت ET (يونيو = UTC−4):
+        # 10:00 ET=14:00Z · 12:00 ET=16:00Z · 16:00 ET=20:00Z.
+        self.calls += 1
+        return [   # الأحدث أولًا (كما يرجّع الخادم desc)
+            {"title": "متأخر", "published_utc": "2026-06-26T19:00:00Z"},
+            {"title": "وسط", "published_utc": "2026-06-26T15:00:00Z"},
+            {"title": "باكر", "published_utc": "2026-06-26T13:40:00Z"},
+        ]
+
+
+def test_asof_news_no_future_leak_and_cached():
+    """PERF-20: كاش يوم كامل ثم فلترة محلية — أحدث خبر ≤ asof فقط (لا تسرّب)،
+    ونداء الخادم مرّة واحدة لكل (سهم/يوم) رغم تكرار الاستدعاء عبر الشموع."""
+    base = _NewsBase()
+    static = {}
+    gte = "2026-06-24T10:00:00Z"
+    # شمعة 10:00 ET (=14:00Z): «باكر»(13:40Z) فقط ≤ asof؛ «وسط»/«متأخر» بعده
+    c1 = backtest.AsOfClient(base, "2026-06-26", _tms(2026, 6, 26, 10, 0),
+                             [], [], static)
+    cat1 = c1.latest_news("X", gte)
+    assert cat1 and cat1.published_utc == "2026-06-26T13:40:00Z"
+    # شمعة 12:00 ET (=16:00Z، نفس static_cache): «وسط»(15:00Z) مؤهّل — بلا نداء
+    c2 = backtest.AsOfClient(base, "2026-06-26", _tms(2026, 6, 26, 12, 0),
+                             [], [], static)
+    cat2 = c2.latest_news("X", gte)
+    assert cat2 and cat2.published_utc == "2026-06-26T15:00:00Z"
+    assert base.calls == 1                 # نداء واحد للخادم (كاش يوم كامل)
+
+
+def test_asof_news_respects_gte_lower_bound():
+    """PERF-20: الفلترة المحلية تحترم الحدّ الأدنى gte كالخادم — خبر أقدم من
+    نافذة المرشّح لا يُرجَّع رغم أنه ≤ asof."""
+    base = _NewsBase()
+    c = backtest.AsOfClient(base, "2026-06-26", _tms(2026, 6, 26, 16, 0),
+                            [], [], {})   # asof = 20:00Z
+    # gte متأخر (16:00Z) → «باكر»(13:40Z) و«وسط»(15:00Z) خارج النافذة
+    cat = c.latest_news("X", "2026-06-26T16:00:00Z")
+    assert cat and cat.published_utc == "2026-06-26T19:00:00Z"
+
+
 # ── تشغيل كامل end-to-end بمحاكاة ─────────────────────────────────
 def _daily_on_runner_scale(n=260, end_close=2.3):
     """سلسلة يومية صاعدة مُعاد تحجيمها لتنتهي قرب سعر الرنر (~$2.3) — كي تتّصل
@@ -383,6 +430,9 @@ class MockBase:
 
     def latest_news(self, t, gte, limit=5, published_lte_utc=None):
         return None
+
+    def news_results(self, t, gte, limit=5, published_lte_utc=None):
+        return []
 
 
 def test_run_backtest_end_to_end():

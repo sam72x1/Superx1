@@ -221,12 +221,12 @@ class MassiveClient:
         return None
 
     # ── الخبر/المحفّز (إشارة تقوية) ───────────────────────────────
-    def latest_news(self, ticker: str, published_gte_utc: str,
-                    limit: int = 5,
-                    published_lte_utc: Optional[str] = None) -> Optional[Catalyst]:
-        """أحدث خبر للسهم بعد طابع زمني UTC (RFC3339). None لو ما فيه.
-        published_lte_utc: سقف زمني علوي (للباكتيست: لا أخبار من المستقبل)."""
-        # التحليل داخل الحماية: رد مشوّه (شكل مختلف) يُتجاهَل ولا يكسر الدورة.
+    def news_results(self, ticker: str, published_gte_utc: str,
+                     limit: int = 5,
+                     published_lte_utc: Optional[str] = None) -> list[dict]:
+        """قائمة نتائج الخبر الخام (dicts، الأحدث أولًا) بعد الطابع الزمني.
+        مكشوفة للباكتيست: يكاش قائمة اليوم مرّة ثم يصفّي محليًّا بلا تسرّب.
+        []‏ عند الغياب أو رد مشوّه (best-effort — لا تكسر الدورة)."""
         try:
             params = {
                 "ticker": ticker,
@@ -239,24 +239,35 @@ class MassiveClient:
                 params["published_utc.lte"] = published_lte_utc
             data = self._get("/v2/reference/news", params=params)
             results = data.get("results") if isinstance(data, dict) else None
-            if not isinstance(results, list) or not results:
-                return None
-            top = results[0]
-            if not isinstance(top, dict):
-                return None
-            pub = top.get("publisher") or {}
-            return Catalyst(
-                has_news=True,
-                headline=top.get("title", ""),
-                publisher=pub.get("name", "") if isinstance(pub, dict) else str(pub),
-                url=top.get("article_url", ""),
-                published_utc=top.get("published_utc", ""),
-                description=top.get("description", "") or "",
-            )
+            if not isinstance(results, list):
+                return []
+            return [r for r in results if isinstance(r, dict)]
         except (MassiveError, TypeError, ValueError, KeyError,
                 AttributeError, IndexError) as exc:
             logger.debug("news فشل لـ %s: %s", ticker, exc)
-            return None
+            return []
+
+    @staticmethod
+    def catalyst_from_item(top: dict) -> Catalyst:
+        """يبني Catalyst من عنصر خبر خام واحد (يستعمله الحي والباكتيست معًا)."""
+        pub = top.get("publisher") or {}
+        return Catalyst(
+            has_news=True,
+            headline=top.get("title", ""),
+            publisher=pub.get("name", "") if isinstance(pub, dict) else str(pub),
+            url=top.get("article_url", ""),
+            published_utc=top.get("published_utc", ""),
+            description=top.get("description", "") or "",
+        )
+
+    def latest_news(self, ticker: str, published_gte_utc: str,
+                    limit: int = 5,
+                    published_lte_utc: Optional[str] = None) -> Optional[Catalyst]:
+        """أحدث خبر للسهم بعد طابع زمني UTC (RFC3339). None لو ما فيه.
+        published_lte_utc: سقف زمني علوي (للباكتيست: لا أخبار من المستقبل)."""
+        results = self.news_results(ticker, published_gte_utc, limit=limit,
+                                    published_lte_utc=published_lte_utc)
+        return self.catalyst_from_item(results[0]) if results else None
 
     # ── حالة السوق (تشخيص عام، ليست توقّف per-ticker) ─────────────
     def market_status(self) -> dict[str, Any]:

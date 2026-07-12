@@ -56,13 +56,14 @@ class AsOfClient:
 
     def __init__(self, base: MassiveClient, date_str: str, asof_ms: int,
                  bars_5min: list[Bar], bars_1min: list[Bar],
-                 static_cache: dict):
+                 static_cache: dict, news_fetch_limit: int = 50):
         self._base = base
         self._date = date_str
         self._asof = asof_ms
         self._5 = bars_5min        # مقصوصة مسبقًا حتى asof
         self._1 = bars_1min
         self._static = static_cache
+        self._news_limit = news_fetch_limit
 
     def _cached(self, key, fetch):
         if key not in self._static:
@@ -129,9 +130,18 @@ class AsOfClient:
         return out
 
     def latest_news(self, ticker, published_gte_utc, limit=5):
+        # كاش يوم كامل ثم فلترة محلية بلا تسرّب (PERF-20): نجلب قائمة اليوم مرّة
+        # واحدة بحدّ أوسع (الشموع تُقيَّم تصاعديًّا فأول نداء = أبكر gte = أوسع
+        # نافذة)، ثم نصفّي لكل شمعة بـ gte الشمعة ≤ published ≤ asof — مكافئ
+        # تمامًا لمرشّح الخادم gte/lte، ويلغي ~شمعة/نداء لكل رنر (أكبر مضخّم API).
         lte = _iso_utc(datetime.fromtimestamp(self._asof / 1000, tz=timezone.utc))
-        return self._base.latest_news(ticker, published_gte_utc, limit=limit,
-                                      published_lte_utc=lte)
+        results = self._cached(
+            f"news:{ticker}:{self._date}",
+            lambda: self._base.news_results(
+                ticker, published_gte_utc, limit=self._news_limit))
+        hits = [r for r in results
+                if published_gte_utc <= (r.get("published_utc") or "") <= lte]
+        return MassiveClient.catalyst_from_item(hits[0]) if hits else None
 
 
 def _bar_date(b: Bar) -> str:
@@ -509,7 +519,8 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         # نمدّ شموع 1د حتى نهاية نافذة الزناد (لا بدايتها) كي يُحسب VWAP الجلسة
         # ومشتقاته على لحظة القرار نفسها كالحي — ليس تسرّبًا (نفس نافذة السنابشوت).
         up_to_1 = [x for x in full1 if x.t_ms < asof + _BAR5_MS]
-        client = AsOfClient(base, day, asof, up_to, up_to_1, static_cache)
+        client = AsOfClient(base, day, asof, up_to, up_to_1, static_cache,
+                            news_fetch_limit=cfg.backtest_news_fetch_limit)
         try:
             cand = process_candidate(
                 cfg, client, snap, halts=None,

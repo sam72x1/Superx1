@@ -242,6 +242,51 @@ def test_late_wave_run_pct_env_default_matches_dataclass():
             os.environ["LATE_WAVE_RUN_PCT"] = saved
 
 
+def test_all_config_from_env_defaults_match_dataclass():
+    """TEST-17: الحارس الجدولي — **كل** حقل يقرؤه from_env بلا بيئة يجب أن
+    يساوي افتراضي الـdataclass. الحارس السابق غطّى حقلًا واحدًا؛ هذا يغطّي
+    كل الحقول عبر dataclasses.fields، فلا ينجرف افتراضيان صامتًا فتصير
+    المجموعة «خضراء وخاطئة». (conftest يمسح البيئة قبل الجمع.)"""
+    import dataclasses
+    from runner_scanner.config import Config
+    env_cfg = Config.from_env()
+    mismatches = []
+    for f in dataclasses.fields(Config):
+        if f.default is not dataclasses.MISSING:
+            default = f.default
+        elif f.default_factory is not dataclasses.MISSING:
+            default = f.default_factory()
+        else:
+            continue
+        if getattr(env_cfg, f.name) != default:
+            mismatches.append(
+                f"{f.name}: from_env={getattr(env_cfg, f.name)!r} "
+                f"!= dataclass={default!r}")
+    assert not mismatches, "انجراف افتراضي:\n" + "\n".join(mismatches)
+
+
+def test_env_example_documents_every_from_env_key():
+    """TEST-17/§6: كل مفتاح يقرؤه from_env موثّق في .env.example (الأماكن
+    الثلاثة). الاستثناء الوحيد RENDER_GIT_COMMIT — يحقنه Render تلقائيًا
+    كبديل لـ CODE_VERSION، لا يضبطه المستخدم في ملف بيئة."""
+    import inspect
+    import os
+    import re
+    from runner_scanner.config import Config
+    src = inspect.getsource(Config.from_env)
+    env_keys = set(re.findall(r'_(?:f|i|s|b|ftuple)\(\s*"([A-Z0-9_]+)"', src))
+    root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    documented = set()
+    with open(os.path.join(root, ".env.example"), encoding="utf-8") as fh:
+        for line in fh:
+            m = re.match(r"\s*#?\s*([A-Z0-9_]+)=", line)
+            if m:
+                documented.add(m.group(1))
+    platform_injected = {"RENDER_GIT_COMMIT"}
+    undocumented = env_keys - documented - platform_injected
+    assert not undocumented, f"مفاتيح غير موثّقة في .env.example: {sorted(undocumented)}"
+
+
 # ── BUG-07: `or snap.day_volume` كان يحقن artifact في بسط RVol ─────
 def test_premarket_rvol_ignores_day_volume_artifact():
     """بريماركت بلا شموع جلسة (تراكمي=0) → day_volume الضخم (artifact) يجب
