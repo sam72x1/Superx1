@@ -534,10 +534,17 @@ class Store:
 
     def get_session_champions(self, session: str,
                               on_or_before_day: str | None = None,
-                              limit: int = 15) -> list[dict]:
-        """أبطال آخر لقطة محفوظة لفترة (في/قبل يوم)، مرتّبة حسب rank."""
+                              limit: int = 15, exact: bool = False) -> list[dict]:
+        """أبطال آخر لقطة محفوظة لفترة (في/قبل يوم)، مرتّبة حسب rank.
+        exact=True: اليوم بالضبط لا «في/قبل» — فالغياب يتدهور إلى **فارغ** بدل
+        بعث يوم قديم اعتباطيًا (BUG-06: توريث الرسمي من بريماركت-اليوم)."""
         with self._lock:
-            if on_or_before_day:
+            if on_or_before_day and exact:
+                row = self._conn.execute(
+                    "SELECT trade_date FROM session_champions WHERE session=?"
+                    " AND trade_date=? LIMIT 1",
+                    (session, on_or_before_day)).fetchone()
+            elif on_or_before_day:
                 row = self._conn.execute(
                     "SELECT trade_date FROM session_champions WHERE session=?"
                     " AND trade_date<=? ORDER BY trade_date DESC LIMIT 1",
@@ -564,8 +571,11 @@ class Store:
                        + timedelta(days=day_offset)).isoformat()
         except ValueError:
             return []
+        # إزاحة 0 (توريث داخل نفس اليوم، كالرسمي←بريماركت) = اليوم بالضبط —
+        # فالغياب يعطي فارغًا لا يومًا قديمًا (BUG-06).
         return [c["symbol"] for c in
-                self.get_session_champions(prev_sess, ref_day, 15)
+                self.get_session_champions(prev_sess, ref_day, 15,
+                                           exact=(day_offset == 0))
                 if c.get("symbol")]
 
     # ── bot_meta ──────────────────────────────────────────────────

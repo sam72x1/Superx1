@@ -56,3 +56,18 @@ def test_afterhours_inherits_regular_today():
 def test_no_champions_returns_empty():
     st = _store()
     assert st.inherited_champions(Session.PREMARKET.value, "2026-06-26") == []
+
+
+def test_regular_inherits_premarket_exact_day_only():
+    """BUG-06: توريث الرسمي من بريماركت اليوم (إزاحة 0) — الغياب يعطي فارغًا
+    لا يبعث بريماركت يوم قديم. (قبل الإصلاح كان <= يرتدّ ليوم قديم اعتباطيًا.)"""
+    st = _store()
+    # بريماركت يوم قديم فقط (26) — لا يوجد بريماركت اليوم (29)
+    st.save_champions(Session.PREMARKET.value, "2026-06-26",
+                      [("OLD", 40.0, 2.0)])
+    inh = st.inherited_champions(Session.REGULAR.value, "2026-06-29")
+    assert inh == []                       # لا يبعث OLD القديم
+    # وحين يوجد بريماركت اليوم نفسه → يُورَّث
+    st.save_champions(Session.PREMARKET.value, "2026-06-29",
+                      [("TODAY", 55.0, 3.0)])
+    assert st.inherited_champions(Session.REGULAR.value, "2026-06-29") == ["TODAY"]

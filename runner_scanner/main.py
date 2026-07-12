@@ -142,6 +142,18 @@ class Scanner:
         if events:
             logger.info("أُرسل %d تحديث متابعة", len(events))
 
+        # حفظ أبطال هذي الفترة (أعلى 15 صعودًا) للتوريث للفترة التالية — **قبل**
+        # رجوع البريماركت (BUG-06): الأبطال رصدٌ للسنابشوت لا فعل تنبيه، فحفظهم
+        # لا يخالف تعطيل تنبيهات البريماركت. الرسمي يرث بريماركت-اليوم
+        # (_CHAMP_INHERIT[REGULAR]=(PREMARKET,0))، وبلا هذا الحفظ يكون التوريث
+        # ميتًا (لا يُكتب أبدًا في المسار الحيّ) أو يبعث يومًا قديمًا اعتباطيًا.
+        if self.cfg.champions_enabled and top:
+            # أبطال بحجم تداول فعلي فقط (لا طبعة بريماركت رقيقة تُورَّث كأولوية)
+            self.store.save_champions(
+                session.value, et_date,
+                [(e.ticker, e.change_pct, e.last_price) for e in top
+                 if e.day_volume > 0])
+
         # جلسة البريماركت معطّلة (قرار المستخدم بالبيانات: 8 أشهر → بريماركت 59%
         # مقابل رسمي 87%؛ تعطيلها يرفع النجاح الكلي ~6 نقاط). نحدّث المفتوح فوق
         # وننهي هنا بلا تنبيهات جديدة. /top لا يزال يعرض رنرات البريماركت (إعلام).
@@ -176,14 +188,6 @@ class Scanner:
             self.store.log_candidate(cand)   # closed-loop لكل مرشّح
             if not cand.is_rejected:
                 accepted.append(cand)
-
-        # حفظ أبطال هذي الفترة (أعلى 15 صعودًا) للتوريث للفترة التالية
-        if self.cfg.champions_enabled and top:
-            # أبطال بحجم تداول فعلي فقط (لا طبعة بريماركت رقيقة تُورَّث كأولوية)
-            self.store.save_champions(
-                session.value, et_date,
-                [(e.ticker, e.change_pct, e.last_price) for e in top
-                 if e.day_volume > 0])
 
         # ترتيب الأولوية ثم الإرسال
         sent = 0
