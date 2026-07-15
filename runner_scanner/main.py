@@ -111,6 +111,11 @@ class Scanner:
         logger.info("الجلسة %s — فوق العتبة: %d · أعلى %d + %d بطل موروث",
                     session.value, len(runners), len(top), len(champ_entries))
 
+        # PERF-18: ضبط اشتراك صفقات WebSocket على المجمّع الحالي (no-op في الوضع
+        # الافتراضي T.*). LULD.* يبقى شبكة أمان للتوقّفات لكل رمز.
+        self.halts.update_subscription(
+            {e.ticker for e in top} | champ_syms)
+
         # «سهم الماركت» النموذجي (منهجية المستخدم): صاعد من البري + نافذة افتتاح
         # + ضغط. نجمع أبطال بريماركت اليوم مرّة، ونسم البطاقة لاحقًا (إعلام لا فرز).
         market_champs: set[str] = set()

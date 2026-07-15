@@ -321,6 +321,11 @@ class Config:
 
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
+    # PERF-18: تضييق اشتراك الصفقات إلى T.<مجمّع المرشّحين> بدل T.* (كل صفقات
+    # السوق ~ملايين رسالة تُشبع CPU وقت الافتتاح). LULD.* يبقى شبكة أمان للتوقّفات.
+    # افتراضيًّا False (سلوك T.* الكامل) — فعّله بعد قياس CPU على Render (قيد التقرير:
+    # سهم يتوقّف قبل دخوله المجمّع يُلتقط عبر LULD/status لا T).
+    ws_narrow_trades: bool = False
     dry_run: bool = False                # لا يرسل تيليجرام، يطبع فقط
     log_level: str = "INFO"
 
@@ -454,6 +459,7 @@ class Config:
             dev_compare_window_days=_i("DEV_COMPARE_WINDOW_DAYS", 7),
             dev_tail_warn_mult=_f("DEV_TAIL_WARN_MULT", 1.5),
             halts_enabled=_b("HALTS_ENABLED", True),
+            ws_narrow_trades=_b("WS_NARROW_TRADES", False),
             dry_run=_b("DRY_RUN", False),
             log_level=_s("LOG_LEVEL", "INFO"),
         )
