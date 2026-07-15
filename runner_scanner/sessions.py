@@ -151,6 +151,27 @@ def _session_window(cfg: Config, session: Session) -> tuple[float, float]:
     return 0.0, 24.0
 
 
+def filter_session_bars(cfg: Config, session: Session,
+                        bars: list[Bar]) -> list[Bar]:
+    """يرجّع شموع الجلسة الحالية فقط (ضمن نافذة الساعة ET).
+
+    BUG-10: «VWAP الجلسي» يجب أن يُرسى عند بداية الجلسة (09:30 للرسمي) لا 04:00.
+    بلا تصفية، تجرّ طبعات البريماركت الـVWAP بعيدًا عن قيمته الرسمية الحقيقية —
+    فتنقلب بوّابة VWAP والامتداد البارابولِك على رقم خاطئ (§4)."""
+    if not bars:
+        return []
+    lo, hi = _session_window(cfg, session)
+    out = []
+    for b in bars:
+        if b.t_ms <= 0:
+            continue
+        dt = datetime.fromtimestamp(b.t_ms / 1000, tz=timezone.utc).astimezone(ET)
+        h = _hour_float(dt)
+        if lo <= h < hi:
+            out.append(b)
+    return out
+
+
 def session_cumulative_volume(cfg: Config, session: Session,
                               bars: list[Bar]) -> float:
     """الحجم التراكمي **الفعلي** للجلسة الحالية من الشموع (لا من snap.day_volume

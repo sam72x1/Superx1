@@ -82,6 +82,29 @@ def test_session_vwap_empty():
     assert ind.session_vwap([]) is None
 
 
+def test_filter_session_bars_anchors_at_session_start():
+    """BUG-10: VWAP الجلسي يُبنى من شموع الجلسة الحالية فقط — شمعة بريماركت
+    (08:00) لا تُدرَج في VWAP الرسمي (09:30+)، وإلا جرّت الرقم بعيدًا."""
+    from runner_scanner.models import Bar
+    cfg = Config()
+
+    def _ms(h, mi=0):
+        return int(datetime(2026, 6, 26, h, mi, tzinfo=ET).timestamp() * 1000)
+
+    bars = [
+        Bar(t_ms=_ms(8, 0),  o=2, h=2, l=2, c=2.0, v=1000),   # بريماركت (يُستبعد)
+        Bar(t_ms=_ms(9, 45), o=3, h=3, l=3, c=3.0, v=100),    # رسمي
+        Bar(t_ms=_ms(10, 0), o=3, h=3, l=3, c=3.0, v=300),    # رسمي
+    ]
+    reg = sessions.filter_session_bars(cfg, Session.REGULAR, bars)
+    assert [b.t_ms for b in reg] == [_ms(9, 45), _ms(10, 0)]   # بلا شمعة 08:00
+    # VWAP الرسمي = 3.0 (من الرسمي فقط) لا مسحوبًا نحو 2 بشمعة البريماركت
+    assert abs(ind.session_vwap(reg) - 3.0) < 1e-9
+    # البريماركت يرى شمعته فقط
+    pre = sessions.filter_session_bars(cfg, Session.PREMARKET, bars)
+    assert [b.t_ms for b in pre] == [_ms(8, 0)]
+
+
 def test_session_volume_baselines_from_hourly():
     from runner_scanner.models import Bar
     bars = []

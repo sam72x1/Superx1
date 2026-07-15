@@ -10,7 +10,8 @@ from __future__ import annotations
 from .config import Config
 from .indicators import session_vwap
 from .models import Bar, MomentumResult, Session, SnapshotEntry
-from .sessions import compute_rvol, rvol_has_basis, session_cumulative_volume
+from .sessions import (compute_rvol, filter_session_bars, rvol_has_basis,
+                       session_cumulative_volume)
 
 
 def _avg(values: list[float]) -> float:
@@ -33,9 +34,12 @@ def compute_momentum(
 
     price = snap.last_price
 
-    # ── VWAP الجلسي: من شموع الدقيقة (موثوق)، وإلا غير موثوق ───────
+    # ── VWAP الجلسي: من شموع الدقيقة **داخل نافذة الجلسة الحالية** (BUG-10) ──
     # day_vwap في البريماركت/الأفترهاوس غالبًا 0 (artifact) → لا نعامله قياسًا.
-    vwap = session_vwap(bars_1min) if bars_1min else None
+    # نصفّي الشموع لنافذة الجلسة كي يُرسى VWAP عند بدايتها (09:30 للرسمي) لا 04:00
+    # — وإلا طبعات البريماركت تجرّه بعيدًا فتنقلب بوّاباته على رقم خاطئ.
+    sess_1min = filter_session_bars(cfg, session, bars_1min)
+    vwap = session_vwap(sess_1min) if sess_1min else None
     vwap_reliable = vwap is not None
     if vwap is None:
         if session is Session.REGULAR and snap.day_vwap > 0:
