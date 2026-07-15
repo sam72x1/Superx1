@@ -661,6 +661,57 @@ def test_asof_rank_gate_picks_early_leader_not_late_exploder():
     assert T2 in allowed["B"] and T2 not in allowed["A"]   # T2: B تجاوز فدخل
 
 
+def test_eval_delayed_alert_carries_ranked_out():
+    """DIAG-26: سهم حُجب عن أعلى-15 عند شمعة أبكر ثم دخلها فنُبِّه (تأخّر) →
+    قاموس التنبيه يحمل ranked_out=True. كان أثر البوّابة على التوقيت مخفيًّا
+    في القمع (not_ranked=0 بينما البوّابة حرّكت عشرات الأسهم فعلًا)."""
+    base = MockBase()
+    # مسموح عند 9:40 و9:45 فقط (محجوب عند 9:35) → يجتاز البوّابات عند 9:35 لكنه
+    # خارج المقعد فيُؤجَّل، ثم يدخل عند 9:40 فيُنبَّه بعلم ranked_out.
+    allowed = {_tms(2026, 6, 26, 9, 40), _tms(2026, 6, 26, 9, 45)}
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest._eval_candidate(
+        cfg, base, "2026-06-26", {}, 2.0, "RUNR",
+        full5=base.bars_5min("RUNR", "", ""),
+        full1=base.bars_1min("RUNR", "", ""), allowed_asof=allowed)
+    assert res["kind"] == "alert" and res["ranked_out"] is True
+    # الدخول عند إغلاق شمعة 9:40 (التنبيه المتأخّر) لا 9:35
+    assert res["trade"]["entry"] == 2.65
+
+
+def test_eval_blocked_then_rejected_carries_ranked_out():
+    """DIAG-26: سهم حُجب عن أعلى-15 في كل شمعه ثم واصل صعوده فرُفض ببوّابة لاحقة
+    (حركة متقدّمة) → قاموس الرفض يحمل ranked_out=True (فامتصّه reject_reasons لا
+    not_ranked). هذا سبب not_ranked=0 رغم أن البوّابة أزالت عشرات التنبيهات."""
+    base = MockBase()
+    # سقف حركة 50: يجتاز عند 9:35 (+25%) و9:40 (+32%)، ويُرفض عند 9:45 (+55%).
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 entry_change_max_pct=50)
+    res = backtest._eval_candidate(
+        cfg, base, "2026-06-26", {}, 2.0, "RUNR",
+        full5=base.bars_5min("RUNR", "", ""),
+        full1=base.bars_1min("RUNR", "", ""),
+        allowed_asof=set())        # محجوب في كل الطوابع
+    assert res["kind"] == "rejected" and res["ranked_out"] is True
+    assert "حركة متقدّمة" in res["reason"]   # رُفض لاحقًا (لا not_ranked)
+
+
+def test_funnel_rank_gate_affected_counted_and_reported():
+    """DIAG-26: العدّاد rank_gate_affected يلتقط أثر البوّابة (تأخّر/حجب) مستقلًّا
+    عن التصنيف النهائي، والتقرير يظهره — بينما not_ranked يبقى صفرًا (الحالتان
+    منفصلتان). new_funnel يهيّئه صفرًا كي لا يكسر الدمج مع رنّات قديمة."""
+    assert backtest.new_funnel()["rank_gate_affected"] == 0
+    res = backtest.BacktestResult(
+        start="2026-06-01", end="2026-06-30", days=21, trades=[],
+        funnel={**backtest.new_funnel(),
+                "considered": 100, "rank_gate_affected": 7,
+                "not_ranked": 0, "rejected": 90, "alerts": 5})
+    report = backtest.format_report(res)
+    assert "مرّ عليه ترتيب أعلى-15" in report and "7" in report
+    # not_ranked=0 لا يُطبع (الحالتان منفصلتان مفهوميًّا)
+    assert "لم يدخل مجمّع الحي" not in report
+
+
 def test_day_candidates_no_lookahead_on_close_or_dayhigh():
     """م4: مجمّع اليوم لا يستبعد بسعر الإغلاق (مستقبلي) ولا بسقف قمة اليوم
     (مستقبلي) — البوّابتان (السعر/سقف التشوّه) لحظيّتان داخل التقييم كالحي.

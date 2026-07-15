@@ -444,6 +444,9 @@ def _day_candidates(cfg: Config, grouped: list[dict],
 def new_funnel() -> dict:
     return {"considered": 0, "no_5min": 0, "no_trigger": 0,
             "bad_snapshot": 0, "premarket_only": 0, "not_ranked": 0, "error": 0,
+            # DIAG-26: كم مرشّحًا لمسته بوّابة الترتيب اللحظي (تأخّر تنبيه أو
+            # حجب انتهى برفض) — مستقلّ عن التصنيف النهائي، يكشف أثرًا يخفيه القمع.
+            "rank_gate_affected": 0,
             "rejected": 0, "alerts": 0,
             "reject_reasons": {}, "shadow": []}
 
@@ -613,7 +616,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             # قياس ترقية الوقف مع كل هدف (ظل — طلب المستخدم): هل يرفع التوقّع؟
             realized_ratchet = ratchet_exit_realized(
                 entry, cand.risk, post, asof, cfg.outcome_window_min)
-            return {"kind": "alert", "trade": {
+            # DIAG-26: ranked_out=True هنا يعني «تأخّر» — حُجب عن أعلى-15 في
+            # شمعة أسبق ثم دخلها فنُبِّه (البوّابة اللحظية أثّرت على توقيته).
+            return {"kind": "alert", "ranked_out": ranked_out, "trade": {
                 "date": day, "ticker": ticker,
                 "entry": round(entry, 4),
                 "session": cand.session.value,
@@ -712,8 +717,11 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         logger.debug("تعذّر قياس ظل %s: %s", ticker, exc)
         shadow = None
     # رُفض في كل الدورات → سببه من آخر محاولة (أكثر تمثيلًا لقيد نهاية اليوم)
+    # DIAG-26: ranked_out=True هنا يعني «حجب» — نجح ضمنيًّا عند شمعة وخرج من
+    # أعلى-15، ثم واصل صعوده فرُفض ببوّابة لاحقة (فامتصّه reject_reasons لا
+    # not_ranked). العلم يكشف أثر البوّابة الذي كان مخفيًّا في القمع.
     return {"kind": "rejected", "reason": last_reason,
-            "reason_code": last_code, "shadow": shadow}
+            "reason_code": last_code, "shadow": shadow, "ranked_out": ranked_out}
 
 
 def _asof_rank_gate(cfg: Config, cands: list[tuple[str, float]],
@@ -814,6 +822,10 @@ def simulate_day(cfg: Config, base: MassiveClient, day: str,
     trades: list[dict] = []
     for r in results:
         kind = r["kind"]
+        # DIAG-26: أثر بوّابة الترتيب مستقلّ عن التصنيف النهائي — نعدّه أوّلًا
+        # (تنبيه متأخّر، أو رفض لاحق بعد حجب) كي لا يبقى مخفيًّا في القمع.
+        if funnel is not None and r.get("ranked_out"):
+            funnel["rank_gate_affected"] += 1
         if kind == "alert":
             trades.append(r["trade"])
             if funnel is not None:
@@ -1280,6 +1292,12 @@ def format_report(res: BacktestResult) -> str:
                 f"{f['not_ranked']}")
         if f.get("error"):
             lines.append(f"  • خطأ معالجة: {f['error']}")
+        # DIAG-26: أثر بوّابة الترتيب اللحظي (BUG-02) — تنبيه تأخّر أو رفض بعد
+        # حجب. القمع كان يخفيه (not_ranked=0 بينما البوّابة تحرّك عشرات الأسهم).
+        if f.get("rank_gate_affected"):
+            lines.append(
+                f"  • مرّ عليه ترتيب أعلى-15 (تأخّر تنبيه أو حجب): "
+                f"{f['rank_gate_affected']}")
         lines.append(f"  • رُفضت بالبوّابات: {f['rejected']}")
         for reason, cnt in sorted(f.get("reject_reasons", {}).items(),
                                   key=lambda x: -x[1]):
