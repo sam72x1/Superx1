@@ -55,6 +55,34 @@ class HaltTracker:
         self._ws = None
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        # PERF-18: في وضع التضييق، مجموعة رموز مجمّع المرشّحين المشترَك لها T.<sym>
+        # (بدل T.* = خرطوم كل صفقات السوق). LULD.* يبقى دائمًا شبكة أمان للتوقّفات.
+        self._trade_subs: set[str] = set()
+
+    def update_subscription(self, tickers) -> None:
+        """PERF-18: يضبط اشتراك T.<sym> على مجمّع المرشّحين الحالي (يُنادى كل دورة
+        من run_cycle). no-op في الوضع الافتراضي (T.* كامل). LULD.* يبقى دائمًا
+        شبكة أمان للتوقّفات، فسهم يتوقّف قبل دخوله المجمّع يُلتقط عبر LULD/status.
+        best-effort: فشل الإرسال لا يُسقط شيئًا (الاتصال التالي يعيد المزامنة)."""
+        if not self.cfg.ws_narrow_trades:
+            return
+        want = {str(t).upper() for t in tickers if t}
+        with self._lock:
+            add = want - self._trade_subs
+            drop = self._trade_subs - want
+            self._trade_subs = want
+            ws = self._ws
+        if ws is None or (not add and not drop):
+            return   # لم يتّصل بعد أو لا تغيير — الاتصال يشترك بالمجموعة المحدّثة
+        try:
+            if add:
+                ws.send(json.dumps({"action": "subscribe",
+                                    "params": ",".join(f"T.{t}" for t in sorted(add))}))
+            if drop:
+                ws.send(json.dumps({"action": "unsubscribe",
+                                    "params": ",".join(f"T.{t}" for t in sorted(drop))}))
+        except Exception as exc:  # noqa: BLE001 — الاتصال التالي يصحّح المزامنة
+            logger.debug("تعذّر تحديث اشتراك الصفقات: %s", exc)
 
     # ── واجهة الاستعلام (تُستخدم من حلقة المسح) ───────────────────
     def _entry(self, ticker: str) -> dict:
@@ -189,9 +217,20 @@ class HaltTracker:
                     self._ws = ws
                 self._ws.send(json.dumps(
                     {"action": "auth", "params": self.cfg.massive_api_key}))
-                # نشترك في كل LULD والصفقات (لربط أحداث الـ band بانقطاع التداول)
+                # LULD.* دائمًا (قناة صغيرة، شبكة أمان للتوقّفات). الصفقات:
+                # PERF-18 — في وضع التضييق T.<sym> للمجمّع الحالي فقط (لا T.*
+                # خرطوم كل صفقات السوق الذي يُشبع CPU وقت الافتتاح). مع إعادة
+                # الاتصال نعيد اشتراك المجموعة المحدّثة (persist في _trade_subs).
+                if self.cfg.ws_narrow_trades:
+                    with self._lock:
+                        subs = sorted(self._trade_subs)
+                    params = "LULD.*"
+                    if subs:
+                        params += "," + ",".join(f"T.{t}" for t in subs)
+                else:
+                    params = "LULD.*,T.*"
                 self._ws.send(json.dumps(
-                    {"action": "subscribe", "params": "LULD.*,T.*"}))
+                    {"action": "subscribe", "params": params}))
                 backoff = 1.0
                 logger.info("WebSocket التوقّفات متصل")
                 while not self._stop.is_set():

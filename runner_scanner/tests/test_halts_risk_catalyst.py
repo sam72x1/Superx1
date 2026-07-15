@@ -59,6 +59,47 @@ def test_unknown_ticker_is_normal():
     assert ht.is_tradeable("ZZZ") is True
 
 
+class _FakeWs:
+    def __init__(self):
+        self.sent = []
+
+    def send(self, msg):
+        self.sent.append(msg)
+
+
+def test_update_subscription_noop_when_full_trades():
+    """PERF-18: في الوضع الافتراضي (ws_narrow_trades=False) لا تُرسل أي
+    اشتراكات فردية — T.* الكامل يغطّي، فلا تغيير سلوك."""
+    ht, _ = _tracker()                       # CFG الافتراضي ws_narrow_trades=False
+    ht._ws = _FakeWs()
+    ht.update_subscription(["AAA", "BBB"])
+    assert ht._ws.sent == []                 # no-op
+
+
+def test_update_subscription_narrow_diffs_pool():
+    """PERF-18: في وضع التضييق يشترك T.<sym> للمجمّع الجديد ويلغي ما خرج
+    (فرق تراكمي) — لا T.* خرطوم السوق. LULD يبقى منفصلًا (اشتراك الاتصال)."""
+    import json
+    cfg = Config(ws_narrow_trades=True)
+    ht = HaltTracker(cfg)
+    ws = _FakeWs()
+    ht._ws = ws
+    ht.update_subscription(["aaa", "bbb"])    # يُرفع لحروف كبيرة
+    subs = [json.loads(m) for m in ws.sent]
+    assert subs == [{"action": "subscribe", "params": "T.AAA,T.BBB"}]
+    ws.sent.clear()
+    # الدورة التالية: BBB بقي، CCC دخل، AAA خرج → اشتراك CCC وإلغاء AAA
+    ht.update_subscription(["bbb", "ccc"])
+    subs = [json.loads(m) for m in ws.sent]
+    assert {"action": "subscribe", "params": "T.CCC"} in subs
+    assert {"action": "unsubscribe", "params": "T.AAA"} in subs
+    assert ht._trade_subs == {"BBB", "CCC"}
+    # بلا تغيير → لا إرسال
+    ws.sent.clear()
+    ht.update_subscription(["bbb", "ccc"])
+    assert ws.sent == []
+
+
 # ── الوقف والأهداف ────────────────────────────────────────────────
 def test_stop_is_fixed_pct_from_entry():
     """الوقف = الدخول − نسبة ثابتة% بالضبط (لا دعم ولا قصّ) — قرار المستخدم."""

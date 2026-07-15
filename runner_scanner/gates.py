@@ -69,10 +69,16 @@ def check_float(cfg: Config, c: Candidate) -> GateResult:
 
 
 def check_rvol(cfg: Config, c: Candidate) -> GateResult:
-    """RVol ≥ RVOL_MIN. يعتمد على momentum.rvol المحسوب حسب الجلسة."""
+    """RVol ≥ RVOL_MIN. يعتمد على momentum.rvol المحسوب حسب الجلسة.
+
+    BUG-11 (§3): لو غاب الزخم أو كان RVol **مجهولًا** (لا أساس تاريخي موثوق)
+    → لا رفض (بيانات مفقودة ≠ صفر نشاط؛ نمط check_vwap). الدرجة تُخفَّض تلقائيًّا
+    (rvol≈0 → 0 نقاط زخم) فقد يسقط على بوّابة الدرجة — تدهور آمن لا رفض صامت."""
     if c.momentum is None:
         # لم يُحسب بعد — لا نرفض هنا (تُستدعى البوابة بعد intraday_ta)
         return GateResult(True)
+    if not c.momentum.rvol_reliable:
+        return GateResult(True)   # مجهول لا صفر → لا رفض (يُخفَّض بالدرجة)
     if c.momentum.rvol < cfg.rvol_min:
         return GateResult(False, f"RVol {c.momentum.rvol:.1f}x < {cfg.rvol_min}x",
                           "rvol")

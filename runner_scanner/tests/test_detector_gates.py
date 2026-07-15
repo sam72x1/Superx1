@@ -195,3 +195,33 @@ def test_rvol_gate_uses_session_rvol():
     assert gates.check_rvol(CFG, weak).passed is False
     weak.momentum.rvol = 8.0
     assert gates.check_rvol(CFG, weak).passed is True
+
+
+def test_rvol_gate_unknown_basis_not_rejected():
+    """BUG-11 (§3): RVol=0 بسبب «لا أساس موثوق» (rvol_reliable=False) لا يُرفض —
+    بيانات مفقودة ≠ صفر نشاط. يُخفَّض بالدرجة لا بالبوّابة (نمط check_vwap)."""
+    c = _cand()
+    # rvol=0 لكن غير موثوق (تاريخ ساعي رقيق/غائب) → يمرّ لا يُرفض
+    c.momentum = MomentumResult(
+        score=0, rvol=0.0, rvol_5min=0, change_5min_pct=1,
+        vwap_distance_pct=1, above_vwap=True, volume_rising=False,
+        rvol_reliable=False)
+    assert gates.check_rvol(CFG, c).passed is True
+    # نفس الصفر لكن **موثوق** (نشاط حقيقي منخفض) → يُرفض كالمعتاد
+    c.momentum.rvol_reliable = True
+    assert gates.check_rvol(CFG, c).passed is False
+
+
+def test_rvol_has_basis_distinguishes_missing_from_zero():
+    """BUG-11: rvol_has_basis يميّز «لا أساس» عن «نشاط صفري» — يطابق مسارات
+    إرجاع 0.0 في compute_rvol كي لا يتناقض العلَم مع القيمة."""
+    from runner_scanner import sessions as S
+    from runner_scanner.models import Session
+    # لا متوسط يومي ولا أساس جلسة → لا أساس
+    assert S.rvol_has_basis(CFG, Session.PREMARKET, 0.0, None, None) is False
+    # متوسط يومي كافٍ → أساس موجود (رسمي وممتد)
+    assert S.rvol_has_basis(CFG, Session.REGULAR, 5_000_000) is True
+    assert S.rvol_has_basis(CFG, Session.PREMARKET, 5_000_000) is True
+    # أساس بريماركت مباشر موجود رغم غياب اليومي
+    assert S.rvol_has_basis(CFG, Session.PREMARKET, 0.0,
+                            avg_premarket_volume=50_000) is True

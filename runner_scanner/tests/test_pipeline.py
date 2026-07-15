@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from runner_scanner import classic_ta
 from runner_scanner.config import Config
 from runner_scanner.halts import HaltTracker
-from runner_scanner.models import FloatSource, HaltState, Session
+from runner_scanner.models import Bar, FloatSource, HaltState, Session
 from runner_scanner.pipeline import process_candidate
 from runner_scanner.tests.fixtures import (
-    FakeClient, downtrend_daily_bars, make_snapshot,
+    FakeClient, downtrend_daily_bars, make_snapshot, uptrend_daily_bars,
 )
 
 ET = ZoneInfo("America/New_York")
@@ -81,6 +82,33 @@ def test_pipeline_accepts_without_news():
     # الخبر إشارة تقوية لا بوّابة → يُقبل بدون خبر لو قوي
     assert cand.is_rejected is False
     assert cand.catalyst.has_news is False
+
+
+def test_pipeline_readiness_excludes_partial_day_candle(monkeypatch):
+    """BUG-04: الجاهزية تُحسب على الأيام **المغلقة** فقط — شمعة اليوم الجزئية
+    (طابع حديث <20h، إغلاق/حجم جزئي) لا تصل compute_readiness (كانت تلوّث كل
+    مؤشّر يومي فتُقبل/تُرفض بوّابة الجاهزية على لا-بيانات §4)."""
+    daily = uptrend_daily_bars(260)
+    # نُلحق شمعة «اليوم» جزئية بطابع حديث (ضمن آخر 20 ساعة من ET_NOW) وقيمة شاذّة
+    now_ms = int(ET_NOW.timestamp() * 1000)
+    partial = Bar(t_ms=now_ms, o=0.5, h=0.5, l=0.5, c=0.5, v=10, n=1)
+    daily_with_partial = daily + [partial]
+
+    captured = {}
+    orig = classic_ta.compute_readiness
+
+    def spy(cfg, dly, **kw):
+        captured["daily"] = list(dly)
+        return orig(cfg, dly, **kw)
+
+    monkeypatch.setattr(classic_ta, "compute_readiness", spy)
+    process_candidate(
+        CFG, FakeClient(daily=daily_with_partial), make_snapshot(change_pct=25.0),
+        halts=None, session=Session.REGULAR, et_now=ET_NOW)
+    assert captured, "compute_readiness استُدعيت"
+    # الشمعة الجزئية (c=0.5, v=10) مستبعَدة — آخر شمعة تصل الجاهزية مغلقة
+    assert all(not (b.c == 0.5 and b.v == 10) for b in captured["daily"])
+    assert len(captured["daily"]) == len(daily)   # المغلقة فقط (بلا الجزئية)
 
 
 def test_pipeline_unknown_float_still_processed():

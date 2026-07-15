@@ -197,10 +197,17 @@ class Config:
     # ── المستشار الذكي (Claude) — «العين اللي ما تنام» ────────────
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"   # نموذج البريفنغ/المساعد
-    analyst_model: str = "claude-haiku-4-5-20251001"  # تحليل كل تنبيه (أسرع)
+    # الاسم المستقرّ (بلا لاحقة تاريخ): الصيغة المؤرَّخة أوّل ما يُسحَب من الخدمة
+    # فتتعفّن بصمت. المستقرّ يبقى صالحًا عبر الإصدارات.
+    analyst_model: str = "claude-haiku-4-5"  # تحليل كل تنبيه (أسرع)
     analyst_enabled: bool = True          # محلّل ذكي لكل تنبيه
     advisor_enabled: bool = True          # بريفنغ نهاية الجلسة
     assistant_enabled: bool = True        # مساعد تيليجرام تفاعلي
+    # SEC-24: تفويض المالك على from.id لا chat.id فقط. فارغ = بلا قيد إضافي
+    # (يعتمد على chat.id — آمن لو المحادثة خاصّة). املأه بمعرّفك لو chat_id مجموعة
+    # كي لا يرث كل عضو سطح الأوامر (/restart · /ask · /backtest).
+    telegram_owner_id: str = ""
+    telegram_ask_per_min: int = 10        # حدّ /ask لكل دقيقة (يكبح إنفاق Anthropic)
     analyst_bearish_penalty: float = 12.0 # خصم درجة عند محفّز هبوطي (طرح/تخفيف)
     postmortem_enabled: bool = True       # تشريح سبب فشل/نجاح السهم (Claude)
     postmortem_on_stop: bool = True       # تشريح لحظي فور كسر الوقف
@@ -314,6 +321,11 @@ class Config:
 
     # ── متفرقات ───────────────────────────────────────────────────
     halts_enabled: bool = True           # تشغيل مستهلك WebSocket للتوقّفات
+    # PERF-18: تضييق اشتراك الصفقات إلى T.<مجمّع المرشّحين> بدل T.* (كل صفقات
+    # السوق ~ملايين رسالة تُشبع CPU وقت الافتتاح). LULD.* يبقى شبكة أمان للتوقّفات.
+    # افتراضيًّا False (سلوك T.* الكامل) — فعّله بعد قياس CPU على Render (قيد التقرير:
+    # سهم يتوقّف قبل دخوله المجمّع يُلتقط عبر LULD/status لا T).
+    ws_narrow_trades: bool = False
     dry_run: bool = False                # لا يرسل تيليجرام، يطبع فقط
     log_level: str = "INFO"
 
@@ -382,10 +394,12 @@ class Config:
             champions_enabled=_b("CHAMPIONS_ENABLED", True),
             anthropic_api_key=_s("ANTHROPIC_API_KEY", ""),
             anthropic_model=_s("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-            analyst_model=_s("ANALYST_MODEL", "claude-haiku-4-5-20251001"),
+            analyst_model=_s("ANALYST_MODEL", "claude-haiku-4-5"),
             analyst_enabled=_b("ANALYST_ENABLED", True),
             advisor_enabled=_b("ADVISOR_ENABLED", True),
             assistant_enabled=_b("ASSISTANT_ENABLED", True),
+            telegram_owner_id=_s("TELEGRAM_OWNER_ID", ""),
+            telegram_ask_per_min=_i("TELEGRAM_ASK_PER_MIN", 10),
             analyst_bearish_penalty=_f("ANALYST_BEARISH_PENALTY", 12.0),
             postmortem_enabled=_b("POSTMORTEM_ENABLED", True),
             postmortem_on_stop=_b("POSTMORTEM_ON_STOP", True),
@@ -445,6 +459,7 @@ class Config:
             dev_compare_window_days=_i("DEV_COMPARE_WINDOW_DAYS", 7),
             dev_tail_warn_mult=_f("DEV_TAIL_WARN_MULT", 1.5),
             halts_enabled=_b("HALTS_ENABLED", True),
+            ws_narrow_trades=_b("WS_NARROW_TRADES", False),
             dry_run=_b("DRY_RUN", False),
             log_level=_s("LOG_LEVEL", "INFO"),
         )

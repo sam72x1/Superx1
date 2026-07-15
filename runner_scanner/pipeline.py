@@ -194,8 +194,12 @@ def process_candidate(
         cfg, snap, session, bars_5min, bars_1min,
         avg_daily_volume=avg_daily_vol, avg_premarket_volume=avg_pre,
         avg_afterhours_volume=avg_aft, elapsed_fraction=elapsed)
+    # BUG-04: الجاهزية على الأيام **المغلقة** فقط — لا شمعة اليوم الجزئية (إغلاقها
+    # قديم/افتتاحي وحجمها كسر جلسة في الجلسات الممتدة). تمريرها كان يحسب كل مؤشّر
+    # يومي (وزن 0.40 + الأسبوعي/الشهري المشتقّين منه) على شمعة لم تكتمل — بوّابة
+    # صلبة (≥65) تقبل/ترفض على لا-بيانات (§4).
     c.readiness = classic_ta.compute_readiness(
-        cfg, daily, hourly=hourly, frame_cache=readiness_cache)
+        cfg, daily_closed, hourly=hourly, frame_cache=readiness_cache)
 
     # ── 6) بوابات ما-بعد-التحليل (RVol + بارابولِك بعد VWAP) ─────
     post = gates.apply_gates(cfg, c, gates.POST_TA_GATES)

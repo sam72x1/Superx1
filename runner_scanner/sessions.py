@@ -151,6 +151,27 @@ def _session_window(cfg: Config, session: Session) -> tuple[float, float]:
     return 0.0, 24.0
 
 
+def filter_session_bars(cfg: Config, session: Session,
+                        bars: list[Bar]) -> list[Bar]:
+    """يرجّع شموع الجلسة الحالية فقط (ضمن نافذة الساعة ET).
+
+    BUG-10: «VWAP الجلسي» يجب أن يُرسى عند بداية الجلسة (09:30 للرسمي) لا 04:00.
+    بلا تصفية، تجرّ طبعات البريماركت الـVWAP بعيدًا عن قيمته الرسمية الحقيقية —
+    فتنقلب بوّابة VWAP والامتداد البارابولِك على رقم خاطئ (§4)."""
+    if not bars:
+        return []
+    lo, hi = _session_window(cfg, session)
+    out = []
+    for b in bars:
+        if b.t_ms <= 0:
+            continue
+        dt = datetime.fromtimestamp(b.t_ms / 1000, tz=timezone.utc).astimezone(ET)
+        h = _hour_float(dt)
+        if lo <= h < hi:
+            out.append(b)
+    return out
+
+
 def session_cumulative_volume(cfg: Config, session: Session,
                               bars: list[Bar]) -> float:
     """الحجم التراكمي **الفعلي** للجلسة الحالية من الشموع (لا من snap.day_volume
@@ -168,6 +189,28 @@ def session_cumulative_volume(cfg: Config, session: Session,
         if lo <= h < hi:
             total += b.v
     return total
+
+
+def rvol_has_basis(
+    cfg: Config,
+    session: Session,
+    avg_daily_volume: float,
+    avg_premarket_volume: float | None = None,
+    avg_afterhours_volume: float | None = None,
+) -> bool:
+    """BUG-11: هل يوجد أساس موثوق لحساب RVol؟ يطابق حرفيًّا مسارات إرجاع 0.0 في
+    compute_rvol (لا أساس) كي نميّز «مجهول» عن «صفر نشاط». بلا أساس → البوّابة
+    لا ترفض (تُخفَّض الدرجة بدلًا) — «تعذّر ≠ صفر؛ لا رفض صامت» (§3)."""
+    if avg_daily_volume <= 0 and not (avg_premarket_volume or avg_afterhours_volume):
+        return False
+    if session is Session.REGULAR:
+        return avg_daily_volume > 0
+    daily_ok = avg_daily_volume >= cfg.volume_min * 0.1
+    if session is Session.PREMARKET:
+        return bool(avg_premarket_volume and avg_premarket_volume > 0) or daily_ok
+    if session is Session.AFTERHOURS:
+        return bool(avg_afterhours_volume and avg_afterhours_volume > 0) or daily_ok
+    return False
 
 
 def compute_rvol(
