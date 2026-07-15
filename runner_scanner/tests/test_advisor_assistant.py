@@ -78,10 +78,11 @@ def test_assistant_backtest_triggers_run():
     calls = []
     sc._run_backtest_bg = (
         lambda et_now, quick=False, with_grid=True: calls.append(quick))
-    sc.assistant._dispatch("/backtest")            # افتراضي = سريع
-    sc.assistant._dispatch("/backtest كامل")       # كامل
     import time
-    time.sleep(0.1)                                  # نمهل الثريد
+    sc.assistant._dispatch("/backtest")            # افتراضي = سريع
+    time.sleep(0.1)                                  # يُنهي الأول ويحرّر single-flight
+    sc.assistant._dispatch("/backtest كامل")       # كامل
+    time.sleep(0.1)
     assert any("بدء باكتيست" in m for m in sent)
     assert sorted(calls) == [False, True]            # سريع + كامل
     sc.shutdown()
@@ -128,6 +129,47 @@ def test_assistant_backtest_queue_runs_months_sequentially():
     # مارس ثم أبريل 2025 بالتتابع، بالترتيب
     assert calls == [("2025-03-01", "2025-03-31"),
                      ("2025-04-01", "2025-04-30")]
+    sc.shutdown()
+
+
+def test_assistant_single_flight_blocks_second_backtest():
+    """SEC-24: باكتيست يعمل → طلب ثانٍ يُرفض (لا خيوط متوازية تحرق API)."""
+    sc = _scanner()
+    sent = _capture(sc)
+    sc.assistant._bt_running.set()      # محاكاة باكتيست جارٍ
+    sc.assistant._dispatch("/backtest كامل")
+    assert any("يعمل بالفعل" in m for m in sent)
+    sc.shutdown()
+
+
+def test_assistant_owner_id_rejects_foreign_sender():
+    """SEC-24: مع ضبط TELEGRAM_OWNER_ID، أمر من from.id غير المالك يُتجاهل
+    (يحمي حين يكون chat_id مجموعة)؛ ومن المالك يُنفَّذ."""
+    sc = _scanner(telegram_owner_id="7")
+    sent = _capture(sc)
+    sc.last_runners = [("AAA", 45.0)]
+    # نفس المحادثة لكن مرسِل غريب → يُتجاهل
+    sc.assistant._handle_update({"update_id": 1, "message": {
+        "chat": {"id": 42}, "from": {"id": 999}, "text": "/top"}})
+    assert sent == []
+    # المالك → يُنفَّذ
+    sc.assistant._handle_update({"update_id": 2, "message": {
+        "chat": {"id": 42}, "from": {"id": 7}, "text": "/top"}})
+    assert any("AAA" in m for m in sent)
+    sc.shutdown()
+
+
+def test_assistant_ask_rate_limited():
+    """SEC-24: تجاوز حدّ /ask بالدقيقة → رفض (يكبح إنفاق Anthropic)."""
+    sc = _scanner(telegram_ask_per_min=2, anthropic_api_key="x")
+    sent = _capture(sc)
+    # ردّ ثابت بلا شبكة (available=True لأن المفتاح مضبوط)
+    sc.claude.chat = lambda *a, **k: "رد"
+    for _ in range(2):
+        sc.assistant._dispatch("/ask س")
+    sc.assistant._dispatch("/ask س")           # الثالث يتجاوز الحدّ
+    assert any("تجاوزت حدّ الأسئلة" in m for m in sent)
+    assert sum(1 for m in sent if m == "رد") == 2   # مرّرنا اثنين فقط
     sc.shutdown()
 
 

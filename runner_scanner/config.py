@@ -203,6 +203,11 @@ class Config:
     analyst_enabled: bool = True          # محلّل ذكي لكل تنبيه
     advisor_enabled: bool = True          # بريفنغ نهاية الجلسة
     assistant_enabled: bool = True        # مساعد تيليجرام تفاعلي
+    # SEC-24: تفويض المالك على from.id لا chat.id فقط. فارغ = بلا قيد إضافي
+    # (يعتمد على chat.id — آمن لو المحادثة خاصّة). املأه بمعرّفك لو chat_id مجموعة
+    # كي لا يرث كل عضو سطح الأوامر (/restart · /ask · /backtest).
+    telegram_owner_id: str = ""
+    telegram_ask_per_min: int = 10        # حدّ /ask لكل دقيقة (يكبح إنفاق Anthropic)
     analyst_bearish_penalty: float = 12.0 # خصم درجة عند محفّز هبوطي (طرح/تخفيف)
     postmortem_enabled: bool = True       # تشريح سبب فشل/نجاح السهم (Claude)
     postmortem_on_stop: bool = True       # تشريح لحظي فور كسر الوقف
@@ -388,6 +393,8 @@ class Config:
             analyst_enabled=_b("ANALYST_ENABLED", True),
             advisor_enabled=_b("ADVISOR_ENABLED", True),
             assistant_enabled=_b("ASSISTANT_ENABLED", True),
+            telegram_owner_id=_s("TELEGRAM_OWNER_ID", ""),
+            telegram_ask_per_min=_i("TELEGRAM_ASK_PER_MIN", 10),
             analyst_bearish_penalty=_f("ANALYST_BEARISH_PENALTY", 12.0),
             postmortem_enabled=_b("POSTMORTEM_ENABLED", True),
             postmortem_on_stop=_b("POSTMORTEM_ON_STOP", True),

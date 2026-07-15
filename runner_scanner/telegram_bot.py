@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 
 import requests
 
@@ -67,6 +68,9 @@ class TelegramAssistant:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._base = f"https://api.telegram.org/bot{self.cfg.telegram_bot_token}"
+        # SEC-24: حارس single-flight للباكتيست (يمنع تشغيلين متوازيين يحرقان API)
+        self._bt_running = threading.Event()
+        self._ask_times: list[float] = []   # طوابع /ask لتحديد المعدّل بالدقيقة
 
     # ── دورة الحياة ───────────────────────────────────────────────
     def start(self) -> None:
@@ -110,6 +114,15 @@ class TelegramAssistant:
         text = (msg.get("text") or "").strip()
         if chat != str(self.cfg.telegram_chat_id) or not text:
             return   # أمان: محادثتك فقط
+        # SEC-24: لو ضُبط TELEGRAM_OWNER_ID نتحقّق من from.id أيضًا (يحمي حين يكون
+        # chat_id مجموعة). فارغ = نعتمد على chat.id فقط (best-effort — لا نقفل
+        # المالك خارجًا لو لم يُضبط).
+        owner = str(self.cfg.telegram_owner_id or "").strip()
+        if owner:
+            sender = str((msg.get("from") or {}).get("id", ""))
+            if sender != owner:
+                logger.warning("رُفض أمر من from.id=%s (ليس المالك)", sender)
+                return
         try:
             self._dispatch(text)
         except Exception as exc:  # noqa: BLE001
@@ -190,6 +203,16 @@ class TelegramAssistant:
         if not self.sc.claude.available:
             self._reply("المساعد الذكي غير مفعّل (أضِف ANTHROPIC_API_KEY).")
             return
+        # SEC-24: حدّ معدّل بسيط بالدقيقة يكبح إنفاق Anthropic (كل رسالة عادية
+        # سؤال أيضًا، فبلا حدّ قد يُستنزف المفتاح).
+        limit = self.cfg.telegram_ask_per_min
+        if limit > 0:
+            now = time.monotonic()
+            self._ask_times = [t for t in self._ask_times if now - t < 60.0]
+            if len(self._ask_times) >= limit:
+                self._reply(f"⏳ تجاوزت حدّ الأسئلة ({limit}/دقيقة) — انتظر قليلًا.")
+                return
+            self._ask_times.append(now)
         ctx = self._context_text()
         prompt = f"بيانات البوت الآن:\n{ctx}\n\nسؤال المستخدم: {question}"
         ans = self.sc.claude.chat(self.cfg.anthropic_model, _ASK_SYSTEM, prompt)
@@ -270,6 +293,24 @@ class TelegramAssistant:
         self._reply("جاري إعادة التشغيل..." if self.sc.render.restart()
                     else "تعذّرت إعادة التشغيل.")
 
+    def _bt_acquire(self) -> bool:
+        """SEC-24 single-flight: يرجّع True إن حُجز العلم (لا باكتيست يعمل)، وإلا
+        يردّ للمستخدم ويرجّع False. المنادي يحرّره في finally الخيط عبر _bt_run."""
+        if self._bt_running.is_set():
+            self._reply("⏳ باكتيست يعمل بالفعل — انتظر انتهاءه قبل تشغيل آخر.")
+            return False
+        self._bt_running.set()
+        return True
+
+    def _bt_run(self, name: str, work) -> None:
+        """يشغّل عمل باكتيست في خيط ويحرّر علم single-flight عند انتهائه دائمًا."""
+        def _wrapped():
+            try:
+                work()
+            finally:
+                self._bt_running.clear()
+        threading.Thread(target=_wrapped, daemon=True, name=name).start()
+
     def _handle_backtest(self, arg: str = "") -> None:
         """تشغيل الباكتيست الآن (يدويًا) — بلا انتظار السبت وبلا قفل التكرار.
         - «/backtest» → معاينة سريعة (أيام قليلة).
@@ -301,6 +342,8 @@ class TelegramAssistant:
             return
         full = any(t.lower() in ("كامل", "الكامل", "شهر", "الشهر", "full")
                    for t in toks)
+        if not self._bt_acquire():
+            return
         if full:
             self._reply("🚀 بدء باكتيست <b>كامل (الشهر)</b> الآن… "
                         "(دقائق، جلب متوازٍ، تصلك النتائج تباعًا مع مؤشّر تقدّم)")
@@ -308,9 +351,8 @@ class TelegramAssistant:
             self._reply("🚀 بدء باكتيست <b>سريع (معاينة)</b> الآن… "
                         "(دقائق قليلة، تصلك النتائج تباعًا)\n"
                         "<i>للشهر كامل أرسل: /backtest كامل (يشتغل أيضًا كل سبت).</i>")
-        threading.Thread(target=self.sc._run_backtest_bg, args=(now_et(),),
-                         kwargs={"quick": not full, "with_grid": False},
-                         daemon=True, name="backtest-manual").start()
+        self._bt_run("backtest-manual", lambda: self.sc._run_backtest_bg(
+            now_et(), quick=not full, with_grid=False))
 
     _MONTHS_AR = ("", "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
                   "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر")
@@ -340,13 +382,13 @@ class TelegramAssistant:
             self._reply("هذا الشهر في المستقبل — لا توجد بيانات بعد.")
             return
         start, end, label = rng
+        if not self._bt_acquire():
+            return
         self._reply(
             f"🚀 باكتيست <b>شهر {label}</b> ({start} → {end})…\n"
             "<i>كامل، جلب متوازٍ، تصلك النتائج تباعًا مع مؤشّر تقدّم.</i>")
-        threading.Thread(
-            target=self.sc._run_backtest_bg, args=(now_et(),),
-            kwargs={"quick": False, "with_grid": False, "start": start, "end": end},
-            daemon=True, name="backtest-month").start()
+        self._bt_run("backtest-month", lambda: self.sc._run_backtest_bg(
+            now_et(), quick=False, with_grid=False, start=start, end=end))
 
     def _start_months_queue(self, months: list[int], year: int | None) -> None:
         """طابور: عدّة أشهر **بالتتابع** (واحد ثم الذي يليه) — للتشغيل الليلي.
@@ -356,6 +398,8 @@ class TelegramAssistant:
             self._reply("الأشهر المطلوبة كلها مستقبلية — لا بيانات.")
             return
         labels = "، ".join(r[2] for r in ranges)
+        if not self._bt_acquire():
+            return
         self._reply(
             f"🚀 <b>طابور باكتيست</b> ({len(ranges)} أشهر): {labels}\n"
             "<i>تشتغل بالتتابع؛ نتائج كل شهر تصلك فور انتهائه. مناسب للنوم.</i>")
@@ -369,8 +413,8 @@ class TelegramAssistant:
                     self.sc.telegram.send(f"⚠️ تعذّر باكتيست {label}: {esc(exc)}")
             self.sc.telegram.send("✅ انتهى طابور الباكتيست — كل الأشهر اكتملت.")
 
-        threading.Thread(target=_worker, daemon=True,
-                         name="backtest-queue").start()
+        # single-flight: الطابور كله وحدة واحدة (يحرّر العلم بعد آخر شهر).
+        self._bt_run("backtest-queue", _worker)
 
     def _context_text(self) -> str:
         s = advisor._summarize_day(self.cfg, self.sc.store, now_et())
