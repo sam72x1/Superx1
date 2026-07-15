@@ -529,7 +529,10 @@ class RVolBuildBase(MockBase):
 
 
 def test_reevaluates_until_pass_like_live():
-    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    # سقف حركة 40 صراحةً: هذا الاختبار عن إعادة الفحص (RVol يتراكم) لا عن بوّابة
+    # حركة الدخول؛ الافتراضي الجديد 30 كان سيرفض شمعة 11:00 (+30%) فيحجب النية.
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 entry_change_max_pct=40)
     res = backtest.run_backtest(cfg, RVolBuildBase(), "2026-06-26", "2026-06-26")
     # الفحص لمرة واحدة (القديم) كان يرفضه؛ المسح المتكرّر ينبّه عند الشمعة الثانية
     assert len(res.trades) == 1
@@ -697,7 +700,10 @@ def test_eval_delayed_alert_carries_ranked_out():
     # مسموح عند 9:40 و9:45 فقط (محجوب عند 9:35) → يجتاز البوّابات عند 9:35 لكنه
     # خارج المقعد فيُؤجَّل، ثم يدخل عند 9:40 فيُنبَّه بعلم ranked_out.
     allowed = {_tms(2026, 6, 26, 9, 40), _tms(2026, 6, 26, 9, 45)}
-    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    # سقف حركة 40 صراحةً: شمعة 9:40 (+32%) تجتاز البوّابات كي نختبر مسار «تأخّر
+    # التنبيه» (الافتراضي الجديد 30 كان سيرفضها بحركة متقدّمة فيَحجب السيناريو).
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 entry_change_max_pct=40)
     res = backtest._eval_candidate(
         cfg, base, "2026-06-26", {}, 2.0, "RUNR",
         full5=base.bars_5min("RUNR", "", ""),
@@ -986,8 +992,10 @@ def test_shadow_eval_records_rvol_rejects():
         def bars_1min(self, t, s, e):
             return self.bars_5min(t, s, e)
 
+    # سقف حركة 40 صراحةً: الاختبار عن ظلّ RVol لا عن بوّابة الحركة؛ الافتراضي
+    # الجديد 30 كان سيرفض شمعة 10:00 (+35%) بحركة متقدّمة فيَحجب سبب RVol.
     cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
-                 backtest_shadow_rvol=True)
+                 backtest_shadow_rvol=True, entry_change_max_pct=40)
     res = backtest.run_backtest(cfg, ThinBase(), "2026-06-26", "2026-06-26")
     assert res.funnel["reject_reasons"].get("RVol", 0) >= 1
     assert len(res.funnel["shadow"]) >= 1
@@ -1064,8 +1072,10 @@ def test_shadow_risk_plan_uses_daily_resistances_like_live():
 
     backtest.build_risk_plan = spy
     try:
+        # سقف حركة 40 صراحةً (كـtest_shadow_eval): +35% عند 10:00 لا يُرفض بالحركة
+        # فيبقى سبب RVol → يُبنى خطة ظلّ (المرجع الوحيد لهذا الاختبار).
         cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
-                     backtest_shadow_rvol=True)
+                     backtest_shadow_rvol=True, entry_change_max_pct=40)
         backtest.run_backtest(cfg, ThinBase(), "2026-06-26", "2026-06-26")
     finally:
         backtest.build_risk_plan = orig

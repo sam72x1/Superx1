@@ -75,8 +75,10 @@ def test_parabolic_gate_vwap_extension():
     assert gates.check_parabolic(CFG, c).passed is False
 
 
-# ── بوّابة حركة الدخول ≥40% (قرار المستخدم بالبيانات) ─────────────
+# ── بوّابة حركة الدخول ≥30% (قرار المستخدم بالبيانات: خُفض 40→30) ──
 def test_entry_change_gate_rejects_advanced_move():
+    # الحدّ الجديد 30: عند/فوقه يُرفض (شريحة ≥30% فوز 60%/+0.72% تاريخيًا)
+    assert gates.check_entry_change(CFG, _cand(change_pct=30.0)).passed is False
     assert gates.check_entry_change(CFG, _cand(change_pct=40.0)).passed is False
     assert gates.check_entry_change(CFG, _cand(change_pct=75.0)).passed is False
     # سبب الرفض HTML-آمن (§5): بلا محارف < أو > حرفية
@@ -85,7 +87,7 @@ def test_entry_change_gate_rejects_advanced_move():
 
 
 def test_entry_change_gate_passes_early_move():
-    assert gates.check_entry_change(CFG, _cand(change_pct=39.9)).passed is True
+    assert gates.check_entry_change(CFG, _cand(change_pct=29.9)).passed is True
     assert gates.check_entry_change(CFG, _cand(change_pct=15.0)).passed is True
 
 
