@@ -170,6 +170,28 @@ def session_cumulative_volume(cfg: Config, session: Session,
     return total
 
 
+def rvol_has_basis(
+    cfg: Config,
+    session: Session,
+    avg_daily_volume: float,
+    avg_premarket_volume: float | None = None,
+    avg_afterhours_volume: float | None = None,
+) -> bool:
+    """BUG-11: هل يوجد أساس موثوق لحساب RVol؟ يطابق حرفيًّا مسارات إرجاع 0.0 في
+    compute_rvol (لا أساس) كي نميّز «مجهول» عن «صفر نشاط». بلا أساس → البوّابة
+    لا ترفض (تُخفَّض الدرجة بدلًا) — «تعذّر ≠ صفر؛ لا رفض صامت» (§3)."""
+    if avg_daily_volume <= 0 and not (avg_premarket_volume or avg_afterhours_volume):
+        return False
+    if session is Session.REGULAR:
+        return avg_daily_volume > 0
+    daily_ok = avg_daily_volume >= cfg.volume_min * 0.1
+    if session is Session.PREMARKET:
+        return bool(avg_premarket_volume and avg_premarket_volume > 0) or daily_ok
+    if session is Session.AFTERHOURS:
+        return bool(avg_afterhours_volume and avg_afterhours_volume > 0) or daily_ok
+    return False
+
+
 def compute_rvol(
     cfg: Config,
     session: Session,

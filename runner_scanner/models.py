@@ -84,6 +84,9 @@ class MomentumResult:
     above_vwap: bool
     volume_rising: bool               # أحجام متصاعدة لا متناقصة
     vwap_reliable: bool = True        # VWAP من شموع حقيقية (لا artifact صفري)
+    # BUG-11: هل لـRVol أساس موثوق؟ False = «لا أساس» (تاريخ ساعي رقيق/غائب) لا
+    # «لا نشاط» — فلا يُرفض السهم عليه (بيانات مفقودة ≠ صفر §3)، بل تُخفض درجته.
+    rvol_reliable: bool = True
     notes: list[str] = field(default_factory=list)
 
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from .config import Config
 from .indicators import session_vwap
 from .models import Bar, MomentumResult, Session, SnapshotEntry
-from .sessions import compute_rvol, session_cumulative_volume
+from .sessions import compute_rvol, rvol_has_basis, session_cumulative_volume
 
 
 def _avg(values: list[float]) -> float:
@@ -85,6 +85,12 @@ def compute_momentum(
         avg_premarket_volume=avg_premarket_volume,
         avg_afterhours_volume=avg_afterhours_volume,
     )
+    # BUG-11: هل الـRVol مبنيّ على أساس موثوق؟ (rvol=0 قد يعني «لا أساس» لا «لا
+    # نشاط») — لو لا، البوّابة لا ترفض عليه، بل تُخفَّض الدرجة (rvol≈0 → 0 نقاط).
+    rvol_ok = rvol_has_basis(cfg, session, avg_daily_volume,
+                             avg_premarket_volume, avg_afterhours_volume)
+    if not rvol_ok:
+        notes.append("RVol غير موثوق (لا أساس تاريخي)")
 
     # ── الدرجة (مجموع المكوّنات ≤ momentum_pillar_max) ────────────
     score = 0.0
@@ -132,5 +138,6 @@ def compute_momentum(
         above_vwap=above_vwap,
         volume_rising=volume_rising,
         vwap_reliable=vwap_reliable,
+        rvol_reliable=rvol_ok,
         notes=notes,
     )
