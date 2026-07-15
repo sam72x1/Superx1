@@ -661,6 +661,34 @@ def test_asof_rank_gate_picks_early_leader_not_late_exploder():
     assert T2 in allowed["B"] and T2 not in allowed["A"]   # T2: B تجاوز فدخل
 
 
+def test_eow_close_pct_last_in_window_bar():
+    """MEAS-28: نسبة نهاية النافذة = إغلاق **آخر شمعة داخل النافذة** مقابل الدخول
+    (لا-تسرّب: تتجاهل ما بعد الموعد النهائي). قياس أصدق للـtimeout من 0."""
+    asof = _tms(2026, 6, 26, 10, 0)
+    entry = 2.0
+    post = [
+        Bar(t_ms=_tms(2026, 6, 26, 10, 5), o=2.0, h=2.2, l=2.0, c=2.1, v=1e4),
+        Bar(t_ms=_tms(2026, 6, 26, 11, 0), o=2.1, h=2.3, l=2.0, c=2.2, v=1e4),
+        # بعد نافذة 90د (11:30) → يُتجاهَل (لا-تسرّب)
+        Bar(t_ms=_tms(2026, 6, 26, 13, 0), o=2.2, h=5.0, l=2.2, c=5.0, v=1e4),
+    ]
+    # آخر شمعة داخل 90د هي 11:00 بإغلاق 2.2 → (2.2-2.0)/2.0 = +10%
+    assert abs(backtest._eow_close_pct(entry, post, asof, 90.0) - 10.0) < 1e-6
+    # بلا شمعة داخل النافذة → 0 (لا بيانات، لا ادّعاء)
+    assert backtest._eow_close_pct(entry, [], asof, 90.0) == 0.0
+
+
+def test_trade_carries_realized_eow_pct_equals_realized_when_won():
+    """MEAS-28: كل صفقة تحمل realized_eow_pct؛ وللصفقة الرابحة = المحقّق نفسه
+    (خروج فعلي عند الهدف لا نهاية النافذة). حقل قياس لا يغيّر النتيجة."""
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest.run_backtest(cfg, MockBase(), "2026-06-26", "2026-06-26")
+    runr = [t for t in res.trades if t["ticker"] == "RUNR"][0]
+    assert "realized_eow_pct" in runr
+    if runr["result"] != "timeout":
+        assert runr["realized_eow_pct"] == runr["realized_pct"]
+
+
 def test_eval_delayed_alert_carries_ranked_out():
     """DIAG-26: سهم حُجب عن أعلى-15 عند شمعة أبكر ثم دخلها فنُبِّه (تأخّر) →
     قاموس التنبيه يحمل ranked_out=True. كان أثر البوّابة على التوقيت مخفيًّا

@@ -234,6 +234,25 @@ def simulate_outcome(entry: float, risk, post_bars: list[Bar],
             (low - entry) / entry * 100.0, tgt_level)
 
 
+def _eow_close_pct(entry: float, post_bars: list[Bar],
+                   asof_ms: int, window_min: float) -> float:
+    """MEAS-28: نسبة إغلاق **آخر شمعة داخل نافذة النتيجة** مقابل الدخول — قياس
+    أصدق لصفقات الـtimeout من تجميدها على 0 (كأن الخروج على سعر الدخول تمامًا).
+    حقل قياس فقط: لا يغيّر أي قرار/عتبة/نتيجة. لا-تسرّب: يقتصر على شموع ≤ نهاية
+    النافذة. بلا شمعة داخل النافذة = 0 (لا بيانات → لا ادّعاء)."""
+    if entry <= 0:
+        return 0.0
+    deadline = asof_ms + window_min * 60_000
+    last_close = None
+    for b in post_bars:
+        if b.t_ms > deadline:
+            break
+        last_close = b.c
+    if last_close is None:
+        return 0.0
+    return (last_close - entry) / entry * 100.0
+
+
 def partial_exit_realized(entry: float, risk, post_bars: list[Bar],
                           asof_ms: int, window_min: float,
                           fraction: float = 0.5) -> float:
@@ -616,6 +635,11 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             # قياس ترقية الوقف مع كل هدف (ظل — طلب المستخدم): هل يرفع التوقّع؟
             realized_ratchet = ratchet_exit_realized(
                 entry, cand.risk, post, asof, cfg.outcome_window_min)
+            # MEAS-28: للـtimeout قياس أصدق = إغلاق نهاية النافذة (بدل تجميد 0)؛
+            # لغير الـtimeout = المحقّق نفسه (خروج فعلي عند هدف/وقف). قياس فقط.
+            realized_eow = (
+                _eow_close_pct(entry, post, asof, cfg.outcome_window_min)
+                if result == "timeout" else realized)
             # DIAG-26: ranked_out=True هنا يعني «تأخّر» — حُجب عن أعلى-15 في
             # شمعة أسبق ثم دخلها فنُبِّه (البوّابة اللحظية أثّرت على توقيته).
             return {"kind": "alert", "ranked_out": ranked_out, "trade": {
@@ -657,6 +681,8 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "realized_wide_t1_pct": round(realized_wide_t1, 1),  # لو هدف1 أوسع
                 "wide_t1_rr": cfg.backtest_wide_t1_rr,  # عتبة التوسيع المستخدمة
                 "realized_ratchet_pct": round(realized_ratchet, 1),  # لو وقف مُرقّى
+                # MEAS-28: محقّق نهاية النافذة (للـtimeout = إغلاق آخر شمعة؛ قياس)
+                "realized_eow_pct": round(realized_eow, 1),
                 "target_hit": tlevel,                  # أعلى هدف لُمس (0..3)
                 "result": result, "max_gain_pct": round(gain, 1),
                 "max_draw_pct": round(draw, 1),
@@ -1143,6 +1169,17 @@ def format_report(res: BacktestResult) -> str:
             lines.append("  <i>↳ الجزئي: نصف عند هدف1 + وقف تعادل. المتعقّب: وقف "
                          "يتبع القمة. المُرقّى: الوقف يرتفع مع كل هدف (تعادل بعد "
                          "هدف1 ثم الهدف السابق). كلها محاكى-المسار متحفّظ.</i>")
+            # MEAS-28: صدق توقّع الـtimeout — تُحسب اليوم ⏳ على 0 (كأن خروج على
+            # الدخول)، وهذا سطر يقيس ما لو خرجنا على إغلاق نهاية النافذة فعلًا.
+            if all(t.get("realized_eow_pct") is not None for t in alt):
+                eow = _avg(alt, "realized_eow_pct")
+                d = eow - base
+                lines.append(
+                    f"  • لو خروج نهاية النافذة (بدل تجميد ⏳ على 0): "
+                    f"{eow:+.1f}% ({_tag(d)} {d:+.1f}%)")
+                lines.append("  <i>↳ يقيس ما تركته صفقات ⏳ على الطاولة: إغلاق "
+                             "آخر شمعة داخل نافذة النتيجة بدل افتراض الخروج على "
+                             "سعر الدخول. قياس فقط — لا يغيّر النتيجة الرئيسة.</i>")
     if res.trades:
         def b(title, kf):
             rows = [r for r in _bucket_stats(res.trades, kf) if r[1] >= 3]
