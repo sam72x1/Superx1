@@ -75,6 +75,9 @@ class Scanner:
             notify=self.telegram.send,
             stall_seconds=max(300.0, cfg.poll_interval_sec * 8),
         )
+        # تعفّن معرّف نموذج Anthropic (401/404) = عطل صامت للذكاء → أبلِغ المشرف.
+        self.claude.on_config_error = lambda msg: self.monitor.raise_fault(
+            "anthropic", msg)
         self.last_runners: list = []       # (رمز، نسبة) لآخر مسح (للمساعد)
         self.last_scan_et = None
         self.assistant = TelegramAssistant(self)   # مساعد تيليجرام تفاعلي

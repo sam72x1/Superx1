@@ -117,6 +117,38 @@ def check_telegram(cfg: Config) -> bool:
     return True
 
 
+def check_anthropic(cfg: Config) -> bool:
+    """يفحص معرّفات نماذج Anthropic المضبوطة بنداء 8-توكنات لكل نموذج مميّز.
+    best-effort §3: بلا مفتاح → تخطٍّ (الذكاء اختياري، لا يُفشل الجاهزية).
+    يكشف تعفّن معرّف نموذج مسحوب (404) أو مفتاحًا باطلًا (401) قبل النشر —
+    وهو الموضع الوحيد الذي يمكن أن يتعفّن فيه عقد خارجي بلا إنذار (التقرير)."""
+    print("4) نماذج Anthropic (اختياري — الذكاء best-effort):")
+    if not cfg.anthropic_api_key:
+        _warn("بلا ANTHROPIC_API_KEY — طبقة الذكاء معطّلة (يكمل البوت بلا محلّل)")
+        return True
+    headers = {"x-api-key": cfg.anthropic_api_key,
+               "anthropic-version": "2023-06-01", "content-type": "application/json"}
+    ok = True
+    for model in dict.fromkeys((cfg.anthropic_model, cfg.analyst_model)):
+        try:
+            resp = requests.post(
+                "https://api.anthropic.com/v1/messages", headers=headers, timeout=15,
+                json={"model": model, "max_tokens": 8,
+                      "messages": [{"role": "user", "content": "hi"}]})
+        except requests.RequestException as exc:
+            _warn(f"تعذّر فحص {model} (شبكة): {exc}")   # عابر لا يُفشل
+            continue
+        if resp.status_code == 200:
+            _ok(f"{model} صالح وفعّال")
+        elif resp.status_code in (401, 404):
+            _fail(f"{model} → {resp.status_code} (مفتاح باطل أو معرّف مسحوب) "
+                  f"— صحّح ANTHROPIC_MODEL/ANALYST_MODEL")
+            ok = False
+        else:
+            _warn(f"{model} → {resp.status_code} (غير حاسم، قد يكون حدًّا مؤقتًا)")
+    return ok
+
+
 def main() -> int:
     cfg = Config.from_env()
     print("══════════ فحص جاهزية الماسح الشامل ══════════")
@@ -126,6 +158,7 @@ def main() -> int:
     if results[0]:
         results.append(check_massive(cfg))
         results.append(check_telegram(cfg))
+        results.append(check_anthropic(cfg))
     print("──────────────────────────────────────────────")
     if all(results):
         print("✅ كل شي جاهز — تقدر تشغّل: python -m runner_scanner.main")

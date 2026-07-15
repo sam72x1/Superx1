@@ -197,7 +197,9 @@ class Config:
     # ── المستشار الذكي (Claude) — «العين اللي ما تنام» ────────────
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"   # نموذج البريفنغ/المساعد
-    analyst_model: str = "claude-haiku-4-5-20251001"  # تحليل كل تنبيه (أسرع)
+    # الاسم المستقرّ (بلا لاحقة تاريخ): الصيغة المؤرَّخة أوّل ما يُسحَب من الخدمة
+    # فتتعفّن بصمت. المستقرّ يبقى صالحًا عبر الإصدارات.
+    analyst_model: str = "claude-haiku-4-5"  # تحليل كل تنبيه (أسرع)
     analyst_enabled: bool = True          # محلّل ذكي لكل تنبيه
     advisor_enabled: bool = True          # بريفنغ نهاية الجلسة
     assistant_enabled: bool = True        # مساعد تيليجرام تفاعلي
@@ -382,7 +384,7 @@ class Config:
             champions_enabled=_b("CHAMPIONS_ENABLED", True),
             anthropic_api_key=_s("ANTHROPIC_API_KEY", ""),
             anthropic_model=_s("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-            analyst_model=_s("ANALYST_MODEL", "claude-haiku-4-5-20251001"),
+            analyst_model=_s("ANALYST_MODEL", "claude-haiku-4-5"),
             analyst_enabled=_b("ANALYST_ENABLED", True),
             advisor_enabled=_b("ADVISOR_ENABLED", True),
             assistant_enabled=_b("ASSISTANT_ENABLED", True),
