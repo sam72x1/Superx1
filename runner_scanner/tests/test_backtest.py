@@ -661,6 +661,85 @@ def test_asof_rank_gate_picks_early_leader_not_late_exploder():
     assert T2 in allowed["B"] and T2 not in allowed["A"]   # T2: B تجاوز فدخل
 
 
+def test_eow_close_pct_last_in_window_bar():
+    """MEAS-28: نسبة نهاية النافذة = إغلاق **آخر شمعة داخل النافذة** مقابل الدخول
+    (لا-تسرّب: تتجاهل ما بعد الموعد النهائي). قياس أصدق للـtimeout من 0."""
+    asof = _tms(2026, 6, 26, 10, 0)
+    entry = 2.0
+    post = [
+        Bar(t_ms=_tms(2026, 6, 26, 10, 5), o=2.0, h=2.2, l=2.0, c=2.1, v=1e4),
+        Bar(t_ms=_tms(2026, 6, 26, 11, 0), o=2.1, h=2.3, l=2.0, c=2.2, v=1e4),
+        # بعد نافذة 90د (11:30) → يُتجاهَل (لا-تسرّب)
+        Bar(t_ms=_tms(2026, 6, 26, 13, 0), o=2.2, h=5.0, l=2.2, c=5.0, v=1e4),
+    ]
+    # آخر شمعة داخل 90د هي 11:00 بإغلاق 2.2 → (2.2-2.0)/2.0 = +10%
+    assert abs(backtest._eow_close_pct(entry, post, asof, 90.0) - 10.0) < 1e-6
+    # بلا شمعة داخل النافذة → 0 (لا بيانات، لا ادّعاء)
+    assert backtest._eow_close_pct(entry, [], asof, 90.0) == 0.0
+
+
+def test_trade_carries_realized_eow_pct_equals_realized_when_won():
+    """MEAS-28: كل صفقة تحمل realized_eow_pct؛ وللصفقة الرابحة = المحقّق نفسه
+    (خروج فعلي عند الهدف لا نهاية النافذة). حقل قياس لا يغيّر النتيجة."""
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest.run_backtest(cfg, MockBase(), "2026-06-26", "2026-06-26")
+    runr = [t for t in res.trades if t["ticker"] == "RUNR"][0]
+    assert "realized_eow_pct" in runr
+    if runr["result"] != "timeout":
+        assert runr["realized_eow_pct"] == runr["realized_pct"]
+
+
+def test_eval_delayed_alert_carries_ranked_out():
+    """DIAG-26: سهم حُجب عن أعلى-15 عند شمعة أبكر ثم دخلها فنُبِّه (تأخّر) →
+    قاموس التنبيه يحمل ranked_out=True. كان أثر البوّابة على التوقيت مخفيًّا
+    في القمع (not_ranked=0 بينما البوّابة حرّكت عشرات الأسهم فعلًا)."""
+    base = MockBase()
+    # مسموح عند 9:40 و9:45 فقط (محجوب عند 9:35) → يجتاز البوّابات عند 9:35 لكنه
+    # خارج المقعد فيُؤجَّل، ثم يدخل عند 9:40 فيُنبَّه بعلم ranked_out.
+    allowed = {_tms(2026, 6, 26, 9, 40), _tms(2026, 6, 26, 9, 45)}
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest._eval_candidate(
+        cfg, base, "2026-06-26", {}, 2.0, "RUNR",
+        full5=base.bars_5min("RUNR", "", ""),
+        full1=base.bars_1min("RUNR", "", ""), allowed_asof=allowed)
+    assert res["kind"] == "alert" and res["ranked_out"] is True
+    # الدخول عند إغلاق شمعة 9:40 (التنبيه المتأخّر) لا 9:35
+    assert res["trade"]["entry"] == 2.65
+
+
+def test_eval_blocked_then_rejected_carries_ranked_out():
+    """DIAG-26: سهم حُجب عن أعلى-15 في كل شمعه ثم واصل صعوده فرُفض ببوّابة لاحقة
+    (حركة متقدّمة) → قاموس الرفض يحمل ranked_out=True (فامتصّه reject_reasons لا
+    not_ranked). هذا سبب not_ranked=0 رغم أن البوّابة أزالت عشرات التنبيهات."""
+    base = MockBase()
+    # سقف حركة 50: يجتاز عند 9:35 (+25%) و9:40 (+32%)، ويُرفض عند 9:45 (+55%).
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 entry_change_max_pct=50)
+    res = backtest._eval_candidate(
+        cfg, base, "2026-06-26", {}, 2.0, "RUNR",
+        full5=base.bars_5min("RUNR", "", ""),
+        full1=base.bars_1min("RUNR", "", ""),
+        allowed_asof=set())        # محجوب في كل الطوابع
+    assert res["kind"] == "rejected" and res["ranked_out"] is True
+    assert "حركة متقدّمة" in res["reason"]   # رُفض لاحقًا (لا not_ranked)
+
+
+def test_funnel_rank_gate_affected_counted_and_reported():
+    """DIAG-26: العدّاد rank_gate_affected يلتقط أثر البوّابة (تأخّر/حجب) مستقلًّا
+    عن التصنيف النهائي، والتقرير يظهره — بينما not_ranked يبقى صفرًا (الحالتان
+    منفصلتان). new_funnel يهيّئه صفرًا كي لا يكسر الدمج مع رنّات قديمة."""
+    assert backtest.new_funnel()["rank_gate_affected"] == 0
+    res = backtest.BacktestResult(
+        start="2026-06-01", end="2026-06-30", days=21, trades=[],
+        funnel={**backtest.new_funnel(),
+                "considered": 100, "rank_gate_affected": 7,
+                "not_ranked": 0, "rejected": 90, "alerts": 5})
+    report = backtest.format_report(res)
+    assert "مرّ عليه ترتيب أعلى-15" in report and "7" in report
+    # not_ranked=0 لا يُطبع (الحالتان منفصلتان مفهوميًّا)
+    assert "لم يدخل مجمّع الحي" not in report
+
+
 def test_day_candidates_no_lookahead_on_close_or_dayhigh():
     """م4: مجمّع اليوم لا يستبعد بسعر الإغلاق (مستقبلي) ولا بسقف قمة اليوم
     (مستقبلي) — البوّابتان (السعر/سقف التشوّه) لحظيّتان داخل التقييم كالحي.
