@@ -252,6 +252,24 @@ def _eow_close_pct(entry: float, post_bars: list[Bar],
     return (last_close - entry) / entry * 100.0
 
 
+def _loss_gap_fill_pct(entry: float, stop: float, post_bars: list[Bar],
+                       asof_ms: int, window_min: float) -> float:
+    """MEAS-29: نسبة الخسارة عند **تعبئة صادقة للفجوة** — لو فتحت شمعة كسر الوقف
+    تحته (فجوة)، فالتعبئة الواقعية عند فتحها لا عند سعر الوقف (الحيّ لا يتعبّأ
+    عند سعر مرّ منه قفزًا هبوطيًّا). يُستدعى لصفقة خاسرة فقط، ويطابق أوّل شمعة كسر
+    يقرّرها simulate_outcome (أوّل b.l ≤ الوقف). قياس فقط — لا يغيّر النتيجة."""
+    if entry <= 0 or not stop:
+        return 0.0
+    deadline = asof_ms + window_min * 60_000
+    for b in post_bars:
+        if b.t_ms > deadline:
+            break
+        if b.l <= stop:
+            fill = min(b.o, stop)   # فجوة: الفتح تحت الوقف → التعبئة عند الفتح
+            return (fill - entry) / entry * 100.0
+    return 0.0
+
+
 def partial_exit_realized(entry: float, risk, post_bars: list[Bar],
                           asof_ms: int, window_min: float,
                           fraction: float = 0.5) -> float:
@@ -639,6 +657,13 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             realized_eow = (
                 _eow_close_pct(entry, post, asof, cfg.outcome_window_min)
                 if result == "timeout" else realized)
+            # MEAS-29: للخاسرة قياس أصدق = تعبئة الفجوة (لو فتحت شمعة الكسر تحت
+            # الوقف، الحيّ يتعبّأ عند فتحها لا عند الوقف)؛ لغير الخاسرة = المحقّق
+            # نفسه. قياس فقط — لا يغيّر النتيجة ولا التوقّع المعتمد.
+            realized_gap = (
+                _loss_gap_fill_pct(entry, cand.risk.stop_price, post, asof,
+                                   cfg.outcome_window_min)
+                if result == "loss" and cand.risk else realized)
             # DIAG-26: ranked_out=True هنا يعني «تأخّر» — حُجب عن أعلى-15 في
             # شمعة أسبق ثم دخلها فنُبِّه (البوّابة اللحظية أثّرت على توقيته).
             return {"kind": "alert", "ranked_out": ranked_out, "trade": {
@@ -682,6 +707,9 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
                 "realized_ratchet_pct": round(realized_ratchet, 1),  # لو وقف مُرقّى
                 # MEAS-28: محقّق نهاية النافذة (للـtimeout = إغلاق آخر شمعة؛ قياس)
                 "realized_eow_pct": round(realized_eow, 1),
+                # MEAS-29: محقّق بتعبئة صادقة للفجوة (للخاسرة = فتح شمعة الكسر لو
+                # فتحت تحت الوقف؛ لغيرها = المحقّق نفسه؛ قياس فقط)
+                "realized_gap_pct": round(realized_gap, 1),
                 "target_hit": tlevel,                  # أعلى هدف لُمس (0..3)
                 "result": result, "max_gain_pct": round(gain, 1),
                 "max_draw_pct": round(draw, 1),
@@ -1179,6 +1207,18 @@ def format_report(res: BacktestResult) -> str:
                 lines.append("  <i>↳ يقيس ما تركته صفقات ⏳ على الطاولة: إغلاق "
                              "آخر شمعة داخل نافذة النتيجة بدل افتراض الخروج على "
                              "سعر الدخول. قياس فقط — لا يغيّر النتيجة الرئيسة.</i>")
+            # MEAS-29: صدق فجوة الوقف — الباكتيست يحجز كل خاسرة على الوقف بالضبط
+            # حتى لو فتحت شمعة الكسر تحته (فجوة)، والحيّ لا يتعبّأ عند سعر قفز فوقه
+            # هبوطًا. هذا سطر يقيس التوقّع لو عُبِّئت الخسارة على فتح شمعة الكسر.
+            if all(t.get("realized_gap_pct") is not None for t in alt):
+                gap = _avg(alt, "realized_gap_pct")
+                d = gap - base
+                lines.append(
+                    f"  • لو تعبئة صادقة لفجوات الوقف: "
+                    f"{gap:+.1f}% ({_tag(d)} {d:+.1f}%)")
+                lines.append("  <i>↳ يكشف تفاؤل ذيل الخسارة: الخاسرة التي تفتح "
+                             "شمعة كسرها تحت الوقف تتعبّأ عند فتحها (أسوأ) لا عند "
+                             "الوقف. قياس فقط — لا يغيّر النتيجة الرئيسة.</i>")
     if res.trades:
         def b(title, kf):
             rows = [r for r in _bucket_stats(res.trades, kf) if r[1] >= 3]
