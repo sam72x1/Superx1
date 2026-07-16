@@ -692,6 +692,40 @@ def test_trade_carries_realized_eow_pct_equals_realized_when_won():
         assert runr["realized_eow_pct"] == runr["realized_pct"]
 
 
+def test_loss_gap_fill_below_stop_uses_open_not_stop():
+    """MEAS-29: شمعة الكسر تفتح **تحت** الوقف (فجوة) → التعبئة الصادقة عند فتحها
+    لا عند الوقف (الحيّ لا يتعبّأ عند سعر قفز فوقه هبوطًا). دخول 3.0 · وقف 2.7:
+    شمعة تفتح 2.5 (تحت 2.7) → تعبئة عند 2.5 = −16.7% (أسوأ من −10% عند الوقف)."""
+    asof = _tms(2026, 6, 26, 10, 0)
+    entry, stop = 3.0, 2.7
+    post = [Bar(t_ms=_tms(2026, 6, 26, 10, 5),
+                o=2.5, h=2.6, l=2.4, c=2.5, v=1e4)]   # فجوة: فتح تحت الوقف
+    got = backtest._loss_gap_fill_pct(entry, stop, post, asof, 90.0)
+    assert abs(got - (2.5 - 3.0) / 3.0 * 100.0) < 1e-6
+
+
+def test_loss_gap_fill_broken_from_above_equals_stop():
+    """MEAS-29: شمعة تكسر الوقف من **فوقه** (فتح 2.9 فوق الوقف 2.7، قاع 2.6) →
+    التعبئة عند الوقف نفسه = −10%، مطابقة لـrealized_pct العادي (لا فجوة)."""
+    asof = _tms(2026, 6, 26, 10, 0)
+    entry, stop = 3.0, 2.7
+    post = [Bar(t_ms=_tms(2026, 6, 26, 10, 5),
+                o=2.9, h=2.95, l=2.6, c=2.7, v=1e4)]   # كسر من فوق الوقف
+    got = backtest._loss_gap_fill_pct(entry, stop, post, asof, 90.0)
+    assert abs(got - (2.7 - 3.0) / 3.0 * 100.0) < 1e-6   # = −10% (سعر الوقف)
+
+
+def test_trade_carries_realized_gap_pct_equals_realized_when_not_loss():
+    """MEAS-29: كل صفقة تحمل realized_gap_pct؛ ولغير الخاسرة = المحقّق نفسه
+    (لا تعبئة فجوة إلا على خسارة). حقل قياس لا يغيّر النتيجة."""
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0)
+    res = backtest.run_backtest(cfg, MockBase(), "2026-06-26", "2026-06-26")
+    runr = [t for t in res.trades if t["ticker"] == "RUNR"][0]
+    assert "realized_gap_pct" in runr
+    if runr["result"] != "loss":
+        assert runr["realized_gap_pct"] == runr["realized_pct"]
+
+
 def test_eval_delayed_alert_carries_ranked_out():
     """DIAG-26: سهم حُجب عن أعلى-15 عند شمعة أبكر ثم دخلها فنُبِّه (تأخّر) →
     قاموس التنبيه يحمل ranked_out=True. كان أثر البوّابة على التوقيت مخفيًّا
