@@ -310,6 +310,59 @@ def test_alert_still_closes_on_stop():
     st.close()
 
 
+def test_alert_entry_price_reanchors_from_card_not_first_sighting():
+    """BUG-32: سهم يُرصد بسعر منخفض (25) ثم يُنبَّه عنه لاحقًا بسعر أعلى (29.25)
+    ووقف البطاقة 27.2 **فوق** سعر أوّل رصد. قبل الإصلاح كان first_price=25 < الوقف
+    فيُطلق hit_stop زائفًا فور أوّل رصد (PHOE 2026-07-07 حيًّا: hit_stop=1 رغم win).
+    بعد الإصلاح تُقاس النتيجة من سعر دخول البطاقة 29.25 المُرسى، فسعرٌ عند 28
+    (فوق الوقف) لا يلمس الوقف، والصفّ يحمل خطة البطاقة كما رآها المستخدم."""
+    st = _store()
+    c = _cand("PHOE", 25.0, rejected=True, reason="تحت VWAP")   # أوّل رصد 25، بلا خطة
+    st.log_candidate(c, T0)
+    st._conn.execute(     # محاكاة تراكم قمة/قاع قبل التنبيه (كالحي)
+        "UPDATE tracking SET high_after=33.0, low_after=25.0 WHERE ticker='PHOE'")
+    st._conn.commit()
+    # تنبيه لاحق بسعر البطاقة 29.25 (وقف 27.2025 · أهداف 30/35/49.45)
+    st.mark_alerted("PHOE", 80, T0, entry_price=29.25, stop_price=27.2025,
+                    targets=[30.0, 35.0, 49.45])
+    row = st.fetch_row("PHOE")
+    assert row["entry_price"] == 29.25 and row["is_alert"] == 1
+    assert row["stop_price"] == 27.2025            # وقف البطاقة لا وقفٌ قديم
+    assert row["target1"] == 30.0
+    assert row["high_after"] == 29.25 and row["low_after"] == 29.25  # أُرسيا للدخول
+    # سعر عند 28 (فوق الوقف 27.2025) → لا hit_stop زائف، والقياس من 29.25
+    st.update_outcomes({"PHOE": 28.0},
+                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    row = st.fetch_row("PHOE")
+    assert row["hit_stop"] == 0                    # قبل الإصلاح كان 1 زائفًا
+    assert row["result"] != "loss"
+    st.close()
+
+
+def test_rejected_row_ignores_stop_above_basis_but_keeps_valid_stop():
+    """BUG-32 (قصّة FBRX): صفّ مرفوض ورث وقفًا **فوق** سعر أوّل رصده (مجمَّد من
+    دورة سابقة بسعر أعلى عبر COALESCE) — يجب ألّا يُطلق hit_stop زائفًا. وفي
+    المقابل صفّ مرفوض بوقف **تحت** أساسه (BUG-15) يظلّ يسجّل hit_stop للمعايرة."""
+    st = _store()
+    # FBRX: أوّل رصد 24.95، وقف موروث 25.947 (فوق الأساس = مجمَّد من سعر أعلى)
+    bad = _cand("FBRX", 24.95, rejected=True, reason="حركة متقدّمة 46%")
+    st.log_candidate(bad, T0)
+    st._conn.execute("UPDATE tracking SET stop_price=25.947 WHERE ticker='FBRX'")
+    st._conn.commit()
+    st.update_outcomes({"FBRX": 24.95},
+                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    assert st.fetch_row("FBRX")["hit_stop"] == 0     # وقف فوق الأساس → يُتجاهَل
+    # BUG-15: وقف تحت الأساس (1.8 < 2.0) لا يزال يُسجَّل hit_stop للمعايرة
+    ok = _cand("LATE2", 2.0, rejected=True, reason="سقف ربح 8% < 12%")
+    st.log_candidate(ok, T0)
+    st._conn.execute("UPDATE tracking SET stop_price=1.8 WHERE ticker='LATE2'")
+    st._conn.commit()
+    st.update_outcomes({"LATE2": 1.7},
+                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    assert st.fetch_row("LATE2")["hit_stop"] == 1
+    st.close()
+
+
 def test_events_only_for_alerts_not_rejected():
     st = _store()
     c = _cand("REJ", 2.0, rejected=True, reason="RVol 3x < 5x")

@@ -201,7 +201,14 @@ class Scanner:
         sent = 0
         for cand in prioritize(accepted):
             if self.telegram.send(build_card(self.cfg, cand)):
-                self.store.mark_alerted(cand.ticker, cand.final_score)
+                # BUG-32: ثبّت لقطة البطاقة (دخول/وقف/أهداف) أساسًا لقياس النتيجة
+                # كي لا تُقاس من سعر أول رصد سابق (يُطلق hit_stop زائفًا).
+                rp = cand.risk
+                self.store.mark_alerted(
+                    cand.ticker, cand.final_score,
+                    entry_price=(rp.entry_ref if rp else cand.snapshot.last_price),
+                    stop_price=(rp.stop_price if rp else None),
+                    targets=(rp.targets if rp else None))
                 sent += 1
         if sent:
             logger.info("أُرسل %d تنبيه", sent)
