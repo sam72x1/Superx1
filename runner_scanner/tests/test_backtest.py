@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from runner_scanner import backtest
 from runner_scanner.config import Config
 from runner_scanner.models import Bar, FloatSource, RiskPlan
-from runner_scanner.tests.fixtures import uptrend_daily_bars
+from runner_scanner.tests.fixtures import downtrend_daily_bars, uptrend_daily_bars
 
 ET = ZoneInfo("America/New_York")
 
@@ -1064,6 +1064,66 @@ def test_shadow_eval_records_price_cap_rejects():
     pc = [x for x in res.funnel["shadow"] if x.get("kind") == "price_cap"]
     assert len(pc) >= 1 and pc[0]["result"] in ("win", "loss", "timeout")
     assert "مرفوضو سقف السعر" in backtest.format_report(res)
+
+
+def test_shadow_eval_records_vwap_rejects():
+    """MEAS-31: مرفوض «تحت VWAP» يُسجَّل في ظلّ منفصل kind=vwap. نبني شمعة أولى
+    مرتفعة الحجم تجرّ VWAP الجلسة فوق شمعة الزناد التالية، ويوميًّا هابطًا كي
+    تكون الجاهزية دون العتبة فلا يُنبَّه عند الشمعة الأولى (يظلّ مرفوضًا كل دورة)."""
+
+    class VwapBase(MockBase):
+        def grouped_daily(self, date):
+            if date == "2026-06-26":     # اليوم: رنر عند ~$2.8 (+12% عن 2.5)
+                return [{"T": "BLWV", "o": 2.6, "h": 3.1, "l": 2.5, "c": 2.8,
+                         "v": 3e6}]
+            return [{"T": "BLWV", "c": 2.5}]   # إغلاق أمس
+
+        def bars_5min(self, t, s, e):
+            if t != "BLWV":
+                return []
+            # 9:35 مرتفعة الحجم (3.0) فوق VWAP؛ 9:40 أدنى (2.75) تحت VWAP الجلسة
+            # = (3.0·2م + 2.75·1.2م)/3.2م ≈ 2.91 > 2.75 → «تحت VWAP».
+            return [
+                Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=2.9, h=3.05, l=2.85, c=3.0,
+                    v=2e6, n=400),
+                Bar(t_ms=_tms(2026, 6, 26, 9, 40), o=3.0, h=3.0, l=2.7, c=2.75,
+                    v=1.2e6, n=300),
+            ]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+        def bars_daily(self, t, s, e):
+            return downtrend_daily_bars(260)     # جاهزية منخفضة → لا تنبيه مبكر
+
+        def aggregates(self, t, mult, span, s, e, **kw):
+            return downtrend_daily_bars(260)
+
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_shadow_rvol=True, entry_change_max_pct=40)
+    res = backtest.run_backtest(cfg, VwapBase(), "2026-06-26", "2026-06-26")
+    assert res.funnel["reject_reasons"].get("تحت VWAP", 0) >= 1
+    vw = [x for x in res.funnel["shadow"] if x.get("kind") == "vwap"]
+    assert len(vw) >= 1 and vw[0]["result"] in ("win", "loss", "timeout")
+    assert "مرفوضو VWAP" in backtest.format_report(res)
+
+
+def test_shadow_vwap_report_verdict_data_driven():
+    """MEAS-31: قسم ظلّ VWAP يعرض الحكم بالتوقّع المحقّق مقابل الناجين — لا
+    اقتراحًا أزليًّا. عيّنة ظلّ خاسرة أدنى من الناجين → «بوّابة VWAP مثبَّتة»."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8}] * 8
+    res.funnel = backtest.new_funnel()
+    res.funnel["shadow"] = [{"kind": "vwap", "max_rvol": 9.0, "result": "loss"}] * 10
+    rep = backtest.format_report(res)
+    assert "مرفوضو VWAP (10)" in rep
+    assert "بوّابة VWAP مثبَّتة" in rep
+    # توافق خلفي: القسم لا يظهر حين لا ظلّ vwap
+    res2 = backtest.BacktestResult(start="x", end="y", days=1)
+    res2.trades = [{"result": "win", "max_gain_pct": 5}] * 3
+    res2.funnel = backtest.new_funnel()
+    res2.funnel["shadow"] = [{"max_rvol": 4.0, "result": "loss"}] * 3   # rvol قديم
+    assert "مرفوضو VWAP" not in backtest.format_report(res2)
 
 
 def test_shadow_report_old_records_without_kind_counted_as_rvol():
