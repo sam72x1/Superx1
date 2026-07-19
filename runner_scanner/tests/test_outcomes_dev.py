@@ -363,6 +363,24 @@ def test_rejected_row_ignores_stop_above_basis_but_keeps_valid_stop():
     st.close()
 
 
+def test_alert_stop_at_entry_still_scores_loss_not_timeout():
+    """BUG-32 (مراجعة عدائية): وقف البطاقة موثوق للمُنبَّه عنه حتى لو ساوى الدخول
+    (إعداد stop_fixed_pct=0 يجعل الوقف=الدخول). قبل الإصلاح كانت ثابتة stop<الأساس
+    الصارمة تُهمله فتُحسب خسارة حقيقية −50% كـ timeout؛ الآن للتنبيه (entry_price
+    مُرسى) يُعتمد الوقف دائمًا فتُحسم خسارة."""
+    st = _store()
+    c = _cand("DEGEN", 10.0, rejected=True, reason="تحت VWAP")  # لا خطة على الرصد
+    st.log_candidate(c, T0)
+    # تنبيه بوقفٍ يساوي الدخول (حالة stop_fixed_pct=0 الحدّية)
+    st.mark_alerted("DEGEN", 80, T0, entry_price=10.0, stop_price=10.0,
+                    targets=[12.0, 13.0, 14.0])
+    st.update_outcomes({"DEGEN": 5.0},   # انهيار -50% حقيقي
+                       datetime(2026, 6, 26, 14, 10, tzinfo=timezone.utc))
+    row = st.fetch_row("DEGEN")
+    assert row["hit_stop"] == 1 and row["result"] == "loss"   # لا timeout
+    st.close()
+
+
 def test_events_only_for_alerts_not_rejected():
     st = _store()
     c = _cand("REJ", 2.0, rejected=True, reason="RVol 3x < 5x")
