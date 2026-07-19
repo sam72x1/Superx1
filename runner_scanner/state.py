@@ -90,6 +90,10 @@ CREATE TABLE IF NOT EXISTS tracking (
     -- تتبّع النتيجة + الأحداث
     is_alert        INTEGER DEFAULT 0,
     first_price     REAL,
+    -- سعر دخول البطاقة عند أوّل تنبيه (BUG-32): تُقاس النتيجة منه لا من
+    -- first_price (سعر أول رصد قد يسبق التنبيه بساعات وبطبعة رقيقة، فوقفٌ فوقه
+    -- يُطلق hit_stop زائفًا). NULL للمرفوضين وصفوف ما قبل الإصلاح.
+    entry_price     REAL,
     first_volume    REAL,                 -- حجم وقت أول رصد (لقياس المشاركة)
     stop_price      REAL,
     target1         REAL,
@@ -143,6 +147,7 @@ _MIGRATIONS = (
     ("notified_stop", "INTEGER DEFAULT 0"),
     ("notified_high", "REAL"), ("result", "TEXT DEFAULT ''"),
     ("reason_code", "TEXT"),   # DEBT-13: كود الرفض الثابت
+    ("entry_price", "REAL"),   # BUG-32: سعر دخول البطاقة (أساس قياس النتيجة الصادق)
 )
 
 
@@ -205,15 +210,58 @@ class Store:
             return row is not None
 
     def mark_alerted(self, ticker: str, score: float,
-                     now: datetime | None = None) -> None:
+                     now: datetime | None = None,
+                     entry_price: float | None = None,
+                     stop_price: float | None = None,
+                     targets: list[float] | None = None) -> None:
+        """يُعلِّم السهم مُنبَّهًا عنه. عند تمرير خطة البطاقة (entry_price/stop/
+        targets) نثبّت **لقطة البطاقة كما رآها المستخدم** عند أوّل انتقال إلى
+        تنبيه (BUG-32): سعر الدخول والوقف والأهداف، ونُرسي القمة/القاع على سعر
+        الدخول — كي تُقاس النتيجة من لحظة التنبيه لا من سعر أوّل رصد (قد يسبقه
+        بساعات وبطبعة رقيقة فيُطلق hit_stop زائفًا حين الوقف فوق سعر أوّل رصد).
+        بلا الخطة (اختبارات/توافق) نكتفي بـ is_alert=1 كالسابق."""
         day = trade_date_str(now)
+        tg = list(targets or [])
+        t1 = tg[0] if len(tg) > 0 else None
+        t2 = tg[1] if len(tg) > 1 else None
+        t3 = tg[2] if len(tg) > 2 else None
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO alerts(ticker, trade_date, alerted_at, score)"
                 " VALUES(?,?,?,?)", (ticker, day, _iso(now), score))
-            self._conn.execute(
-                "UPDATE tracking SET is_alert=1 WHERE ticker=? AND trade_date=?",
-                (ticker, day))
+            if entry_price and entry_price > 0:
+                # شروط CASE تقرأ entry_price **قبل** التحديث (SQLite يقيّم طرف
+                # SET من الصفّ الأصلي) → تُطبَّق مرّة واحدة فقط عند أوّل تنبيه.
+                self._conn.execute(
+                    """
+                    UPDATE tracking SET is_alert=1,
+                        entry_price=COALESCE(entry_price, ?),
+                        stop_price=CASE WHEN entry_price IS NULL
+                            THEN ? ELSE stop_price END,
+                        target1=CASE WHEN entry_price IS NULL
+                            THEN ? ELSE target1 END,
+                        target2=CASE WHEN entry_price IS NULL
+                            THEN ? ELSE target2 END,
+                        target3=CASE WHEN entry_price IS NULL
+                            THEN ? ELSE target3 END,
+                        high_after=CASE WHEN entry_price IS NULL
+                            THEN ? ELSE high_after END,
+                        low_after=CASE WHEN entry_price IS NULL
+                            THEN ? ELSE low_after END,
+                        notified_high=CASE WHEN entry_price IS NULL
+                            THEN ? ELSE notified_high END,
+                        peak_at=CASE WHEN entry_price IS NULL
+                            THEN NULL ELSE peak_at END,
+                        stop_dist_at=CASE WHEN entry_price IS NULL
+                            THEN NULL ELSE stop_dist_at END
+                    WHERE ticker=? AND trade_date=?
+                    """,
+                    (entry_price, stop_price, t1, t2, t3,
+                     entry_price, entry_price, entry_price, ticker, day))
+            else:
+                self._conn.execute(
+                    "UPDATE tracking SET is_alert=1 WHERE ticker=? AND trade_date=?",
+                    (ticker, day))
             self._conn.commit()
 
     # ── closed-loop + تهيئة التتبّع (upsert صفّ/سهم/يوم) ───────────
@@ -328,11 +376,21 @@ class Store:
                 price = price_map.get(r["ticker"])
                 if price is None or price <= 0:
                     continue
-                first = r["first_price"] or price
+                # أساس قياس النتيجة: سعر دخول البطاقة للمُنبَّه عنه (entry_price)،
+                # وإلا سعر أوّل رصد (first_price) للمرفوض/صفوف ما قبل BUG-32.
+                first = r["entry_price"] or r["first_price"] or price
                 high = max(r["high_after"] or price, price)
                 low = min(r["low_after"] or price, price)
                 max_gain = (high - first) / first * 100.0 if first > 0 else 0.0
                 max_draw = (low - first) / first * 100.0 if first > 0 else 0.0
+                # للمرفوض (الأساس = first_price): الوقف الشرعي **تحت** الأساس؛
+                # وقفٌ عند/فوقه = مجمَّد من دورة بسعر أعلى (COALESCE) فنتجاهله كي
+                # لا يُطلق hit_stop زائفًا فور أوّل رصد (BUG-32: FBRX 25.9 فوق 24.9).
+                # للمُنبَّه عنه (entry_price مُرسى) الوقف لقطة البطاقة الموثوقة →
+                # يُعتمد دائمًا؛ بلا هذا كان وقفٌ = الدخول (stop_fixed_pct=0) يُهمَل
+                # فتُحسب خسارة حقيقية timeout.
+                stop_valid = bool(r["stop_price"] and first > 0
+                                  and (r["entry_price"] or r["stop_price"] < first))
 
                 # ترتيب القمة/القاع (قياس فقط): طابع تحسّن القمة، وأول لمسة
                 # لمسافة الوقف من الدخول — لحسم «هل سُتوقَف قبل القمة؟» في الفائتة.
@@ -367,7 +425,7 @@ class Store:
                 # معرفة الترتيب داخل النبضة، فنتحفّظ). نحسب لمسة الوقف الآن **قبل**
                 # حلقة الأهداف كي تسجّل الأهداف «loss» لا «win» إن لُمس الوقف أيضًا.
                 # (هدف لُمس في نبضة سابقة يبقى «win» — القاعدة لنفس النبضة فقط.)
-                stop_now = bool(not notified_stop and r["stop_price"]
+                stop_now = bool(not notified_stop and stop_valid
                                 and low <= r["stop_price"])
 
                 # 🎯 أهداف: نبلّغ كل هدف عُبر لأول مرة (نرسل للمُنبَّه فقط)
@@ -398,7 +456,7 @@ class Store:
                 # الفائتة لو انطلق السهم لاحقًا بعد لمسه الوقف الافتراضي. النافذة
                 # تغلقها. (`rejected_row` = مرفوض غير مُنبَّه؛ نفس شرط تنبيه 👻.)
                 rejected_row = bool((r["rejected"] or 0) and not is_alert)
-                if r["stop_price"] and low <= r["stop_price"]:
+                if stop_valid and low <= r["stop_price"]:
                     hit_stop = 1
                     if not rejected_row and not notified_stop:
                         notified_stop = 1
