@@ -1140,6 +1140,114 @@ def test_shadow_eval_records_late_wave_rejects():
     assert len(lw) >= 1 and lw[0]["result"] in ("win", "loss", "timeout")
 
 
+def test_shadow_enters_at_first_reject_not_last():
+    """MEAS-34 (الإصلاح الجوهري): سهم يُرفض بحركة متقدّمة طوال اليوم كان الظلّ
+    يدخله عند **آخر** شمعة رفض (قرب الإغلاق) فلا تبقى شموع للنتيجة ⇒ timeout
+    قسري. الآن يدخل عند **أوّل** رفض فتكتمل نافذة النتيجة (window_min=90)."""
+
+    class AllDayBase(MockBase):
+        def grouped_daily(self, date):
+            if date == "2026-06-26":      # +40% عن أمس ⇒ رفض حركة متقدّمة
+                return [{"T": "ALLD", "o": 2.7, "h": 3.2, "l": 2.6, "c": 2.8,
+                         "v": 5e6}]
+            return [{"T": "ALLD", "c": 2.0}]
+
+        def bars_5min(self, t, s, e):
+            if t != "ALLD":
+                return []
+            # شموع من 9:35 حتى 13:00 — رنر طوال اليوم (كلها ≥+10% عن 2.0)
+            return [Bar(t_ms=_tms(2026, 6, 26, h, m), o=2.8, h=2.9, l=2.7,
+                        c=2.8, v=2e5, n=50)
+                    for h in range(9, 14) for m in (5, 35) if (h, m) != (9, 5)]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_shadow_rvol=True, entry_change_max_pct=30)
+    res = backtest.run_backtest(cfg, AllDayBase(), "2026-06-26", "2026-06-26")
+    lw = [x for x in res.funnel["shadow"] if x.get("kind") == "late_wave"]
+    assert len(lw) >= 1
+    # نافذة كاملة = دخل مبكرًا (لو دخل عند آخر شمعة لصارت 0)
+    assert lw[0]["window_min"] == 90, lw[0]
+    assert "realized_pct" in lw[0]
+
+
+def test_shadow_skips_late_wave_above_parabolic():
+    """MEAS-34: مرفوض «حركة متقدّمة» فوق حدّ البارابولِك (120%) سترفضه بوّابة
+    البارابولِك مهما رُفع سقف المطاردة (ترتيب PRE_TA: entry_change قبله)، فقياسه
+    يلوّث السلّة بانفجارات لا تُقبل أبدًا ⇒ يُستثنى من الظل."""
+
+    class BlowoffBase(MockBase):
+        def grouped_daily(self, date):
+            if date == "2026-06-26":      # +200% ⇒ فوق البارابولِك 120
+                return [{"T": "BLOW", "o": 5.5, "h": 6.5, "l": 5.0, "c": 6.0,
+                         "v": 5e6}]
+            return [{"T": "BLOW", "c": 2.0}]
+
+        def bars_5min(self, t, s, e):
+            if t != "BLOW":
+                return []
+            return [Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=5.9, h=6.1, l=5.8,
+                        c=6.0, v=2e5, n=50),
+                    Bar(t_ms=_tms(2026, 6, 26, 10, 0), o=6.0, h=6.3, l=5.9,
+                        c=6.2, v=3e5, n=60)]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_shadow_rvol=True, entry_change_max_pct=30,
+                 parabolic_day_change_pct=120.0)
+    res = backtest.run_backtest(cfg, BlowoffBase(), "2026-06-26", "2026-06-26")
+    assert res.funnel["reject_reasons"].get("حركة متقدّمة", 0) >= 1
+    assert [x for x in res.funnel["shadow"]
+            if x.get("kind") == "late_wave"] == []
+
+
+def test_shadow_report_excludes_truncated_window_records():
+    """MEAS-34: السجلات مقطوعة النافذة (رُفضت قرب الإغلاق) حسمها timeout قسريّ
+    لا سلوك سوق — تُستبعد من مقام الحكم ويُفصح عن عددها."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8}] * 8
+    res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8}
+    res.funnel["shadow"] = (
+        # 10 سليمة النافذة وخاسرة ⇒ الحكم يُبنى عليها
+        [{"kind": "late_wave", "max_rvol": 0.0, "result": "loss",
+          "window_min": 90, "realized_pct": -7.0}] * 10
+        # 5 مقطوعة (timeout قسري) ⇒ تُستبعد من المقام
+        + [{"kind": "late_wave", "max_rvol": 0.0, "result": "timeout",
+            "window_min": 10, "realized_pct": 0.0}] * 5)
+    rep = backtest.format_report(res)
+    assert "مرفوضو حركة متقدّمة (15)" in rep      # الإجمالي يعرض الكل
+    assert "(10 محسومة)" in rep                    # المقام بلا المقطوعة
+    assert "استُبعد 5 سجلًّا مقطوع النافذة" in rep
+    assert "سقف المطاردة مثبَّت" in rep
+
+
+def test_shadow_verdict_requires_configured_sample_size():
+    """MEAS-34: حدّ الكفاية يأتي من الإعداد (لا رقم سحري). عيّنة دون الحدّ ⇒
+    «غير كافية» مهما بلغ الفارق — يمنع ادّعاء فجوة على بضع نتائج."""
+    def _mk(min_dec):
+        r = backtest.BacktestResult(start="x", end="y", days=1)
+        r.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8}] * 8
+        r.funnel = backtest.new_funnel()
+        r.run_config = {"outcome_window_min": 90.0,
+                        "backtest_shadow_min_decided": min_dec}
+        r.funnel["shadow"] = [{"kind": "late_wave", "max_rvol": 0.0,
+                               "result": "loss", "window_min": 90,
+                               "realized_pct": -7.0}] * 10
+        return backtest.format_report(r)
+    # 10 محسومة دون حدّ 50 ⇒ لا حكم
+    strict = _mk(50)
+    assert "غير كافية للحكم بعد (10 محسومة من 50 مطلوبة)" in strict
+    assert "سقف المطاردة مثبَّت" not in strict
+    # نفس العيّنة فوق حدّ 8 ⇒ حكم
+    assert "سقف المطاردة مثبَّت" in _mk(8)
+
+
 def test_shadow_late_wave_report_verdict_data_driven():
     """MEAS-33: قسم ظلّ «حركة متقدّمة» يعرض الحكم بالتوقّع المحقّق مقابل الناجين
     — لا اقتراحًا أزليًّا. عيّنة ظلّ خاسرة أدنى من الناجين → «سقف المطاردة مثبَّت»."""
