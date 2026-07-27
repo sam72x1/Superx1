@@ -732,14 +732,16 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     # رفضًا فارغًا يلوّث «أخرى» في القمع. (evaluated=True دائمًا هنا، فالفحص بعده.)
     if ranked_out and not last_reason:
         return {"kind": "not_ranked"}
-    # قياس الظل: لرفض RVol أو «سعر فوق الحد» أو «تحت VWAP» نحسب نتيجة افتراضية
-    # (لو دخلنا) — يكشف هل العتبة تحمي أم تفوّت فرصًا (قياس فقط). نفس مصادر
-    # الأهداف الحيّة. (العلم backtest_shadow_rvol يغطّي كل سلال الظل، لا RVol
-    # وحده — أُبقي الاسم لتوافق الإعداد؛ MEAS-31 أضاف سلّة VWAP.)
+    # قياس الظل: لرفض RVol أو «سعر فوق الحد» أو «تحت VWAP» أو «حركة متقدّمة» نحسب
+    # نتيجة افتراضية (لو دخلنا) — يكشف هل العتبة تحمي أم تفوّت فرصًا (قياس فقط).
+    # نفس مصادر الأهداف الحيّة. (العلم backtest_shadow_rvol يغطّي كل سلال الظل، لا
+    # RVol وحده — أُبقي الاسم لتوافق الإعداد؛ MEAS-31 أضاف VWAP، MEAS-33 أضاف
+    # «حركة متقدّمة» — ثاني أكبر بوّابة قابلة للضبط وكانت عمياء بلا قياس.)
     shadow = None
     _sh_bucket = _reject_bucket(last_reason, last_code)
     if (cfg.backtest_shadow_rvol and last_snap is not None
-            and _sh_bucket in ("RVol", "سعر فوق الحد", "تحت VWAP")):
+            and _sh_bucket in ("RVol", "سعر فوق الحد", "تحت VWAP",
+                               "حركة متقدّمة")):
       # الظل قياس best-effort (§3): فشل شبكة هنا لا يُسقط الرن كاملًا —
       # وقع فعلًا: 400 على مرفوض سقف السعر أسقط الباكتيست التلقائي كله.
       try:
@@ -766,7 +768,8 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
         sres, _, _, _ = simulate_outcome(last_snap.last_price, risk, post,
                                          last_asof, cfg.outcome_window_min)
         kind = ("price_cap" if _sh_bucket == "سعر فوق الحد"
-                else "vwap" if _sh_bucket == "تحت VWAP" else "rvol")
+                else "vwap" if _sh_bucket == "تحت VWAP"
+                else "late_wave" if _sh_bucket == "حركة متقدّمة" else "rvol")
         shadow = {"kind": kind, "max_rvol": round(max_rvol, 1), "result": sres}
       except MassiveError as exc:
         # تعذّر ≠ صفر: نفقد قياس ظل سهمٍ واحد ويكمل الباكتيست
@@ -1387,6 +1390,7 @@ def format_report(res: BacktestResult) -> str:
     sh = [x for x in sh_all if x.get("kind", "rvol") == "rvol"]   # قديم بلا kind = rvol
     sh_pc = [x for x in sh_all if x.get("kind") == "price_cap"]
     sh_vwap = [x for x in sh_all if x.get("kind") == "vwap"]      # MEAS-31
+    sh_late = [x for x in sh_all if x.get("kind") == "late_wave"]  # MEAS-33
     if sh:
         lines.append(f"\n🌑 قياس الظل — مرفوضو RVol ({len(sh)}) لو دخلناهم:")
 
@@ -1456,6 +1460,26 @@ def format_report(res: BacktestResult) -> str:
         else:
             vv = (f"أدنى من الناجين ({s['win_rate']:.0f}%) — بوّابة VWAP مثبَّتة.")
         lines.append(f"  <i>↳ {vv}</i>")
+    # ── قياس الظل: مرفوضو «حركة متقدّمة» (سقف المطاردة) — يحمي أم يفوّت؟ (MEAS-33)
+    # ثاني أكبر بوّابة قابلة للضبط. الفائتة الحية تُغري بتخفيف السقف (مرفوضون صعدوا
+    # ≥30% بوسيط قمة عالٍ) لكنها عيّنة منحازة للناجين؛ هذا الظلّ يقيس *كل* المرفوضين
+    # (الفائز والمنهار) بالتوقّع المحقّق لا بالقمة — الحكم النزيه لقرار سقف الـ30. ──
+    if sh_late:
+        decl = [x for x in sh_late if x["result"] in ("win", "loss")]
+        wl = (sum(1 for x in decl if x["result"] == "win") / len(decl) * 100.0
+              if decl else None)
+        tail = (f"نجاح افتراضي {wl:.0f}% ({len(decl)} محسومة)"
+                if wl is not None else "بلا محسومة")
+        lines.append(f"\n🌑 قياس الظل — مرفوضو حركة متقدّمة ({len(sh_late)}) "
+                     f"لو دخلناهم: {tail}")
+        if wl is None or len(decl) < 8 or s["win_rate"] is None:
+            vl = "عيّنة الظل غير كافية للحكم بعد."
+        elif wl >= s["win_rate"] - 15:
+            vl = (f"يقارب الناجين ({s['win_rate']:.0f}%) — سقف المطاردة قد يفوّت "
+                  "فرصًا (قرارك بالبيانات).")
+        else:
+            vl = (f"أدنى من الناجين ({s['win_rate']:.0f}%) — سقف المطاردة مثبَّت.")
+        lines.append(f"  <i>↳ {vl}</i>")
     # ── إفصاح: حدود المحاكاة (طبقات تُقيَّم حيًّا فقط + حبيبية الزناد) ──
     # الباكتيست يمسح نفس الاستراتيجية الفنية للحي، لكنه يتخطّى طبقات خارجية
     # لا-حتمية/شبكية (محلّل Claude · الشورت · رادار SEC) وتوقّفات LULD/T12 (لا

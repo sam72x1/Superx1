@@ -1108,6 +1108,57 @@ def test_shadow_eval_records_vwap_rejects():
     assert "مرفوضو VWAP" in backtest.format_report(res)
 
 
+def test_shadow_eval_records_late_wave_rejects():
+    """MEAS-33: مرفوض «حركة متقدّمة» (سقف المطاردة) يُسجَّل في ظلّ منفصل
+    kind=late_wave. رنر +40% عن أمس (≥30 = سقف المطاردة، ودون بارابولِك 120)
+    يُرفض PRE_TA كل دورة → يُحسب الظلّ على آخر رفض (last_snap متوفّر)."""
+
+    class LateBase(MockBase):
+        def grouped_daily(self, date):
+            if date == "2026-06-26":      # اليوم: رنر ~$2.8 (+40% عن 2.0)
+                return [{"T": "LATE", "o": 2.1, "h": 3.0, "l": 2.0, "c": 2.8,
+                         "v": 5e6}]
+            return [{"T": "LATE", "c": 2.0}]     # إغلاق أمس
+
+        def bars_5min(self, t, s, e):
+            if t != "LATE":
+                return []
+            return [Bar(t_ms=_tms(2026, 6, 26, 9, 35), o=2.7, h=2.85, l=2.65,
+                        c=2.8, v=3e5, n=80),
+                    Bar(t_ms=_tms(2026, 6, 26, 10, 0), o=2.8, h=2.95, l=2.75,
+                        c=2.9, v=2e5, n=60)]
+
+        def bars_1min(self, t, s, e):
+            return self.bars_5min(t, s, e)
+
+    # سقف المطاردة الافتراضي 30 → +40% يُرفض بحركة متقدّمة (لا بارابولِك 120)
+    cfg = Config(massive_api_key="x", trigger_change_pct=10.0,
+                 backtest_shadow_rvol=True, entry_change_max_pct=30)
+    res = backtest.run_backtest(cfg, LateBase(), "2026-06-26", "2026-06-26")
+    assert res.funnel["reject_reasons"].get("حركة متقدّمة", 0) >= 1
+    lw = [x for x in res.funnel["shadow"] if x.get("kind") == "late_wave"]
+    assert len(lw) >= 1 and lw[0]["result"] in ("win", "loss", "timeout")
+
+
+def test_shadow_late_wave_report_verdict_data_driven():
+    """MEAS-33: قسم ظلّ «حركة متقدّمة» يعرض الحكم بالتوقّع المحقّق مقابل الناجين
+    — لا اقتراحًا أزليًّا. عيّنة ظلّ خاسرة أدنى من الناجين → «سقف المطاردة مثبَّت»."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8}] * 8
+    res.funnel = backtest.new_funnel()
+    res.funnel["shadow"] = [
+        {"kind": "late_wave", "max_rvol": 0.0, "result": "loss"}] * 10
+    rep = backtest.format_report(res)
+    assert "مرفوضو حركة متقدّمة (10)" in rep
+    assert "سقف المطاردة مثبَّت" in rep
+    # توافق خلفي: القسم لا يظهر حين لا ظلّ late_wave
+    res2 = backtest.BacktestResult(start="x", end="y", days=1)
+    res2.trades = [{"result": "win", "max_gain_pct": 5}] * 3
+    res2.funnel = backtest.new_funnel()
+    res2.funnel["shadow"] = [{"kind": "vwap", "max_rvol": 9.0, "result": "loss"}] * 3
+    assert "مرفوضو حركة متقدّمة" not in backtest.format_report(res2)
+
+
 def test_shadow_vwap_report_verdict_data_driven():
     """MEAS-31: قسم ظلّ VWAP يعرض الحكم بالتوقّع المحقّق مقابل الناجين — لا
     اقتراحًا أزليًّا. عيّنة ظلّ خاسرة أدنى من الناجين → «بوّابة VWAP مثبَّتة»."""
