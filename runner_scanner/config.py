@@ -242,6 +242,12 @@ class Config:
     # قياس الظل: يسجّل لكل سهم مرفوض بـRVol نتيجة افتراضية + أقصى RVol بلغه،
     # لنعرف هل عتبة RVol=5x تفوّت فرصًا (قياس فقط، لا يغيّر أي قرار حيّ).
     backtest_shadow_rvol: bool = True
+    # MEAS-34: أقلّ عدد نتائج **محسومة** (فوز/خسارة) قبل أن يصدر قسم الظل حكمًا
+    # («العتبة مثبَّتة» / «قد تفوّت»). دون ذلك يقول «عيّنة غير كافية».
+    # 8 القديمة كانت متساهلة جدًّا: ادّعاء «فجوة ≥15 نقطة» على 8 نتائج لا يصمد
+    # إحصائيًّا (فاصل ثقة يعبر خطّ القرار، وبضع صفقات تقلب الحكم). 50 حدّ معقول
+    # لادّعاء اتجاهي؛ العيّنة الشهرية تُدمج عبر «/backtest دمج» لبلوغه.
+    backtest_shadow_min_decided: int = 50
     # قياس ظلّ بديل للخروج: بعد بلوغ الهدف1، وقف يتبع القمة بهذه النسبة (%) —
     # لقياس هل يلتقط فجوة «قمة الفائز مقابل خروج الهدف1». معامل **قياس** فقط،
     # لا يُطبَّق على الحيّ ولا يغيّر أي فرز.
@@ -416,6 +422,7 @@ class Config:
             backtest_quick_step=_i("BACKTEST_QUICK_STEP", 2),
             backtest_workers=_i("BACKTEST_WORKERS", 8),
             backtest_shadow_rvol=_b("BACKTEST_SHADOW_RVOL", True),
+            backtest_shadow_min_decided=_i("BACKTEST_SHADOW_MIN_DECIDED", 50),
             backtest_trail_pct=_f("BACKTEST_TRAIL_PCT", 5.0),
             backtest_wide_t1_rr=_f("BACKTEST_WIDE_T1_RR", 0.5),
             backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", False),

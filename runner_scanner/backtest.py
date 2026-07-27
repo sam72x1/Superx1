@@ -578,6 +578,12 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     max_rvol = 0.0          # أقصى RVol بلغه السهم (لقياس الظل عند رفض RVol)
     last_asof = 0
     last_snap = None
+    # MEAS-34: أوّل شمعة رفضتها **كل** بوّابة {خانة: (asof, snap)}. سبب وجوده:
+    # مسار التنبيه يدخل عند **أوّل** شمعة ناجحة، فإن أخذ الظلّ آخر شمعة رفض صار
+    # يقيس سؤالًا آخر (دخول عند ذروة تمدّد اليوم قرب الإغلاق) — تحيّز تشاؤمي
+    # يجعل الظلّ يبدو أسوأ مما هو، ويحرم نافذة النتيجة من شموع فتُحسم timeout
+    # قسرًا. الالتقاط عند أوّل رفض يعيد التناظر مع مسار التنبيه.
+    first_rej: dict[str, tuple[int, object]] = {}
     # كاش الأطر الثابتة (يومي/أسبوعي/شهري) لهذا السهم/اليوم — يُعاد استخدامه عبر
     # شموع المسح المتكرّر بدل إعادة الحساب الثقيل كل شمعة. بلا أثر على النتيجة.
     rcache: dict = {}
@@ -716,8 +722,11 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
             }}
         last_reason = cand.rejected_reason or ""
         last_code = cand.reject_code or ""
+        _bucket = _reject_bucket(last_reason, last_code)
+        # MEAS-34: سجّل أوّل شمعة رفضتها هذه البوّابة (لا تدهسها لاحقًا)
+        first_rej.setdefault(_bucket, (asof, snap))
         # بوّابات لا تتغيّر خلال اليوم (فلوت/نوع/بورصة) → لا فائدة من إعادة الفحص
-        if _reject_bucket(last_reason, last_code) in ("فلوت", "نوع/بورصة"):
+        if _bucket in ("فلوت", "نوع/بورصة"):
             break
     if not evaluated:
         if errored:
@@ -739,38 +748,64 @@ def _eval_candidate(cfg: Config, base: MassiveClient, day: str,
     # «حركة متقدّمة» — ثاني أكبر بوّابة قابلة للضبط وكانت عمياء بلا قياس.)
     shadow = None
     _sh_bucket = _reject_bucket(last_reason, last_code)
-    if (cfg.backtest_shadow_rvol and last_snap is not None
+    # MEAS-34: الدخول عند **أوّل** رفض لهذه البوّابة (تناظر مع «أوّل نجاح» في
+    # مسار التنبيه)، لا عند آخر رفض. الارتداد لآخر رفض لتوافق خلفي فقط.
+    _sh_asof, _sh_snap = first_rej.get(_sh_bucket) or (last_asof, last_snap)
+    # MEAS-34: مرفوض «حركة متقدّمة» فوق حدّ البارابولِك سترفضه بوّابة البارابولِك
+    # أصلًا (ترتيب PRE_TA: entry_change قبل parabolic)، فقياسه لا يجيب على سؤال
+    # «هل أرفع سقف المطاردة؟» — يلوّث السلّة بانفجارات 120–400% لن تُقبل أبدًا.
+    _sh_parabolic = (_sh_bucket == "حركة متقدّمة" and _sh_snap is not None
+                     and _sh_snap.change_pct >= cfg.parabolic_day_change_pct)
+    if (cfg.backtest_shadow_rvol and _sh_snap is not None
+            and not _sh_parabolic
             and _sh_bucket in ("RVol", "سعر فوق الحد", "تحت VWAP",
                                "حركة متقدّمة")):
       # الظل قياس best-effort (§3): فشل شبكة هنا لا يُسقط الرن كاملًا —
       # وقع فعلًا: 400 على مرفوض سقف السعر أسقط الباكتيست التلقائي كله.
       try:
-        closed = [x for x in full5 if x.t_ms <= last_asof]
+        closed = [x for x in full5 if x.t_ms <= _sh_asof]
         closed5 = closed[:-1] if len(closed) > 1 else closed
-        post = [x for x in full5 if x.t_ms > last_asof]
+        post = [x for x in full5 if x.t_ms > _sh_asof]
         # مقاومات يومية مطابقة للخط الفعلي (وإلا أهداف الظل تختلف فيَختلّ حكم
         # «العتبة مثبتة/تستحق الدراسة» المبنيّ عليها). نفس _closed_daily الحي.
         last_dt = datetime.fromtimestamp(
-            last_asof / 1000, tz=timezone.utc).astimezone(ET)
+            _sh_asof / 1000, tz=timezone.utc).astimezone(ET)
         # بداية فعلية لليومي (نافذة الحي 400 يوم): مرفوض «سعر فوق الحد» يُرفض
         # قبل جلب الشموع فالكاش بارد، وبداية فارغة ترجع 400 من الـAPI.
         year_ago = (datetime.strptime(day, "%Y-%m-%d")
                     - timedelta(days=400)).strftime("%Y-%m-%d")
-        daily = AsOfClient(base, day, last_asof, closed, [],
+        daily = AsOfClient(base, day, _sh_asof, closed, [],
                            static_cache).bars_daily(ticker, year_ago, day)
         cdaily = _closed_daily(daily, last_dt)
-        daily_res = daily_resistance_targets(cdaily, last_snap.last_price)
+        daily_res = daily_resistance_targets(cdaily, _sh_snap.last_price)
         # مطابقة الخط الحي: نفس مصادر الأهداف (متوسطات ٢٠/٥٠ + قمم تأرجح)
         ma_levels, daily_peaks = _daily_ma_and_peaks(cdaily)
-        risk = build_risk_plan(cfg, last_snap.last_price, closed5,
+        entry = _sh_snap.last_price
+        risk = build_risk_plan(cfg, entry, closed5,
                                daily_resistances=daily_res,
                                ma_levels=ma_levels, daily_peaks=daily_peaks)
-        sres, _, _, _ = simulate_outcome(last_snap.last_price, risk, post,
-                                         last_asof, cfg.outcome_window_min)
+        sres, _, _, _ = simulate_outcome(entry, risk, post,
+                                         _sh_asof, cfg.outcome_window_min)
         kind = ("price_cap" if _sh_bucket == "سعر فوق الحد"
                 else "vwap" if _sh_bucket == "تحت VWAP"
                 else "late_wave" if _sh_bucket == "حركة متقدّمة" else "rvol")
-        shadow = {"kind": kind, "max_rvol": round(max_rvol, 1), "result": sres}
+        # MEAS-34: النافذة الفعلية المتاحة بالدقائق. شموع اليوم فقط تُجلب
+        # (bars_5min(day, day))، فرفضٌ قرب الإغلاق يُحسم timeout **قسرًا** لا
+        # سلوكًا. تسجيلها يسمح للتقرير باستبعاد المقطوعة من مقام الحكم.
+        avail_min = ((post[-1].t_ms - _sh_asof) / 60000.0 + 5.0) if post else 0.0
+        # MEAS-34: المحقّق (نفس منطق مسار التنبيه) — يتيح الحكم بالتوقّع لا
+        # بنسبة الفوز وحدها: 46% عند 3R تتفوّق على 74% عند 0.8R.
+        tg = risk.targets if risk else []
+        t1p = (tg[0] - entry) / entry * 100.0 if tg and entry else 0.0
+        if sres == "win":
+            sreal = t1p
+        elif sres == "loss" and risk:
+            sreal = (risk.stop_price - entry) / entry * 100.0
+        else:
+            sreal = 0.0
+        shadow = {"kind": kind, "max_rvol": round(max_rvol, 1), "result": sres,
+                  "window_min": round(min(avail_min, cfg.outcome_window_min)),
+                  "realized_pct": round(sreal, 1)}
       except MassiveError as exc:
         # تعذّر ≠ صفر: نفقد قياس ظل سهمٍ واحد ويكمل الباكتيست
         logger.debug("تعذّر قياس ظل %s: %s", ticker, exc)
@@ -968,6 +1003,8 @@ def _run_config(cfg: Config) -> dict:
         "backtest_top_n": cfg.backtest_top_n,
         "backtest_scan_step_bars": cfg.backtest_scan_step_bars,
         "premarket_alerts_enabled": cfg.premarket_alerts_enabled,
+        # MEAS-34: حدّ كفاية عيّنة الظل — يغيّر **الحكم** المعروض، فيدخل البصمة
+        "backtest_shadow_min_decided": cfg.backtest_shadow_min_decided,
     }
 
 
@@ -1391,6 +1428,41 @@ def format_report(res: BacktestResult) -> str:
     sh_pc = [x for x in sh_all if x.get("kind") == "price_cap"]
     sh_vwap = [x for x in sh_all if x.get("kind") == "vwap"]      # MEAS-31
     sh_late = [x for x in sh_all if x.get("kind") == "late_wave"]  # MEAS-33
+    # MEAS-34: حدّ كفاية العيّنة من البصمة (لا رقم سحري)؛ 8 للرنّات القديمة
+    _rc = res.run_config or {}
+    _min_dec = int(_rc.get("backtest_shadow_min_decided") or 8)
+    cfg_window = float(_rc.get("outcome_window_min") or 90.0)
+    _win_rate = s["win_rate"]
+
+    def _sh_stats(recs: list) -> tuple[list, float | None, float | None]:
+        """محسومات الظل + نسبة الفوز + التوقّع المحقّق.
+
+        MEAS-34: تُستبعد السجلات **مقطوعة النافذة** (رُفضت قرب الإغلاق فلم تبقَ
+        شموع تكفي نافذة النتيجة) — حسمها timeout قسريّ لا سلوك سوق، وإبقاؤها
+        في المقام يخفض نسبة الفوز اصطناعيًّا. السجلات القديمة بلا window_min
+        تُعامَل كسليمة (توافق خلفي)."""
+        full = [x for x in recs
+                if x.get("window_min") is None
+                or x["window_min"] >= cfg_window]
+        dec = [x for x in full if x["result"] in ("win", "loss")]
+        if not dec:
+            return dec, None, None
+        wr = sum(1 for x in dec if x["result"] == "win") / len(dec) * 100.0
+        rp = [x.get("realized_pct") for x in full if x.get("realized_pct") is not None]
+        exp = (sum(rp) / len(rp)) if rp else None
+        return dec, wr, exp
+
+    def _sh_verdict(dec: list, wr: float | None, name: str, hold: str) -> str:
+        """حكم موحّد للسلال الأربع: يتطلّب عيّنة كافية **وغير مرقَّبة**."""
+        if wr is None or _win_rate is None:
+            return "عيّنة الظل غير كافية للحكم بعد."
+        if len(dec) < _min_dec:
+            return (f"عيّنة الظل غير كافية للحكم بعد ({len(dec)} محسومة من "
+                    f"{_min_dec} مطلوبة) — ادمج أشهرًا أكثر.")
+        if wr >= _win_rate - 15:
+            return (f"يقارب الناجين ({_win_rate:.0f}%) — {name} قد يفوّت فرصًا "
+                    "(قرارك بالبيانات).")
+        return f"أدنى من الناجين ({_win_rate:.0f}%) — {hold}."
     if sh:
         lines.append(f"\n🌑 قياس الظل — مرفوضو RVol ({len(sh)}) لو دخلناهم:")
 
@@ -1403,83 +1475,61 @@ def format_report(res: BacktestResult) -> str:
             g = groups.get(key)
             if not g:
                 continue
-            dec = [x for x in g if x["result"] in ("win", "loss")]
-            w = (sum(1 for x in dec if x["result"] == "win") / len(dec) * 100.0
-                 if dec else None)
+            dec, w, exp = _sh_stats(g)
             tail = f" · نجاح افتراضي {w:.0f}% ({len(dec)} محسومة)" \
                 if w is not None else " · بلا محسومة"
+            if exp is not None:
+                tail += f" · توقّع {exp:+.1f}%"
             lines.append(f"  • أقصى RVol {key}: {len(g)} سهم{tail}")
         # حكم حيّ من الأرقام (لا اقتراح أزلي): شريحة 3–5x مقابل الناجين الفعليين
-        dec35 = [x for x in (groups.get("3–5x") or [])
-                 if x["result"] in ("win", "loss")]
-        w35 = (sum(1 for x in dec35 if x["result"] == "win")
-               / len(dec35) * 100.0) if dec35 else None
-        if w35 is None or len(dec35) < 8 or s["win_rate"] is None:
-            verdict = "عيّنة الظل غير كافية للحكم بعد."
-        elif w35 >= s["win_rate"] - 15:
-            verdict = (f"شريحة 3–5x ({w35:.0f}%) تقارب الناجين "
-                       f"({s['win_rate']:.0f}%) — خفض RVol يستحق الدراسة "
-                       "(قرارك بالبيانات).")
-        else:
-            verdict = (f"شريحة 3–5x ({w35:.0f}%) أدنى بكثير من الناجين "
-                       f"({s['win_rate']:.0f}%) — عتبة RVol مثبتة؛ لا تُخفَّض.")
-        lines.append(f"  <i>↳ {verdict}</i>")
+        dec35, w35, _ = _sh_stats(groups.get("3–5x") or [])
+        lines.append("  <i>↳ " + _sh_verdict(
+            dec35, w35, "خفض RVol", "عتبة RVol مثبتة؛ لا تُخفَّض") + "</i>")
     # ── قياس الظل: مرفوضو «سقف السعر» ($30) — هل السقف يحمي أم يفوّت؟ ──
     if sh_pc:
-        decp = [x for x in sh_pc if x["result"] in ("win", "loss")]
-        wp = (sum(1 for x in decp if x["result"] == "win") / len(decp) * 100.0
-              if decp else None)
+        decp, wp, expp = _sh_stats(sh_pc)
         tail = (f"نجاح افتراضي {wp:.0f}% ({len(decp)} محسومة)"
                 if wp is not None else "بلا محسومة")
+        if expp is not None:
+            tail += f" · توقّع {expp:+.1f}%"
         lines.append(f"\n🌑 قياس الظل — مرفوضو سقف السعر ({len(sh_pc)}) "
                      f"لو دخلناهم: {tail}")
-        if wp is None or len(decp) < 8 or s["win_rate"] is None:
-            vp = "عيّنة الظل غير كافية للحكم بعد."
-        elif wp >= s["win_rate"] - 15:
-            vp = (f"يقارب الناجين ({s['win_rate']:.0f}%) — سقف السعر قد يفوّت "
-                  "فرصًا (قرارك بالبيانات).")
-        else:
-            vp = (f"أدنى من الناجين ({s['win_rate']:.0f}%) — سقف السعر مثبَّت.")
-        lines.append(f"  <i>↳ {vp}</i>")
+        lines.append("  <i>↳ " + _sh_verdict(
+            decp, wp, "سقف السعر", "سقف السعر مثبَّت") + "</i>")
     # ── قياس الظل: مرفوضو بوّابة VWAP — هل «تحت VWAP» تحمي أم تفوّت؟ (MEAS-31) ──
     # الفائتة الحية (18 يوليو) أظهرت مرفوضي VWAP بوسيط قمة عالٍ لكن نصفهم لمس
     # مسافة الوقف قبلها — القمة تخدع، والظلّ يحسم بالتوقّع المحقّق لا بالقمة.
     if sh_vwap:
-        decv = [x for x in sh_vwap if x["result"] in ("win", "loss")]
-        wv = (sum(1 for x in decv if x["result"] == "win") / len(decv) * 100.0
-              if decv else None)
+        decv, wv, expv = _sh_stats(sh_vwap)
         tail = (f"نجاح افتراضي {wv:.0f}% ({len(decv)} محسومة)"
                 if wv is not None else "بلا محسومة")
+        if expv is not None:
+            tail += f" · توقّع {expv:+.1f}%"
         lines.append(f"\n🌑 قياس الظل — مرفوضو VWAP ({len(sh_vwap)}) "
                      f"لو دخلناهم: {tail}")
-        if wv is None or len(decv) < 8 or s["win_rate"] is None:
-            vv = "عيّنة الظل غير كافية للحكم بعد."
-        elif wv >= s["win_rate"] - 15:
-            vv = (f"يقارب الناجين ({s['win_rate']:.0f}%) — بوّابة VWAP قد تفوّت "
-                  "فرصًا (قرارك بالبيانات).")
-        else:
-            vv = (f"أدنى من الناجين ({s['win_rate']:.0f}%) — بوّابة VWAP مثبَّتة.")
-        lines.append(f"  <i>↳ {vv}</i>")
+        lines.append("  <i>↳ " + _sh_verdict(
+            decv, wv, "بوّابة VWAP", "بوّابة VWAP مثبَّتة") + "</i>")
     # ── قياس الظل: مرفوضو «حركة متقدّمة» (سقف المطاردة) — يحمي أم يفوّت؟ (MEAS-33)
     # ثاني أكبر بوّابة قابلة للضبط. الفائتة الحية تُغري بتخفيف السقف (مرفوضون صعدوا
     # ≥30% بوسيط قمة عالٍ) لكنها عيّنة منحازة للناجين؛ هذا الظلّ يقيس *كل* المرفوضين
-    # (الفائز والمنهار) بالتوقّع المحقّق لا بالقمة — الحكم النزيه لقرار سقف الـ30. ──
+    # (الفائز والمنهار) بالتوقّع المحقّق لا بالقمة — الحكم النزيه لقرار سقف الـ30.
+    # MEAS-34: يستثني ما فوق حدّ البارابولِك (سترفضه بوّابة أخرى مهما رُفع السقف). ──
     if sh_late:
-        decl = [x for x in sh_late if x["result"] in ("win", "loss")]
-        wl = (sum(1 for x in decl if x["result"] == "win") / len(decl) * 100.0
-              if decl else None)
+        decl, wl, expl = _sh_stats(sh_late)
         tail = (f"نجاح افتراضي {wl:.0f}% ({len(decl)} محسومة)"
                 if wl is not None else "بلا محسومة")
+        if expl is not None:
+            tail += f" · توقّع {expl:+.1f}%"
         lines.append(f"\n🌑 قياس الظل — مرفوضو حركة متقدّمة ({len(sh_late)}) "
                      f"لو دخلناهم: {tail}")
-        if wl is None or len(decl) < 8 or s["win_rate"] is None:
-            vl = "عيّنة الظل غير كافية للحكم بعد."
-        elif wl >= s["win_rate"] - 15:
-            vl = (f"يقارب الناجين ({s['win_rate']:.0f}%) — سقف المطاردة قد يفوّت "
-                  "فرصًا (قرارك بالبيانات).")
-        else:
-            vl = (f"أدنى من الناجين ({s['win_rate']:.0f}%) — سقف المطاردة مثبَّت.")
-        lines.append(f"  <i>↳ {vl}</i>")
+        lines.append("  <i>↳ " + _sh_verdict(
+            decl, wl, "سقف المطاردة", "سقف المطاردة مثبَّت") + "</i>")
+        # MEAS-34: كم سجلًّا أُسقط من مقام الحكم لقِصَر نافذته (شفافية القياس)
+        _trunc = sum(1 for x in sh_late if x.get("window_min") is not None
+                     and x["window_min"] < cfg_window)
+        if _trunc:
+            lines.append(f"  <i>↳ استُبعد {_trunc} سجلًّا مقطوع النافذة "
+                         f"(رُفض قرب الإغلاق فلا شموع تكفي {cfg_window:.0f}د).</i>")
     # ── إفصاح: حدود المحاكاة (طبقات تُقيَّم حيًّا فقط + حبيبية الزناد) ──
     # الباكتيست يمسح نفس الاستراتيجية الفنية للحي، لكنه يتخطّى طبقات خارجية
     # لا-حتمية/شبكية (محلّل Claude · الشورت · رادار SEC) وتوقّفات LULD/T12 (لا
