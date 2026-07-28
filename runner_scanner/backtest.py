@@ -1021,6 +1021,8 @@ def _run_config(cfg: Config) -> dict:
         # MEAS-34: حدّ كفاية عيّنة الظل — يغيّر **الحكم** المعروض، فيدخل البصمة
         "backtest_shadow_min_decided": cfg.backtest_shadow_min_decided,
         "backtest_shadow_edge_min_pct": cfg.backtest_shadow_edge_min_pct,
+        "backtest_shadow_match_min_overlap":
+            cfg.backtest_shadow_match_min_overlap,
     }
 
 
@@ -1449,6 +1451,7 @@ def format_report(res: BacktestResult) -> str:
     _min_dec = int(_rc.get("backtest_shadow_min_decided") or 8)
     cfg_window = float(_rc.get("outcome_window_min") or 90.0)
     _edge = float(_rc.get("backtest_shadow_edge_min_pct") or 0.5)
+    _ovl_min = float(_rc.get("backtest_shadow_match_min_overlap") or 0.5)
     _win_rate = s["win_rate"]
 
     def _sh_stats(recs: list) -> tuple[list, float | None, float | None]:
@@ -1482,8 +1485,26 @@ def format_report(res: BacktestResult) -> str:
                 return i
         return len(_BANDS) - 1
 
+    def _overlap(recs: list) -> tuple[list, float]:
+        """MEAS-36: سجلات الظلّ الواقعة داخل **مدى موقع دخول التنبيهات** ونسبتها.
+
+        بوّابة تقصّ على `change_pct` نفسه (سقف المطاردة) لا تترك تنبيهًا واحدًا
+        فوق عتبتها، فالتداخل صفر ويصير «الأساس المطابِق» مقارنةَ ظلٍّ عند
+        30–119% بتنبيهات عند 25–30% (أضعف شريحة) ⇒ الظلّ يبدو متفوّقًا زورًا.
+        البوّابات التي تقصّ على متغيّر آخر (RVol/VWAP/السعر) تداخلها 71–100%."""
+        if not recs or not res.trades:
+            return [], 0.0
+        tcp = [float(t.get("change_pct") or 0.0) for t in res.trades]
+        lo_a, hi_a = min(tcp), max(tcp)
+        have = [x for x in recs if x.get("change_pct") is not None]
+        if not have:
+            return [], 0.0
+        inside = [x for x in have if lo_a <= x["change_pct"] <= hi_a]
+        return inside, len(inside) / len(have)
+
     def _matched_baseline(recs: list) -> float | None:
-        """توقّع التنبيهات مُرجّحًا بتوزيع الظلّ على شرائح موقع الدخول."""
+        """توقّع التنبيهات مُرجّحًا بتوزيع الظلّ على شرائح موقع الدخول.
+        يُحسب على منطقة التداخل فقط (خارجها لا يوجد تنبيه يُقارَن به)."""
         cnt: dict[int, int] = {}
         for x in recs:
             c = x.get("change_pct")
@@ -1513,10 +1534,22 @@ def format_report(res: BacktestResult) -> str:
         if len(dec) < _min_dec:
             return (f"عيّنة الظل غير كافية للحكم بعد ({len(dec)} محسومة من "
                     f"{_min_dec} مطلوبة) — ادمج أشهرًا أكثر.")
-        base = _matched_baseline(recs)
-        if base is None or exp is None:
+        # MEAS-36: قارِن على منطقة التداخل فقط؛ ودونها لا حكم أصلًا.
+        # الترتيب مهمّ: تشغيل قديم (بلا الحقل) يُميَّز عن تداخل قاصر.
+        if not any(x.get("change_pct") is not None for x in recs):
+            return ("سجلات بلا موقع دخول (تشغيل قديم) — أعِد الباكتيست على "
+                    "آخر إصدار للحكم.")
+        inside, frac = _overlap(recs)
+        if frac < _ovl_min:
+            return (f"<b>لا أساس مطابِق</b> — {100 * (1 - frac):.0f}% من الظلّ "
+                    "خارج مدى موقع دخول التنبيهات (البوّابة تقصّ على متغيّر "
+                    "المقارنة نفسه)، فلا تنبيه يُقارَن به. لا حكم.")
+        base = _matched_baseline(inside)
+        _, _, exp_in = _sh_stats(inside)
+        if base is None or exp_in is None:
             return ("بلا أساس مطابِق الموقع (تشغيل قديم) — أعِد الباكتيست على "
                     "آخر إصدار للحكم.")
+        exp = exp_in
         d = exp - base
         head = (f"توقّع {exp:+.1f}% مقابل {base:+.1f}% لتنبيهات نفس موقع الدخول")
         if d < -_edge:
