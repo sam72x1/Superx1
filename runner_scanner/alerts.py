@@ -328,20 +328,35 @@ class TelegramSender:
         except (TypeError, ValueError):
             return 1.0
 
-    def send(self, text: str, _retries: int = 2) -> bool:
+    def send(self, text: str, _retries: int = 2,
+             to_all: bool = False) -> bool:
+        """يرسل للمالك. `to_all=True` يبثّ كذلك للمستقبِلين الإضافيّين.
+
+        البثّ **best-effort (§3)**: فشل مستقبِل إضافي (حظر البوت، لم يضغط
+        /start، معرّف خاطئ) يُسجَّل ولا يؤثّر على القيمة المرجَعة — وإلا صار
+        صديق معطّل يمنع تسجيل تنبيهك أنت. القيمة المرجَعة = نجاح إرسالك."""
         if self.cfg.dry_run:
             logger.info("[DRY_RUN] بطاقة:\n%s", text)
             print(text)
             return True
         # تقسيم الرسائل الطويلة (تيليجرام يرفض ما يتجاوز 4096 → ضياع كامل)
+        chunks = _split_message(text)
         ok = True
-        for chunk in _split_message(text):
+        for chunk in chunks:
             ok = self._send_chunk(chunk, _retries) and ok
+        if to_all:
+            for cid in self.cfg.telegram_extra_chat_ids:
+                for chunk in chunks:
+                    if not self._send_chunk(chunk, _retries, chat_id=cid):
+                        logger.warning(
+                            "تعذّر البثّ إلى %s (هل ضغط /start؟) — يكمل", cid)
+                        break
         return ok
 
-    def _send_chunk(self, text: str, _retries: int = 2) -> bool:
+    def _send_chunk(self, text: str, _retries: int = 2,
+                    chat_id: str | None = None) -> bool:
         payload = {
-            "chat_id": self.cfg.telegram_chat_id, "text": text,
+            "chat_id": chat_id or self.cfg.telegram_chat_id, "text": text,
             "parse_mode": "HTML", "disable_web_page_preview": True,
         }
         for attempt in range(_retries + 1):
