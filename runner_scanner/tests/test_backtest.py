@@ -1318,6 +1318,35 @@ def test_shadow_verdict_uses_position_matched_baseline():
     assert "قد تفوّت" not in rep
 
 
+def test_shadow_no_verdict_when_gate_cuts_on_match_variable():
+    """MEAS-36: بوّابة تقصّ على `change_pct` نفسه (سقف المطاردة) لا تترك تنبيهًا
+    فوق عتبتها ⇒ تداخل صفر مع مدى موقع دخول التنبيهات. حينها «الأساس المطابِق»
+    يقارن ظلًّا عند 30%+ بتنبيهات عند 25–30% (أضعف شريحة) فيبدو الظلّ متفوّقًا
+    زورًا. الصواب: لا حكم."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    # التنبيهات كلها دون 30% (البوّابة تقصّ هناك)، وأضعفها شريحة 25–30
+    res.trades = ([{"result": "win", "realized_pct": 5.0, "max_gain_pct": 8,
+                    "change_pct": 14.0}] * 10
+                  + [{"result": "loss", "realized_pct": -7.0, "max_gain_pct": 1,
+                      "change_pct": 27.0}] * 10)
+    res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8,
+                      "backtest_shadow_edge_min_pct": 0.5,
+                      "backtest_shadow_match_min_overlap": 0.5}
+    # 6 داخل مدى التنبيهات و14 خارجه ⇒ تداخل 30% دون عتبة 50% ⇒ لا حكم.
+    # (لو حُسب الحكم على الستة وحدها لظهر «قد يفوّت» زورًا: +1.0% مقابل −7.0%.)
+    res.funnel["shadow"] = (
+        [{"kind": "late_wave", "max_rvol": 0.0, "result": "win",
+          "window_min": 90, "realized_pct": 1.0, "change_pct": 27.0}] * 6
+        + [{"kind": "late_wave", "max_rvol": 0.0, "result": "win",
+            "window_min": 90, "realized_pct": 1.0, "change_pct": 45.0}] * 14)
+    rep = backtest.format_report(res)
+    assert "خارج مدى موقع دخول التنبيهات" in rep
+    assert "قد يفوّت" not in rep          # الحكم الكاذب لا يظهر
+    assert "مثبَّت" not in rep
+
+
 def test_shadow_verdict_third_state_inconclusive():
     """MEAS-35: الحالة الثالثة «غير حاسم» — فارق داخل الضجيج لا يبرّر حكمًا.
     كانت غائبة، فصنّف القياسُ فوارقَ ضئيلة على أنها «تفوّت فرصًا» ودفع لقرار خاطئ."""
