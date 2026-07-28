@@ -138,7 +138,8 @@ class Scanner:
                              if self.cfg.missed_alert_enabled else 1e9),
             volume_map=volume_map, stop_dist_pct=self.cfg.stop_fixed_pct)
         for ev in events:
-            if not self.telegram.send(build_followup(self.cfg, ev)):
+            if not self.telegram.send(build_followup(self.cfg, ev),
+                                      to_all=True):
                 logger.warning("فشل إرسال حدث متابعة محسوم في DB (قد يُفقد): %s %s",
                                ev.get("ticker"), ev.get("type"))
             # 🔍 تشريح لحظي عند كسر الوقف: لماذا فشل السهم؟
@@ -146,7 +147,7 @@ class Scanner:
                 row = self.store.fetch_row(ev["ticker"], et_date)
                 if row is not None:
                     self.telegram.send(postmortem.build_failure_message(
-                        self.cfg, row, client=self.claude))
+                        self.cfg, row, client=self.claude), to_all=True)
         if events:
             logger.info("أُرسل %d تحديث متابعة", len(events))
 
@@ -200,7 +201,7 @@ class Scanner:
         # ترتيب الأولوية ثم الإرسال
         sent = 0
         for cand in prioritize(accepted):
-            if self.telegram.send(build_card(self.cfg, cand)):
+            if self.telegram.send(build_card(self.cfg, cand), to_all=True):
                 # BUG-32: ثبّت لقطة البطاقة (دخول/وقف/أهداف) أساسًا لقياس النتيجة
                 # كي لا تُقاس من سعر أول رصد سابق (يُطلق hit_stop زائفًا).
                 rp = cand.risk

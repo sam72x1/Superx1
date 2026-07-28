@@ -75,6 +75,12 @@ class Config:
     http_max_retries: int = 3
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+    # مستقبِلون إضافيّون للبطاقات والمتابعة (أصدقاء/شركاء)، مفصولون بفواصل.
+    # **إرسال فقط، بلا أي تحكّم**: أوامر البوت مقيّدة بـtelegram_chat_id في
+    # telegram_bot.py، فمن هنا لا يستطيع تشغيل /backtest ولا /ask (رصيد
+    # Anthropic) ولا تحكّم Render. ولا تصلهم تقارير التطوير ولا ملفات
+    # الباكتيست ولا ردود أوامرك — البطاقات والمتابعة والتشريح فقط.
+    telegram_extra_chat_ids: tuple[str, ...] = ()
 
     # ── التخزين ────────────────────────────────────────────────────
     # لازم يكون على قرص دائم في Render (منع تكرار التنبيه عبر إعادة النشر).
@@ -357,6 +363,9 @@ class Config:
             http_max_retries=_i("HTTP_MAX_RETRIES", 3),
             telegram_bot_token=_s("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=_s("TELEGRAM_CHAT_ID", ""),
+            telegram_extra_chat_ids=tuple(
+                c.strip() for c in _s("TELEGRAM_EXTRA_CHAT_IDS", "").split(",")
+                if c.strip()),
             db_path=_s("DB_PATH", "/var/data/runner_scanner.sqlite3"),
             poll_interval_sec=_i("POLL_INTERVAL_SEC", 45),
             keepalive_port=_i("KEEPALIVE_PORT", 10000),
