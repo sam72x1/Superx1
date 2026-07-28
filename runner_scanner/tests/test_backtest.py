@@ -1209,17 +1209,18 @@ def test_shadow_report_excludes_truncated_window_records():
     """MEAS-34: السجلات مقطوعة النافذة (رُفضت قرب الإغلاق) حسمها timeout قسريّ
     لا سلوك سوق — تُستبعد من مقام الحكم ويُفصح عن عددها."""
     res = backtest.BacktestResult(start="x", end="y", days=1)
-    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8}] * 8
+    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8,
+                   "change_pct": 22.0}] * 8
     res.funnel = backtest.new_funnel()
     res.run_config = {"outcome_window_min": 90.0,
                       "backtest_shadow_min_decided": 8}
     res.funnel["shadow"] = (
         # 10 سليمة النافذة وخاسرة ⇒ الحكم يُبنى عليها
         [{"kind": "late_wave", "max_rvol": 0.0, "result": "loss",
-          "window_min": 90, "realized_pct": -7.0}] * 10
+          "window_min": 90, "realized_pct": -7.0, "change_pct": 22.0}] * 10
         # 5 مقطوعة (timeout قسري) ⇒ تُستبعد من المقام
         + [{"kind": "late_wave", "max_rvol": 0.0, "result": "timeout",
-            "window_min": 10, "realized_pct": 0.0}] * 5)
+            "window_min": 10, "realized_pct": 0.0, "change_pct": 22.0}] * 5)
     rep = backtest.format_report(res)
     assert "مرفوضو حركة متقدّمة (15)" in rep      # الإجمالي يعرض الكل
     assert "(10 محسومة)" in rep                    # المقام بلا المقطوعة
@@ -1232,13 +1233,15 @@ def test_shadow_verdict_requires_configured_sample_size():
     «غير كافية» مهما بلغ الفارق — يمنع ادّعاء فجوة على بضع نتائج."""
     def _mk(min_dec):
         r = backtest.BacktestResult(start="x", end="y", days=1)
-        r.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8}] * 8
+        r.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8,
+                     "change_pct": 22.0}] * 8
         r.funnel = backtest.new_funnel()
         r.run_config = {"outcome_window_min": 90.0,
                         "backtest_shadow_min_decided": min_dec}
         r.funnel["shadow"] = [{"kind": "late_wave", "max_rvol": 0.0,
                                "result": "loss", "window_min": 90,
-                               "realized_pct": -7.0}] * 10
+                               "realized_pct": -7.0,
+                               "change_pct": 22.0}] * 10
         return backtest.format_report(r)
     # 10 محسومة دون حدّ 50 ⇒ لا حكم
     strict = _mk(50)
@@ -1248,14 +1251,102 @@ def test_shadow_verdict_requires_configured_sample_size():
     assert "سقف المطاردة مثبَّت" in _mk(8)
 
 
+def test_shadow_rvol_bucket_has_upper_bound():
+    """MEAS-35 (بق): «3–5x» كانت بلا سقف أعلى — كل ما ≥3x يقع فيها، حتى عشرات
+    الآلاف من الأضعاف. على بيانات حقيقية كان 81.9% من الشريحة المعروضة **فوق**
+    العتبة محلّ الدراسة، والحكم يُبنى عليها."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8,
+                   "change_pct": 22.0}] * 8
+    res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8}
+    res.funnel["shadow"] = (
+        [{"kind": "rvol", "max_rvol": 4.0, "rvol_at_entry": 4.0,
+          "result": "loss", "window_min": 90, "realized_pct": -7.0,
+          "change_pct": 22.0}] * 9
+        # سجل ضخم: يجب ألّا يقع في «3–5x»
+        + [{"kind": "rvol", "max_rvol": 9000.0, "rvol_at_entry": 9000.0,
+            "result": "win", "window_min": 90, "realized_pct": 9.0,
+            "change_pct": 22.0}])
+    rep = backtest.format_report(res)
+    assert "أقصى RVol 3–5x: 9 سهم" in rep      # التسعة فقط
+    assert "10x فأكثر: 1 سهم" in rep           # الضخم في سلّته
+
+
+def test_shadow_buckets_by_entry_rvol_not_day_max():
+    """MEAS-35 (§8 تسرّب مستقبل): التصنيف بـrvol_at_entry (لحظة القرار) لا
+    max_rvol المتراكم حتى الإغلاق — وإلا عرف متغيّرُ التقسيم ما بعد الدخول."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8,
+                   "change_pct": 22.0}] * 8
+    res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8}
+    # عند الدخول 1.5x (شريحة «أقل من 2x») لكنه بلغ 400x لاحقًا في اليوم
+    res.funnel["shadow"] = [{"kind": "rvol", "max_rvol": 400.0,
+                             "rvol_at_entry": 1.5, "result": "loss",
+                             "window_min": 90, "realized_pct": -7.0,
+                             "change_pct": 22.0}] * 9
+    rep = backtest.format_report(res)
+    assert "أقل من 2x: 9 سهم" in rep
+    assert "10x فأكثر" not in rep
+
+
+def test_shadow_verdict_uses_position_matched_baseline():
+    """MEAS-35: الحكم بالتوقّع مقابل تنبيهات **نفس شريحة موقع الدخول** لا
+    المتوسط العام. الظلّ يدخل أبكر في الموجة، والدخول المبكّر أربح بنيويًّا،
+    فمقارنته بالمتوسط تحابيه وتنتج «قد يفوّت» كاذبة."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    # تنبيهات مبكّرة رابحة جدًّا + متأخّرة ضعيفة ⇒ المتوسط العام مضلّل
+    res.trades = ([{"result": "win", "realized_pct": 8.0, "max_gain_pct": 10,
+                    "change_pct": 12.0}] * 10
+                  + [{"result": "loss", "realized_pct": -7.0, "max_gain_pct": 1,
+                      "change_pct": 27.0}] * 10)
+    res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8,
+                      "backtest_shadow_edge_min_pct": 0.5}
+    # ظلّ كله مبكّر (12%): توقّع +4% — فوق المتوسط العام (+0.5%) لكن **دون**
+    # أساسه المطابِق (+8%) ⇒ الحكم الصحيح «مثبَّتة» لا «قد يفوّت».
+    res.funnel["shadow"] = [{"kind": "vwap", "max_rvol": 9.0, "result": "win",
+                             "window_min": 90, "realized_pct": 4.0,
+                             "change_pct": 12.0}] * 10
+    rep = backtest.format_report(res)
+    assert "لتنبيهات نفس موقع الدخول" in rep
+    assert "بوّابة VWAP مثبَّتة" in rep
+    assert "قد تفوّت" not in rep
+
+
+def test_shadow_verdict_third_state_inconclusive():
+    """MEAS-35: الحالة الثالثة «غير حاسم» — فارق داخل الضجيج لا يبرّر حكمًا.
+    كانت غائبة، فصنّف القياسُ فوارقَ ضئيلة على أنها «تفوّت فرصًا» ودفع لقرار خاطئ."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    res.trades = [{"result": "win", "realized_pct": 3.0, "max_gain_pct": 8,
+                   "change_pct": 22.0}] * 10
+    res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8,
+                      "backtest_shadow_edge_min_pct": 0.5}
+    # توقّع الظل 2.8% مقابل أساس 3.0% ⇒ فرق −0.2% داخل عتبة 0.5 ⇒ غير حاسم
+    res.funnel["shadow"] = [{"kind": "vwap", "max_rvol": 9.0, "result": "win",
+                             "window_min": 90, "realized_pct": 2.8,
+                             "change_pct": 22.0}] * 10
+    rep = backtest.format_report(res)
+    assert "غير حاسم" in rep and "لا تغيّر العتبة" in rep
+    assert "مثبَّتة" not in rep and "قد تفوّت" not in rep
+
+
 def test_shadow_late_wave_report_verdict_data_driven():
     """MEAS-33: قسم ظلّ «حركة متقدّمة» يعرض الحكم بالتوقّع المحقّق مقابل الناجين
     — لا اقتراحًا أزليًّا. عيّنة ظلّ خاسرة أدنى من الناجين → «سقف المطاردة مثبَّت»."""
     res = backtest.BacktestResult(start="x", end="y", days=1)
-    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8}] * 8
+    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8,
+                   "change_pct": 22.0}] * 8
     res.funnel = backtest.new_funnel()
     res.funnel["shadow"] = [
-        {"kind": "late_wave", "max_rvol": 0.0, "result": "loss"}] * 10
+        {"kind": "late_wave", "max_rvol": 0.0, "result": "loss",
+         "realized_pct": -7.0, "change_pct": 22.0}] * 10
     rep = backtest.format_report(res)
     assert "مرفوضو حركة متقدّمة (10)" in rep
     assert "سقف المطاردة مثبَّت" in rep
@@ -1271,9 +1362,11 @@ def test_shadow_vwap_report_verdict_data_driven():
     """MEAS-31: قسم ظلّ VWAP يعرض الحكم بالتوقّع المحقّق مقابل الناجين — لا
     اقتراحًا أزليًّا. عيّنة ظلّ خاسرة أدنى من الناجين → «بوّابة VWAP مثبَّتة»."""
     res = backtest.BacktestResult(start="x", end="y", days=1)
-    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8}] * 8
+    res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8,
+                   "change_pct": 22.0}] * 8
     res.funnel = backtest.new_funnel()
-    res.funnel["shadow"] = [{"kind": "vwap", "max_rvol": 9.0, "result": "loss"}] * 10
+    res.funnel["shadow"] = [{"kind": "vwap", "max_rvol": 9.0, "result": "loss",
+                             "realized_pct": -7.0, "change_pct": 22.0}] * 10
     rep = backtest.format_report(res)
     assert "مرفوضو VWAP (10)" in rep
     assert "بوّابة VWAP مثبَّتة" in rep
@@ -1381,10 +1474,13 @@ def test_shadow_verdict_is_data_driven():
     """حكم الظل يُحسب من الأرقام: شريحة 3–5x خاسرة → «مثبتة؛ لا تُخفَّض»،
     وعيّنة صغيرة → «غير كافية» (لا اقتراح خفض أزلي)."""
     res = backtest.BacktestResult(start="x", end="y", days=1)
-    res.trades = [{"result": "win", "max_gain_pct": 10}] * 8 + \
-                 [{"result": "loss", "max_gain_pct": 1}] * 2      # أساس 80%
+    res.trades = [{"result": "win", "max_gain_pct": 10, "realized_pct": 6.0,
+                   "change_pct": 22.0}] * 8 + \
+                 [{"result": "loss", "max_gain_pct": 1, "realized_pct": -7.0,
+                   "change_pct": 22.0}] * 2      # أساس 80% · توقّع +3.4%
     res.funnel = backtest.new_funnel()
-    res.funnel["shadow"] = [{"max_rvol": 4.0, "result": "loss"}] * 10
+    res.funnel["shadow"] = [{"max_rvol": 4.0, "result": "loss",
+                             "realized_pct": -7.0, "change_pct": 22.0}] * 10
     rep = backtest.format_report(res)
     assert "مثبتة؛ لا تُخفَّض" in rep
     # عيّنة ظل صغيرة (3 محسومة فقط) → لا حكم

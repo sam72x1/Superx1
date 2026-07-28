@@ -248,6 +248,12 @@ class Config:
     # إحصائيًّا (فاصل ثقة يعبر خطّ القرار، وبضع صفقات تقلب الحكم). 50 حدّ معقول
     # لادّعاء اتجاهي؛ العيّنة الشهرية تُدمج عبر «/backtest دمج» لبلوغه.
     backtest_shadow_min_decided: int = 50
+    # MEAS-35: أدنى فارق توقّع (نقطة مئوية/صفقة) بين الظلّ و**أساس مطابِق الموقع**
+    # قبل إصدار حكم. دونه ⇒ «غير حاسم». سببه: الحكم القديم كان بنسبة الفوز بفارق
+    # 15 نقطة، فقَبِل سلّة توقّعها أدنى بـ0.7% فقط وسمّاها «تفوّت فرصًا» — دفعٌ
+    # لقرار خاطئ. المقارنة الصحيحة بالتوقّع مقابل تنبيهات **نفس شريحة صعود
+    # الدخول** (الظلّ يدخل أبكر في الموجة، والدخول المبكّر أربح بنيويًّا).
+    backtest_shadow_edge_min_pct: float = 0.5
     # قياس ظلّ بديل للخروج: بعد بلوغ الهدف1، وقف يتبع القمة بهذه النسبة (%) —
     # لقياس هل يلتقط فجوة «قمة الفائز مقابل خروج الهدف1». معامل **قياس** فقط،
     # لا يُطبَّق على الحيّ ولا يغيّر أي فرز.
@@ -423,6 +429,7 @@ class Config:
             backtest_workers=_i("BACKTEST_WORKERS", 8),
             backtest_shadow_rvol=_b("BACKTEST_SHADOW_RVOL", True),
             backtest_shadow_min_decided=_i("BACKTEST_SHADOW_MIN_DECIDED", 50),
+            backtest_shadow_edge_min_pct=_f("BACKTEST_SHADOW_EDGE_MIN_PCT", 0.5),
             backtest_trail_pct=_f("BACKTEST_TRAIL_PCT", 5.0),
             backtest_wide_t1_rr=_f("BACKTEST_WIDE_T1_RR", 0.5),
             backtest_grid_enabled=_b("BACKTEST_GRID_ENABLED", False),
