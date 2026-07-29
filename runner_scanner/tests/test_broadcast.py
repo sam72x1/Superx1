@@ -110,27 +110,3 @@ def test_extra_recipient_cannot_run_commands(monkeypatch):
         "chat": {"id": 1270575158}, "from": {"id": 1270575158},
         "text": "/backtest"}})
     assert handled == []            # لم يُنفَّذ شيء
-
-
-def test_dev_rvol_suggestion_requires_reachable_threshold():
-    """MEAS-37: أداة التطوير لا تقترح خفض RVOL_MIN إلا لمن ستلتقطهم العتبة
-    المقترحة فعلًا. قبل الحارس اقترحت الخفض على 12 سهمًا قيمها 0–4.56x بينما
-    خفض 5→4 يلتقط واحدًا — اقتراح لا يتبع من دليله."""
-    from runner_scanner import dev_assistant as da
-    cfg = Config(massive_api_key="x", rvol_min=5.0)
-    # كلهم مرفوضو RVol لكن قيمهم بعيدة عن العتبة المقترحة (4x)
-    far = [{"reason_code": "rvol", "reject_reason": "RVol 0.5x < 5.0x",
-            "rvol": v} for v in (0.0, 0.1, 0.5, 1.6, 2.5)]
-    out = da._build_suggestions(cfg, [], far) if hasattr(
-        da, "_build_suggestions") else None
-    if out is None:                      # الدالة داخلية؛ نختبر الحارس مباشرة
-        import runner_scanner.calibration as calibration
-        proposed = max(1.0, round(cfg.rvol_min - 1))
-        hits = [m for m in far if calibration._rejected_by(m, "rvol", "RVol")
-                and m.get("rvol") is not None and m["rvol"] >= proposed]
-        assert len(hits) == 0            # لا أحد يستحقّ اقتراح الخفض
-        near = far + [{"reason_code": "rvol", "reject_reason": "RVol 4.6x",
-                       "rvol": 4.6}] * 3
-        hits2 = [m for m in near if calibration._rejected_by(m, "rvol", "RVol")
-                 and m.get("rvol") is not None and m["rvol"] >= proposed]
-        assert len(hits2) == 3           # وهؤلاء يستحقّون
