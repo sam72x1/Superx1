@@ -28,6 +28,7 @@ import glob
 import json
 import logging
 import os
+import random
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -1184,6 +1185,11 @@ def _bucket_stats(trades: list[dict], keyfn) -> list[tuple]:
     return sorted(out, key=lambda x: -(x[2] or -1))
 
 
+# MEAS-37: عدد معاينات فاصل الثقة في أحكام الظل. ليس عتبة استراتيجية
+# (لا يغيّر ما يقبله البوت) — دقّة إحصائية فقط؛ 2000 تكفي لفاصل 95%.
+_BOOT_N = 2000
+
+
 def format_report(res: BacktestResult) -> str:
     s = res.stats()
     wr = f"{s['win_rate']:.0f}%" if s["win_rate"] is not None else "—"
@@ -1448,7 +1454,7 @@ def format_report(res: BacktestResult) -> str:
     sh_late = [x for x in sh_all if x.get("kind") == "late_wave"]  # MEAS-33
     # MEAS-34: حدّ كفاية العيّنة من البصمة (لا رقم سحري)؛ 8 للرنّات القديمة
     _rc = res.run_config or {}
-    _min_dec = int(_rc.get("backtest_shadow_min_decided") or 8)
+    _min_dec = int(_rc.get("backtest_shadow_min_decided") or 50)
     cfg_window = float(_rc.get("outcome_window_min") or 90.0)
     _edge = float(_rc.get("backtest_shadow_edge_min_pct") or 0.5)
     _ovl_min = float(_rc.get("backtest_shadow_match_min_overlap") or 0.5)
@@ -1494,13 +1500,58 @@ def format_report(res: BacktestResult) -> str:
         البوّابات التي تقصّ على متغيّر آخر (RVol/VWAP/السعر) تداخلها 71–100%."""
         if not recs or not res.trades:
             return [], 0.0
-        tcp = [float(t.get("change_pct") or 0.0) for t in res.trades]
+        # MEAS-37: تجاهل التنبيهات بلا موقع دخول بدل حشوها بصفر — الصفر كان
+        # يمدّ مدى المقارنة إلى 0% فيُبطل حارس التداخل صامتًا.
+        tcp = [float(t["change_pct"]) for t in res.trades
+               if t.get("change_pct") is not None]
+        if not tcp:
+            return [], 0.0
         lo_a, hi_a = min(tcp), max(tcp)
         have = [x for x in recs if x.get("change_pct") is not None]
         if not have:
             return [], 0.0
         inside = [x for x in have if lo_a <= x["change_pct"] <= hi_a]
         return inside, len(inside) / len(have)
+
+    def _boot_ci(inside: list) -> tuple[float | None, float | None]:
+        """MEAS-37: فاصل ثقة 95% لفرق التوقّع (ظلّ − أساس مطابِق) بالمعاينة.
+
+        يعاين **الذراعين**: سجلات الظلّ **و** التنبيهات — لأن الأساس مقدَّر من
+        عيّنة صغيرة (21–36 صفقة/شريحة)، وإهمال عدم يقينه يضيّق الفاصل زورًا.
+        بذرة ثابتة كي يبقى التقرير قابلًا لإعادة الإنتاج (نفس المدخل = نفس
+        المخرج)."""
+        trades = [t for t in res.trades if t.get("change_pct") is not None]
+        if len(inside) < 2 or len(trades) < 2:
+            return None, None
+        rnd = random.Random(20260729)
+
+        def _one(sh: list, tr: list) -> float | None:
+            bmap: dict[int, float] = {}
+            for i in range(len(_BANDS)):
+                g = [float(t.get("realized_pct") or 0.0) for t in tr
+                     if _band(float(t["change_pct"])) == i]
+                if g:
+                    bmap[i] = sum(g) / len(g)
+            cnt: dict[int, int] = {}
+            for x in sh:
+                cnt[_band(x["change_pct"])] = cnt.get(_band(x["change_pct"]), 0) + 1
+            tot = sum(cnt.values())
+            if not tot:
+                return None
+            e = sum(x["realized_pct"] for x in sh) / len(sh)
+            return e - sum(bmap.get(i, 0.0) * n for i, n in cnt.items()) / tot
+
+        out = []
+        for _ in range(_BOOT_N):
+            s = [inside[rnd.randrange(len(inside))] for _ in inside]
+            t = [trades[rnd.randrange(len(trades))] for _ in trades]
+            v = _one(s, t)
+            if v is not None:
+                out.append(v)
+        if len(out) < _BOOT_N // 2:
+            return None, None
+        out.sort()
+        return out[int(0.025 * len(out))], out[int(0.975 * len(out))]
 
     def _matched_baseline(recs: list) -> float | None:
         """توقّع التنبيهات مُرجّحًا بتوزيع الظلّ على شرائح موقع الدخول.
@@ -1531,11 +1582,9 @@ def format_report(res: BacktestResult) -> str:
         كانت غائبة، فصنّف القياسُ فوارقَ 0.7% على أنها «تفوّت فرصًا»."""
         if wr is None or _win_rate is None:
             return "عيّنة الظل غير كافية للحكم بعد."
-        if len(dec) < _min_dec:
-            return (f"عيّنة الظل غير كافية للحكم بعد ({len(dec)} محسومة من "
-                    f"{_min_dec} مطلوبة) — ادمج أشهرًا أكثر.")
         # MEAS-36: قارِن على منطقة التداخل فقط؛ ودونها لا حكم أصلًا.
-        # الترتيب مهمّ: تشغيل قديم (بلا الحقل) يُميَّز عن تداخل قاصر.
+        # الترتيب مهمّ: تشغيل قديم (بلا الحقل) يُميَّز عن تداخل قاصر، وكلاهما
+        # يسبق فحص الكفاية — «لا مجموعة مقارنة» أدقّ من «العيّنة صغيرة».
         if not any(x.get("change_pct") is not None for x in recs):
             return ("سجلات بلا موقع دخول (تشغيل قديم) — أعِد الباكتيست على "
                     "آخر إصدار للحكم.")
@@ -1544,6 +1593,11 @@ def format_report(res: BacktestResult) -> str:
             return (f"<b>لا أساس مطابِق</b> — {100 * (1 - frac):.0f}% من الظلّ "
                     "خارج مدى موقع دخول التنبيهات (البوّابة تقصّ على متغيّر "
                     "المقارنة نفسه)، فلا تنبيه يُقارَن به. لا حكم.")
+        # MEAS-37: الكفاية تُقاس على **منطقة التداخل** (وحدها تدخل الحكم)
+        _dec_in = [x for x in inside if x["result"] in ("win", "loss")]
+        if len(_dec_in) < _min_dec:
+            return (f"عيّنة الظل غير كافية للحكم بعد ({len(_dec_in)} محسومة "
+                    f"داخل مدى المقارنة من {_min_dec} مطلوبة) — ادمج أشهرًا.")
         base = _matched_baseline(inside)
         _, _, exp_in = _sh_stats(inside)
         if base is None or exp_in is None:
@@ -1552,11 +1606,20 @@ def format_report(res: BacktestResult) -> str:
         exp = exp_in
         d = exp - base
         head = (f"توقّع {exp:+.1f}% مقابل {base:+.1f}% لتنبيهات نفس موقع الدخول")
-        if d < -_edge:
-            return f"{head} ⇒ {hold}."
-        if d > _edge:
-            return (f"{head} ⇒ {name} قد يفوّت فرصًا (قرارك بالبيانات).")
-        return (f"{head} (فرق {d:+.1f}%) ⇒ <b>غير حاسم</b> — لا تغيّر العتبة.")
+        # MEAS-37: الحكم بفاصل ثقة لا بعتبة ثابتة. العتبة الثابتة (0.5%) لا
+        # علاقة لها بحجم العيّنة، وقد أنتجت حكمًا خاطئًا فعلًا: «سقف السعر
+        # مثبَّتة» على فرق −1.00% بينما فاصله [−2.35 , +0.40] يعبر الصفر.
+        # المعاينة تشمل **الذراعين**: الأساس نفسه مقدَّر من 21–36 صفقة لكل
+        # شريحة، فإهمال عدم يقينه يضيّق الفاصل زورًا ويقلب الحكم.
+        ci_lo, ci_hi = _boot_ci(inside)
+        if ci_hi is None:
+            return f"{head} (فرق {d:+.1f}%) ⇒ <b>غير حاسم</b> — لا تغيّر العتبة."
+        rng = f"فاصل ثقة 95% [{ci_lo:+.1f} , {ci_hi:+.1f}]"
+        if ci_hi < 0:
+            return f"{head} · {rng} ⇒ {hold}."
+        if ci_lo > 0:
+            return f"{head} · {rng} ⇒ {name} قد يفوّت فرصًا (قرارك بالبيانات)."
+        return (f"{head} · {rng} يعبر الصفر ⇒ <b>غير حاسم</b> — لا تغيّر العتبة.")
     if sh:
         lines.append(f"\n🌑 قياس الظل — مرفوضو RVol ({len(sh)}) لو دخلناهم:")
 

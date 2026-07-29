@@ -292,11 +292,18 @@ def build_dev_report(store, cfg: Config, now: datetime | None = None) -> str:
                     "فكّر برفع وزن الخبر في الدرجة أو جعله بوّابة.")
 
     # فرص فائتة بسبب RVol → خفّض RVOL_MIN (كود ثابت DEBT-13، وارتداد للنصّ)
+    # MEAS-37: نعدّ **القابلين للالتقاط بالعتبة المقترحة فقط** — نفس حارس
+    # calibration.py الذي كان غائبًا هنا. بدونه اقترحت الأداة خفض RVol على 12
+    # سهمًا قيمها الفعلية 0–4.56x؛ خفض 5→4 يلتقط **واحدًا** منها فقط. اقتراحٌ
+    # لا يتبع من دليله. وrvol مجهول يُستبعد: لا نبني اقتراحًا على قيمة نجهلها.
+    proposed_rv = max(1.0, round(cfg.rvol_min - 1))
     rvol_missed = [m for m in missed
-                   if calibration._rejected_by(m, "rvol", "RVol")]
+                   if calibration._rejected_by(m, "rvol", "RVol")
+                   and m["rvol"] is not None and m["rvol"] >= proposed_rv]
     if len(rvol_missed) >= 3:
-        sugg.append(f"   • {len(rvol_missed)} سهم فاتنا بسبب بوّابة RVol — "
-                    f"فكّر بخفض RVOL_MIN (حاليًا {cfg.rvol_min:g}x).")
+        sugg.append(f"   • {len(rvol_missed)} سهم فاتنا كانت العتبة المقترحة "
+                    f"{proposed_rv:g}x ستلتقطهم — فكّر بخفض RVOL_MIN "
+                    f"(حاليًا {cfg.rvol_min:g}x).")
 
     # فرص فائتة بسبب الفلوت → ارفع FLOAT_MAX
     float_missed = [m for m in missed
