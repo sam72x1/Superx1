@@ -1245,7 +1245,7 @@ def test_shadow_verdict_requires_configured_sample_size():
         return backtest.format_report(r)
     # 10 محسومة دون حدّ 50 ⇒ لا حكم
     strict = _mk(50)
-    assert "غير كافية للحكم بعد (10 محسومة من 50 مطلوبة)" in strict
+    assert "غير كافية للحكم بعد (10 محسومة داخل مدى المقارنة" in strict
     assert "سقف المطاردة مثبَّت" not in strict
     # نفس العيّنة فوق حدّ 8 ⇒ حكم
     assert "سقف المطاردة مثبَّت" in _mk(8)
@@ -1351,16 +1351,18 @@ def test_shadow_verdict_third_state_inconclusive():
     """MEAS-35: الحالة الثالثة «غير حاسم» — فارق داخل الضجيج لا يبرّر حكمًا.
     كانت غائبة، فصنّف القياسُ فوارقَ ضئيلة على أنها «تفوّت فرصًا» ودفع لقرار خاطئ."""
     res = backtest.BacktestResult(start="x", end="y", days=1)
-    res.trades = [{"result": "win", "realized_pct": 3.0, "max_gain_pct": 8,
-                   "change_pct": 22.0}] * 10
+    res.trades = [{"result": r, "realized_pct": v, "max_gain_pct": 8,
+                   "change_pct": 22.0}
+                  for r, v in [("win", 12.0), ("loss", -7.0)] * 5]
     res.funnel = backtest.new_funnel()
     res.run_config = {"outcome_window_min": 90.0,
                       "backtest_shadow_min_decided": 8,
                       "backtest_shadow_edge_min_pct": 0.5}
-    # توقّع الظل 2.8% مقابل أساس 3.0% ⇒ فرق −0.2% داخل عتبة 0.5 ⇒ غير حاسم
-    res.funnel["shadow"] = [{"kind": "vwap", "max_rvol": 9.0, "result": "win",
-                             "window_min": 90, "realized_pct": 2.8,
-                             "change_pct": 22.0}] * 10
+    # فرق ضئيل + تشتّت واسع ⇒ فاصل الثقة يعبر الصفر ⇒ غير حاسم
+    res.funnel["shadow"] = [
+        {"kind": "vwap", "max_rvol": 9.0, "result": r, "window_min": 90,
+         "realized_pct": v, "change_pct": 22.0}
+        for r, v in [("win", 12.0), ("loss", -7.0)] * 5]
     rep = backtest.format_report(res)
     assert "غير حاسم" in rep and "لا تغيّر العتبة" in rep
     assert "مثبَّتة" not in rep and "قد تفوّت" not in rep
@@ -1373,6 +1375,8 @@ def test_shadow_late_wave_report_verdict_data_driven():
     res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8,
                    "change_pct": 22.0}] * 8
     res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8}
     res.funnel["shadow"] = [
         {"kind": "late_wave", "max_rvol": 0.0, "result": "loss",
          "realized_pct": -7.0, "change_pct": 22.0}] * 10
@@ -1394,6 +1398,8 @@ def test_shadow_vwap_report_verdict_data_driven():
     res.trades = [{"result": "win", "realized_pct": 6, "max_gain_pct": 8,
                    "change_pct": 22.0}] * 8
     res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8}
     res.funnel["shadow"] = [{"kind": "vwap", "max_rvol": 9.0, "result": "loss",
                              "realized_pct": -7.0, "change_pct": 22.0}] * 10
     rep = backtest.format_report(res)
@@ -1508,12 +1514,18 @@ def test_shadow_verdict_is_data_driven():
                  [{"result": "loss", "max_gain_pct": 1, "realized_pct": -7.0,
                    "change_pct": 22.0}] * 2      # أساس 80% · توقّع +3.4%
     res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8}
     res.funnel["shadow"] = [{"max_rvol": 4.0, "result": "loss",
                              "realized_pct": -7.0, "change_pct": 22.0}] * 10
     rep = backtest.format_report(res)
     assert "مثبتة؛ لا تُخفَّض" in rep
-    # عيّنة ظل صغيرة (3 محسومة فقط) → لا حكم
+    # سجلات بلا موقع دخول (تشغيل قديم) → لا حكم، برسالة تميّز السبب
     res.funnel["shadow"] = [{"max_rvol": 4.0, "result": "loss"}] * 3
+    assert "تشغيل قديم" in backtest.format_report(res)
+    # وعيّنة داخل مدى المقارنة لكن دون حدّ الكفاية → «غير كافية»
+    res.funnel["shadow"] = [{"max_rvol": 4.0, "result": "loss",
+                             "realized_pct": -7.0, "change_pct": 22.0}] * 3
     assert "غير كافية للحكم" in backtest.format_report(res)
 
 
@@ -1989,3 +2001,28 @@ def test_run_config_captures_rvol_min_for_mixed_merge_detection(tmp_path):
         Config(massive_api_key="x", backtest_save_dir=str(tmp_path)))
     assert merged.run_config is None                      # لا يدّعي توحيدًا
     assert any("بإعدادات مختلفة" in n for n in notes)
+
+
+def test_shadow_verdict_uses_confidence_interval_not_fixed_edge():
+    """MEAS-37 (العيب الرابع): الحكم بفاصل ثقة لا بعتبة ثابتة.
+
+    العتبة الثابتة (0.5%) لا علاقة لها بحجم العيّنة، وقد أنتجت حكمًا خاطئًا
+    فعلًا على بيانات حقيقية: «سقف السعر مثبَّتة» على فرق −1.00% بينما فاصله
+    [−2.35 , +0.40] يعبر الصفر. هنا فرق −2.5% لكن التشتّت واسع ⇒ غير حاسم."""
+    res = backtest.BacktestResult(start="x", end="y", days=1)
+    # تنبيهات متذبذبة بشدّة ⇒ الأساس نفسه غير يقيني
+    res.trades = [{"result": r, "realized_pct": v, "max_gain_pct": 8,
+                   "change_pct": 22.0}
+                  for r, v in [("win", 30.0), ("loss", -25.0)] * 10]
+    res.funnel = backtest.new_funnel()
+    res.run_config = {"outcome_window_min": 90.0,
+                      "backtest_shadow_min_decided": 8,
+                      "backtest_shadow_match_min_overlap": 0.5}
+    res.funnel["shadow"] = [{"kind": "vwap", "max_rvol": 9.0, "result": r,
+                             "window_min": 90, "realized_pct": v,
+                             "change_pct": 22.0}
+                            for r, v in [("win", 25.0), ("loss", -30.0)] * 10]
+    rep = backtest.format_report(res)
+    assert "فاصل ثقة 95%" in rep
+    assert "يعبر الصفر" in rep and "غير حاسم" in rep
+    assert "مثبَّتة" not in rep      # العتبة الثابتة كانت ستحكم «مثبَّتة»
