@@ -561,3 +561,34 @@ def test_dev_report_excludes_subthreshold_rows_from_labeled_buckets():
     assert "5-8x" not in rep      # RVol=2 مستبعَد لا يُنسب لـ«5-8x»
     assert "60-70" not in rep     # درجة=40 مستبعَدة لا تُنسب لـ«60-70»
     st.close()
+
+
+def test_dev_rvol_suggestion_requires_reachable_threshold():
+    """MEAS-37: لا تُقترح خفض RVOL_MIN إلا لمن ستلتقطهم العتبة المقترحة فعلًا.
+
+    قبل الحارس اقترحت الأداة الخفض على 12 سهمًا قيم RVol لها 0–4.56x، بينما
+    خفض 5→4 يلتقط **واحدًا** — اقتراح لا يتبع من دليله. هنا: مرفوضون بعيدون
+    عن العتبة (0.5x) ⇒ لا اقتراح؛ وقريبون منها (4.5x) ⇒ اقتراح."""
+    def _report(rv):
+        st = _store()
+        prices = {}
+        for i in range(12):                     # أساس محسوم كي يعمل التقرير
+            tkr = f"B{i}"
+            p = 3.0 + i * 0.1
+            st.log_candidate(_cand(tkr, p, stop=p * 0.9, t1=p * 1.2), T0)
+            st.mark_alerted(tkr, 80, T0)
+            prices[tkr] = p * 1.25 if i % 3 else p * 0.88
+        for i in range(4):                      # مرفوضو RVol صاعدون
+            tkr = f"R{i}"
+            st.log_candidate(_cand(tkr, 2.0, rejected=True, rvol=rv,
+                                   reason=f"RVol {rv:g}x < 5x"), T0)
+            prices[tkr] = 3.0                   # +50% ⇒ «فرصة فائتة»
+        st.update_outcomes(
+            prices, datetime(2026, 6, 26, 14, 20, tzinfo=timezone.utc))
+        return build_dev_report(st, CFG)
+
+    far = _report(0.5)      # خفض 5→4 لن يلتقطهم
+    assert "RVOL_MIN" not in far, "اقترح خفضًا لن يلتقط أحدًا"
+    near = _report(4.5)     # خفض 5→4 سيلتقطهم
+    assert "RVOL_MIN" in near
+    assert "ستلتقطهم" in near
