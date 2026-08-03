@@ -11,6 +11,7 @@ import signal
 import sys
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,11 @@ from .analyst import ClaudeAnalyst
 from .cache import DailyCache
 from .config import Config
 from .llm import ClaudeClient
+from .kronos_shadow import (
+    KronosShadowClient,
+    KronosShadowWorker,
+    kronos_selection_revision,
+)
 from .render_client import RenderClient
 from .dev_assistant import send_report_and_files
 from .halts import HaltTracker
@@ -58,6 +64,25 @@ def _start_keepalive(port: int) -> HTTPServer:
     return server
 
 
+def _kronos_session_end(
+    cfg: Config, session: Session, et_now: datetime,
+) -> datetime | None:
+    """نهاية الجلسة الحالية، مع احترام الإغلاق المبكر."""
+    if session is Session.CLOSED:
+        return None
+    if session is Session.PREMARKET:
+        end_hour = cfg.regular_start_hour
+    elif market_calendar.is_early_close(et_now.date()):
+        end_hour = market_calendar.EARLY_CLOSE_HOUR
+    elif session is Session.REGULAR:
+        end_hour = cfg.regular_end_hour
+    else:
+        end_hour = cfg.afterhours_end_hour
+    return et_now.replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ) + timedelta(hours=end_hour)
+
+
 class Scanner:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -83,6 +108,42 @@ class Scanner:
         self.assistant = TelegramAssistant(self)   # مساعد تيليجرام تفاعلي
         self._stop = threading.Event()
         self._shutdown_done = False    # حارس تفكيك idempotent (BUG-25)
+        self._kronos_now_fn = lambda: datetime.now(timezone.utc)
+        self.kronos: KronosShadowWorker | None = None
+        if cfg.kronos_shadow_enabled:
+            if not self.store.kronos_available:
+                logger.warning(
+                    "Kronos Shadow مفعّل لكن مخزن القياس غير متاح — تم تخطّيه: %s",
+                    self.store.kronos_error,
+                )
+            elif not cfg.kronos_service_url:
+                logger.warning(
+                    "Kronos Shadow مفعّل لكن KRONOS_SERVICE_URL فارغ — تم تخطّيه")
+            else:
+                try:
+                    self.kronos = KronosShadowWorker(
+                        client=KronosShadowClient(
+                            cfg.kronos_service_url,
+                            token=cfg.kronos_service_token,
+                            timeout=cfg.kronos_timeout_sec,
+                        ),
+                        # عميل مستقل: فشل/بطء جلب سياق Kronos لا يقفل عميل الدورة.
+                        massive_client_factory=lambda: MassiveClient(cfg),
+                        store=self.store,
+                        context_days=cfg.kronos_context_days,
+                        lookback=cfg.kronos_lookback,
+                        pred_len=cfg.kronos_pred_len,
+                        horizons=cfg.kronos_horizons,
+                        queue_size=cfg.kronos_queue_size,
+                        max_context_lag_sec=cfg.kronos_max_context_lag_sec,
+                        observation_grace_min=cfg.kronos_observation_grace_min,
+                        selection_revision=kronos_selection_revision(cfg),
+                    )
+                    self.kronos.start()
+                    logger.info("Kronos Shadow يعمل بوضع القياس فقط")
+                except Exception:  # اختياري تمامًا؛ لا يُفشل إقلاع الماسح
+                    self.kronos = None
+                    logger.exception("تعذّر تشغيل Kronos Shadow — الماسح مستمر")
 
     # ── دورة مسح واحدة ────────────────────────────────────────────
     def run_cycle(self, et_now=None) -> int:
@@ -131,6 +192,29 @@ class Scanner:
         # ويصدّر أحداث متابعة (🎯 هدف · ⛔ وقف · 🚀 قفزة) نرسلها فورًا.
         price_map = {e.ticker: e.last_price for e in snapshot if e.is_valid}
         volume_map = {e.ticker: e.day_volume for e in snapshot if e.is_valid}
+        observed_at_map = {}
+        for entry in snapshot:
+            if not entry.is_valid or entry.price_observed_ns <= 0:
+                continue
+            try:
+                observed_at_map[entry.ticker] = datetime.fromtimestamp(
+                    entry.price_observed_ns / 1_000_000_000.0, tz=timezone.utc)
+            except (OSError, OverflowError, ValueError):
+                continue
+        # إغلاق الحلقة لتوقعات Kronos السابقة من نفس snapshot المجاني. لا يدخل
+        # هذا القياس في البوابات أو الدرجة أو البطاقة.
+        try:
+            # et_now ثُبّت قبل HTTP لأجل determinism في منطق الدورة، لكن جلب
+            # snapshot قد يتأخر عبر retry. قياس Kronos يستخدم ساعة ما بعد الرد.
+            measurement_now = self._kronos_now_fn()
+            self.store.update_kronos_actuals(
+                price_map, measurement_now,
+                grace_min=self.cfg.kronos_observation_grace_min,
+                observed_at_map=observed_at_map)
+        except Exception:
+            # Kronos اختياري وShadow؛ فساد صف أو عطل SQLite هنا لا يجوز أن
+            # يمنع تحليل الأسهم أو إرسال التنبيهات الأساسية.
+            logger.exception("تعذّر إغلاق حلقة Kronos — دورة الماسح مستمرة")
         events = self.store.update_outcomes(
             price_map, et_now, window_min=self.cfg.outcome_window_min,
             surge_leg_pct=self.cfg.surge_leg_pct,
@@ -171,6 +255,14 @@ class Scanner:
             return 0
 
         accepted: list[Candidate] = []
+        kronos_session_end = _kronos_session_end(self.cfg, session, et_now)
+        kronos_pred_len = int(getattr(
+            self.kronos, "pred_len", self.cfg.kronos_pred_len))
+        kronos_window_open = (
+            kronos_session_end is not None
+            and et_now + timedelta(minutes=kronos_pred_len * 5)
+            < kronos_session_end
+        )
         # الأبطال الموروثون أولًا (أولوية متابعة)، ثم أعلى 15 صعودًا
         for snap in champ_entries + top:
             # منع التكرار (تنبيه/سهم/يوم) — يُعاد تحميله من DB عند الإقلاع
@@ -197,6 +289,18 @@ class Scanner:
             self.store.log_candidate(cand)   # closed-loop لكل مرشّح
             if not cand.is_rejected:
                 accepted.append(cand)
+                if self.kronos is not None and kronos_window_open:
+                    try:
+                        # لا نمرّر وقت بداية الدورة: العامل يلتقط وقت enqueue
+                        # الحقيقي ثم يعيد فحص الوقت عند التنفيذ وبعد الاستدلال.
+                        self.kronos.submit(
+                            cand.ticker,
+                            session=session.value,
+                            session_end_at=kronos_session_end,
+                        )
+                    except Exception:  # Shadow لا يغيّر مسار التنبيه تحت أي ظرف
+                        logger.debug("تعذّر إدراج %s في Kronos Shadow",
+                                     cand.ticker, exc_info=True)
 
         # ترتيب الأولوية ثم الإرسال
         sent = 0
@@ -413,6 +517,11 @@ class Scanner:
         self._stop.set()
         self.halts.stop()
         self.assistant.stop()
+        if self.kronos is not None:
+            self.kronos.stop(timeout=max(
+                self.cfg.http_timeout, self.cfg.kronos_timeout_sec) + 1.0)
+            if self.kronos.is_alive:
+                logger.warning("خيط Kronos لم يتوقف قبل إغلاق قاعدة البيانات")
         self.store.close()
 
 

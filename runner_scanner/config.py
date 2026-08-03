@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
+
+from dotenv import load_dotenv
 
 
 def _f(name: str, default: float) -> float:
@@ -85,6 +88,23 @@ class Config:
     # ── التخزين ────────────────────────────────────────────────────
     # لازم يكون على قرص دائم في Render (منع تكرار التنبيه عبر إعادة النشر).
     db_path: str = "/var/data/runner_scanner.sqlite3"
+
+    # ── Kronos Shadow (قياس فقط؛ لا يغيّر قرار التنبيه) ───────────
+    # الاستدلال في خدمة منفصلة حتى لا يضغط نموذج PyTorch/Transformers على عامل
+    # الماسح الخفيف. يبقى معطّلًا افتراضيًا إلى أن تُنشَر الخدمة وتُعايَر نتائجه.
+    kronos_shadow_enabled: bool = False
+    kronos_service_url: str = ""
+    kronos_service_token: str = ""
+    kronos_timeout_sec: float = 120.0     # أول تحميل للأوزان أبطأ؛ العامل معزول
+    kronos_context_days: int = 14
+    kronos_lookback: int = 512           # شمعة 5د ماضية يرسلها عامل الظل
+    kronos_pred_len: int = 18            # 18 × 5د = 90 دقيقة مستقبلية
+    kronos_horizons: tuple[int, ...] = (6, 12, 18)  # 30/60/90 دقيقة
+    kronos_queue_size: int = 32          # طابور محدود؛ لا يراكم ضغطًا على الماسح
+    kronos_observation_grace_min: float = 3.0  # أقصى تأخر لعينة النتيجة الفعلية
+    # قد يكون آخر إغلاق 5د أقدم طبيعيًا بنحو 300ث داخل الباكت؛ نضيف 60ث
+    # لوصول aggregate، ثم يفحص العامل وقت التنفيذ الحقيقي لا وقت بدء الدورة.
+    kronos_max_context_lag_sec: float = 360.0
 
     # ── حلقة المسح ─────────────────────────────────────────────────
     poll_interval_sec: int = 45          # بين 30 و60ث (القرار 7)
@@ -353,8 +373,28 @@ class Config:
     dry_run: bool = False                # لا يرسل تيليجرام، يطبع فقط
     log_level: str = "INFO"
 
+    def __post_init__(self) -> None:
+        """منع سياسات Kronos التي تفسد labels أو تجعلها غير قابلة للقياس."""
+        try:
+            grace = float(self.kronos_observation_grace_min)
+            context_lag = float(self.kronos_max_context_lag_sec)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("إعدادات زمن Kronos يجب أن تكون أرقامًا") from exc
+        if not math.isfinite(grace) or not 0 <= grace < 5:
+            raise ValueError(
+                "KRONOS_OBSERVATION_GRACE_MIN يجب أن يكون بين 0 وأقل من 5"
+            )
+        if not math.isfinite(context_lag) or context_lag < 0:
+            raise ValueError(
+                "KRONOS_MAX_CONTEXT_LAG_SEC يجب أن يكون رقمًا محدودًا غير سالب"
+            )
+        self.kronos_observation_grace_min = grace
+        self.kronos_max_context_lag_sec = context_lag
+
     @classmethod
     def from_env(cls) -> "Config":
+        # ملف التطوير المحلي يملأ الناقص فقط؛ بيئة الصدفة/Render لها الأولوية.
+        load_dotenv(override=False)
         return cls(
             massive_api_key=_s("MASSIVE_API_KEY", ""),
             massive_rest_base=_s("MASSIVE_REST_BASE", "https://api.massive.com"),
@@ -367,6 +407,23 @@ class Config:
                 c.strip() for c in _s("TELEGRAM_EXTRA_CHAT_IDS", "").split(",")
                 if c.strip()),
             db_path=_s("DB_PATH", "/var/data/runner_scanner.sqlite3"),
+            kronos_shadow_enabled=_b("KRONOS_SHADOW_ENABLED", False),
+            kronos_service_url=_s("KRONOS_SERVICE_URL", ""),
+            kronos_service_token=_s("KRONOS_SERVICE_TOKEN", ""),
+            kronos_timeout_sec=_f("KRONOS_TIMEOUT_SEC", 120.0),
+            kronos_context_days=_i("KRONOS_CONTEXT_DAYS", 14),
+            kronos_lookback=_i("KRONOS_LOOKBACK", 512),
+            kronos_pred_len=_i("KRONOS_PRED_LEN", 18),
+            kronos_horizons=(tuple(sorted({
+                int(x) for x in _ftuple(
+                    "KRONOS_HORIZONS", (6.0, 12.0, 18.0))
+                if x > 0 and x.is_integer()
+            })) or (6, 12, 18)),
+            kronos_queue_size=_i("KRONOS_QUEUE_SIZE", 32),
+            kronos_observation_grace_min=_f(
+                "KRONOS_OBSERVATION_GRACE_MIN", 3.0),
+            kronos_max_context_lag_sec=_f(
+                "KRONOS_MAX_CONTEXT_LAG_SEC", 360.0),
             poll_interval_sec=_i("POLL_INTERVAL_SEC", 45),
             keepalive_port=_i("KEEPALIVE_PORT", 10000),
             trigger_change_pct=_f("TRIGGER_CHANGE_PCT", 10.0),

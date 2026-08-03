@@ -1,0 +1,9 @@
+numpy==1.26.4
+pandas==2.2.2
+# 2.5.1 يحمل ثغرات deserialization/RCE مع تحميل الأوزان؛ 2.13.0 أول إصدار
+# حالي يغلق أيضًا سلسلة advisories اللاحقة بحسب OSV (تدقيق 2026-08-03).
+torch==2.13.0
+einops==0.8.1
+huggingface_hub==0.33.1
+safetensors==0.6.2
+tqdm==4.67.1

@@ -17,7 +17,7 @@
 - **بريفنغ نهاية الجلسة:** ملخّص يومي طبيعي (ماذا حدث · ملاحظات · توصيات)
   على تيليجرام.
 - **مساعد تفاعلي:** كلّمه بالتيليجرام — `/ask` · `/status` · `/top` ·
-  `/report` · `/briefing` · `/restart` (بإذنك).
+  `/kronos` · `/report` · `/briefing` · `/restart` (بإذنك).
 - **وعي ريندر:** يعرف حالة الخدمة وآخر نشر، ويعيد التشغيل بأمرك.
 
 > المبدأ: **يستشير وينبّه، ولا يتصرّف إلا بإذنك.**
@@ -75,6 +75,23 @@ python -m runner_scanner.dev_assistant
 
 ---
 
+## 🧪 Kronos Shadow — توقع وقياس بلا تدخل
+
+يمكن تشغيل [Kronos](https://github.com/shiyu-coder/Kronos) كخدمة مستقلة
+تتوقع عائد المرشح المقبول بعد 30/60/90 دقيقة. يبقى التكامل **معطّلًا افتراضيًا**
+ولا يدخل في البوابات أو الدرجة أو بطاقة التنبيه؛ تحفظ توقعاته ونتائجه الفعلية
+في SQLite كي نحكم عليه بالبيانات.
+
+- `/kronos`: الدقة الاتجاهية وMAE وlift مقابل خط أساس «صعود دائم».
+- `/report`: يرفق CSV مسطحًا لكل توقع/أفق للتحليل الخارجي.
+- طابور محدود وخدمة PyTorch منفصلة: فشل Kronos أو بطؤه لا يوقف الماسح.
+- القياس يفصل نسخة التجربة والجلسة، ويمنع توقعًا رجعيًا أو أفقًا بعد الإغلاق.
+
+التشغيل، الأمان، ومعايير ترقية Shadow إلى A/B موثقة في
+**[KRONOS_INTEGRATION.md](KRONOS_INTEGRATION.md)**.
+
+---
+
 ## 📡 مصدر البيانات: Massive (= Polygon.io)
 
 `massive.com` هو الاسم الجديد لـ Polygon.io بعد rebrand رسمي (30 أكتوبر
@@ -110,13 +127,16 @@ DRY_RUN=true python -m runner_scanner.main
 python -m runner_scanner.main
 ```
 
+يُحمّل `Config.from_env()` ملف `.env` تلقائيًا عند التشغيل. وإذا كان المتغيّر
+موجودًا أصلًا في بيئة الصدفة أو Render فتبقى قيمة البيئة هي صاحبة الأولوية.
+
 > 📘 للنشر خطوة بخطوة على Render، انظر **[DEPLOY.md](DEPLOY.md)**.
 > تحتاج فقط تضيف 3 مفاتيح؛ الباقي مؤتمت (فحص جاهزية + رسالة إقلاع).
 
 ### الاختبارات (بلا إنترنت)
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -r requirements-dev.txt
 python3 -m pytest runner_scanner/tests/ -q
 ```
 
@@ -125,12 +145,20 @@ python3 -m pytest runner_scanner/tests/ -q
 ## ☁️ النشر على Render
 
 Background Worker مستقل **+ قرص دائم** (إلزامي لمنع تكرار التنبيه عبر
-إعادة النشر — درس CCXI). الملف `render.yaml` جاهز:
+إعادة النشر — درس CCXI)، ومعه خدمة Kronos Shadow معزولة. الملف `render.yaml`
+يربطهما تلقائيًا عبر HTTPS وBearer مولّد داخل Render:
 
 1. اربط الريبو في Render → New → Blueprint.
 2. أدخل الأسرار في لوحة Render: `MASSIVE_API_KEY` · `TELEGRAM_BOT_TOKEN` ·
    `TELEGRAM_CHAT_ID`.
 3. تأكّد أن `DB_PATH` يطابق `mountPath` القرص (`/var/data`).
+4. راجع تكلفة خدمة `superx1-kronos` بخطة `standard` (2GB) ثم نفّذ أول نشر؛
+   النشر التلقائي معطّل للخدمتين عمدًا.
+
+سر `KRONOS_API_TOKEN` يولّده Render بقيمة 256-bit، ثم ينسخه للـworker باسم
+`KRONOS_SERVICE_TOKEN` دون كتابته في Git. ويقرأ العامل عنوان HTTPS المنشور من
+`RENDER_EXTERNAL_URL`. يظل Kronos في وضع Shadow: يسجل توقعات ونتائج للقياس،
+ولا يغيّر قرار التنبيه أو المخاطر أو الصفقة.
 
 > تجنّب الطبقات المجانية اللي تستعيد الخامل (تموت بصمت وسط الجلسة).
 
@@ -157,8 +185,11 @@ runner_scanner/
   scoring.py       دمج الركيزتين + الشروط
   alerts.py        بطاقة تيليجرام + ترتيب الأولوية + الإرسال
   state.py         SQLite: منع تكرار + closed-loop
+  kronos_shadow.py عميل/عامل Kronos الاختياري بطابور خلفي محدود
+  kronos_metrics.py قياس التوقع مقابل الواقع + تصدير CSV
   monitor.py       مراقبة صامتة 🚨 فقط عند عطل
   tests/           اختبارات بلا إنترنت (محاكاة ردود Massive)
+services/kronos_inference/ خدمة الاستدلال المعزولة (PyTorch/Kronos)
 ```
 
 ---

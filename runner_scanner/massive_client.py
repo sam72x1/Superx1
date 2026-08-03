@@ -111,13 +111,21 @@ class MassiveClient:
             prev = t.get("prevDay") or {}
             last_trade = t.get("lastTrade") or {}
             min_bar = t.get("min") or {}
-            # السعر اللحظي: آخر صفقة، وإلا إغلاق شمعة الدقيقة، وإلا إغلاق اليوم.
-            last_price = (
-                last_trade.get("p")
-                or min_bar.get("c")
-                or day.get("c")
-                or 0.0
-            )
+            # السعر اللحظي مع طابعه من **المصدر نفسه**. updated أعلى snapshot
+            # قد يتحرك بسبب quote آخر ولا يثبت حداثة lastTrade.p. fallback اليومي
+            # بلا وقت صالح، فلا يُستخدم لاحقًا كحقيقة أفق لـKronos.
+            if last_trade.get("p"):
+                last_price = last_trade.get("p")
+                price_observed_ns = int(last_trade.get("t") or 0)
+            elif min_bar.get("c"):
+                last_price = min_bar.get("c")
+                # ``min.t`` هو بداية نافذة aggregate لا وقت صفقة الإغلاق؛ لا
+                # ننسبه كحقيقة أفق دقيقة. يبقى السعر صالحًا للماسح، لكن Kronos
+                # ينتظر lastTrade بطابع الصفقة نفسها.
+                price_observed_ns = 0
+            else:
+                last_price = day.get("c") or 0.0
+                price_observed_ns = 0
             last_price = float(last_price or 0.0)
             prev_close = float(prev.get("c") or 0.0)
             # نسبة التغيّر: نفضّل حقل الـ API، وإلا نحسبها احتياطيًا من
@@ -138,8 +146,9 @@ class MassiveClient:
                 day_vwap=float(day.get("vw") or 0.0),
                 change_pct=change_pct,
                 updated_ns=int(t.get("updated") or 0),
+                price_observed_ns=price_observed_ns,
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return None
 
     def single_snapshot(self, ticker: str) -> Optional[SnapshotEntry]:

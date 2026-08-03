@@ -3,6 +3,7 @@
 ثريد يستمع لرسائلك (getUpdates) ويردّ على الأوامر:
   /status   — حالة البوت + ريندر
   /top      — أقوى الأسهم في آخر مسح
+  /kronos   — أداء توقعات Kronos التجريبية مقابل الواقع
   /report   — تقرير التطوير + ملفات CSV الآن
   /briefing — بريفنغ المستشار الآن
   /backtest — باكتيست + معايرة العتبات A/B الآن (يدويًا)
@@ -25,6 +26,7 @@ import requests
 from . import advisor, postmortem
 from .alerts import TelegramSender
 from .dev_assistant import send_report_and_files, top_action
+from .kronos_metrics import format_kronos_report
 from .sessions import classify_session, now_et
 from .state import trade_date_str
 from .textutil import esc
@@ -37,6 +39,7 @@ _HELP = (
     "أو استخدم الأوامر:\n"
     "/status — حالة البوت وريندر\n"
     "/top — أقوى الأسهم الآن\n"
+    "/kronos — دقّة توقعات Kronos Shadow مقابل الواقع\n"
     "/improve — أهم إجراء تحسين الآن (سطر واحد جاهز)\n"
     "/report — تقرير التطوير + ملفات CSV\n"
     "/briefing — بريفنغ المستشار\n"
@@ -147,6 +150,13 @@ class TelegramAssistant:
             self._reply(self._status_text())
         elif cmd == "top":
             self._reply(self._top_text())
+        elif cmd == "kronos":
+            worker = getattr(self.sc, "kronos", None)
+            runtime_stats = (
+                worker.runtime_stats if worker is not None else None
+            )
+            self._reply(format_kronos_report(
+                self.sc.store, runtime_stats=runtime_stats))
         elif cmd in ("improve", "تطوير", "حسّن", "حسن"):
             self._reply(top_action(self.sc.store, self.cfg))
         elif cmd == "report":
@@ -179,11 +189,27 @@ class TelegramAssistant:
         faults = self.sc.monitor.active_faults()
         health = "أعطال: " + ", ".join(faults) if faults else "سليم ✅"
         last = getattr(self.sc, "last_scan_et", None)
+        kronos = getattr(self.sc, "kronos", None)
+        if not self.cfg.kronos_shadow_enabled:
+            kronos_status = "معطّل"
+        elif getattr(self.sc.store, "kronos_available", True) is False:
+            kronos_status = "مخزن القياس معطّل؛ الأساسي مستمر ⚠️"
+        elif kronos is not None and kronos.is_alive:
+            stats = kronos.runtime_stats
+            kronos_status = (
+                "Shadow يعمل 🧪 · طابور "
+                f"{stats['queue_depth']}/{stats['queue_capacity']} · "
+                f"فائت بالامتلاء {stats['queue_full']} · "
+                f"فشل حفظ {stats.get('save_failed', 0)}"
+            )
+        else:
+            kronos_status = "مفعّل لكن العامل متوقف ⚠️"
         return (
             f"📟 <b>حالة البوت</b>\n"
             f"الجلسة: {session.value} · المسح كل {self.cfg.poll_interval_sec}ث\n"
             f"آخر مسح: {last.strftime('%H:%M ET') if last else '—'}\n"
             f"الصحة: {health}\n"
+            f"Kronos: {kronos_status}\n"
             f"{self.sc.render.summary()}"
         )
 

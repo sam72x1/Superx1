@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import datetime, timezone
 
 from runner_scanner.config import Config
 from runner_scanner.main import Scanner
@@ -34,6 +35,7 @@ def test_assistant_status_and_top():
     sc.assistant._dispatch("/status")
     sc.assistant._dispatch("/top")
     assert any("حالة البوت" in m for m in sent)
+    assert any("Kronos: معطّل" in m for m in sent)
     assert any("AAA" in m for m in sent)
     sc.shutdown()
 
@@ -68,7 +70,24 @@ def test_assistant_help():
     sc = _scanner()
     sent = _capture(sc)
     sc.assistant._dispatch("/help")
-    assert any("/status" in m and "/ask" in m for m in sent)
+    assert any("/status" in m and "/kronos" in m and "/ask" in m for m in sent)
+    sc.shutdown()
+
+
+def test_assistant_kronos_reports_shadow_measurements():
+    sc = _scanner()
+    sent = _capture(sc)
+    sc.store.save_kronos_forecast(
+        "AAA", datetime(2026, 7, 29, 15, 30, tzinfo=timezone.utc),
+        status="ok", model_revision="rev-1", returns={6: 1.0},
+        base_close=10.0)
+    sc.store.update_kronos_actuals(
+        {"AAA": 11.0},
+        datetime(2026, 7, 29, 16, 0, tzinfo=timezone.utc))
+
+    sc.assistant._dispatch("/kronos")
+
+    assert any("Kronos Shadow" in m and "30د" in m for m in sent)
     sc.shutdown()
 
 

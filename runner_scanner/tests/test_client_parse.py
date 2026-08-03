@@ -11,11 +11,12 @@ def test_snapshot_uses_api_change_field():
         "todaysChangePerc": 22.5,
         "day": {"o": 2.0, "h": 2.6, "l": 1.9, "c": 2.4, "v": 800000, "vw": 2.2},
         "prevDay": {"c": 2.0},
-        "lastTrade": {"p": 2.45},
+        "lastTrade": {"p": 2.45, "t": 1_700_000_000_000_000_000},
     })
     assert entry.ticker == "AAA"
     assert entry.change_pct == 22.5
     assert entry.last_price == 2.45
+    assert entry.price_observed_ns == 1_700_000_000_000_000_000
     assert entry.is_valid is True
 
 
@@ -37,6 +38,23 @@ def test_snapshot_invalid_without_prev_close():
         "lastTrade": {"p": 2.5},
     })
     assert entry.is_valid is False
+
+
+def test_minute_aggregate_start_is_not_used_as_exact_price_timestamp():
+    minute = MassiveClient._parse_snapshot_entry({
+        "ticker": "MIN", "day": {"c": 2.4}, "prevDay": {"c": 2.0},
+        "min": {"c": 2.5, "t": 1_700_000_000_000},
+        "updated": 1_800_000_000_000_000_000,
+    })
+    assert minute.last_price == 2.5
+    assert minute.price_observed_ns == 0
+
+    daily = MassiveClient._parse_snapshot_entry({
+        "ticker": "DAY", "day": {"c": 2.4}, "prevDay": {"c": 2.0},
+        "updated": 1_800_000_000_000_000_000,
+    })
+    assert daily.last_price == 2.4
+    assert daily.price_observed_ns == 0
 
 
 def test_bar_parse_defaults():
