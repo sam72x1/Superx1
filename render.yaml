@@ -11,7 +11,9 @@ services:
     plan: standard
     # يُخبز checkout والأوزان ذات المراجعات المثبتة داخل build artifact. runtime
     # يعمل offline ولا يكتب النموذج على قرص SQLite الدائم.
-    buildCommand: python -m pip install -r requirements.txt -r services/kronos_inference/requirements.txt && python -m services.kronos_inference.build_runtime && python -c "import runner_scanner.main"
+    # Render لا يوفّر GPU؛ ثبّت wheel الرسمي الخاص بالـCPU أولًا. النسخة
+    # 2.13.0 العامة على Linux تسحب حزم CUDA ضخمة لا تستخدمها هذه الخدمة.
+    buildCommand: python -m pip install "torch==2.13.0+cpu" --index-url https://download.pytorch.org/whl/cpu && python -m pip install -r requirements.txt -r services/kronos_inference/requirements.txt && python -m services.kronos_inference.build_runtime && python -c "import runner_scanner.main"
     # supervisor هو PID الرئيسي: يبقي عطل Shadow معزولًا، ويمرر SIGTERM للماسح
     # أولًا لتفريغ طابوره ثم يوقف خدمة loopback.
     startCommand: python -m runner_scanner.render_supervisor

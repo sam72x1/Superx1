@@ -18,7 +18,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY services/kronos_inference/requirements.txt /tmp/kronos-requirements.txt
-RUN python -m pip install --no-cache-dir -r /tmp/kronos-requirements.txt
+# هذه صورة CPU؛ ثبّت wheel الرسمي الخفيف أولًا. يطابق 2.13.0+cpu القيد
+# torch==2.13.0 في الملف التالي، فلا يعيد pip تنزيل توزيعة CUDA العامة.
+RUN python -m pip install --no-cache-dir "torch==2.13.0+cpu" \
+        --index-url https://download.pytorch.org/whl/cpu \
+    && python -m pip install --no-cache-dir -r /tmp/kronos-requirements.txt
 
 RUN useradd --create-home --shell /usr/sbin/nologin kronos \
     && git clone https://github.com/shiyu-coder/Kronos.git /opt/kronos \

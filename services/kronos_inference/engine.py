@@ -73,6 +73,15 @@ def _runtime_requirement_pins() -> dict[str, str]:
     return pins
 
 
+def _runtime_version_matches(
+    distribution: str, installed: str, pinned: str
+) -> bool:
+    """يقبل pin الدقيق، ومع torch فقط يقبل build الـCPU الرسمي لنفس الإصدار."""
+    if installed == pinned:
+        return True
+    return distribution == "torch" and installed == f"{pinned}+cpu"
+
+
 def _runtime_dependencies_ready() -> bool:
     """يتحقق من وجود modules ومن نسخة كل distribution بلا استيرادها."""
     pins = _runtime_requirement_pins()
@@ -83,7 +92,7 @@ def _runtime_dependencies_ready() -> bool:
             installed = package_version(distribution)
         except PackageNotFoundError:
             return False
-        if installed != pins[distribution]:
+        if not _runtime_version_matches(distribution, installed, pins[distribution]):
             return False
     return True
 
