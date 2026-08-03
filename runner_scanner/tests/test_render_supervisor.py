@@ -124,6 +124,33 @@ def test_shutdown_keeps_kronos_alive_until_scanner_stops():
     assert events == ["terminate:11", "wait:11", "terminate:22", "wait:22"]
 
 
+def test_shutdown_stops_kronos_to_unblock_a_slow_scanner():
+    events: list[str] = []
+    kronos = FakeProcess(22, events)
+
+    class ScannerBlockedOnKronos(FakeProcess):
+        def terminate(self):
+            self.events.append(f"terminate:{self.pid}")
+
+        def wait(self, timeout=None):
+            self.events.append(f"wait:{self.pid}:{timeout}")
+            if kronos.poll() is None:
+                raise subprocess.TimeoutExpired("scanner", timeout)
+            self.returncode = 0
+            return 0
+
+    scanner = ScannerBlockedOnKronos(11, events)
+    supervisor.shutdown_children(scanner, kronos, scanner_timeout=15.0)
+
+    assert events == [
+        "terminate:11",
+        "wait:11:15.0",
+        "terminate:22",
+        "wait:22",
+        "wait:11:5.0",
+    ]
+
+
 def test_terminate_escalates_only_after_timeout():
     events: list[str] = []
 
@@ -144,7 +171,7 @@ def test_terminate_escalates_only_after_timeout():
 
     process = SlowProcess(33, events)
     supervisor.terminate_process(process, "slow", 2.0)
-    assert events == ["terminate:33", "wait:33:2.0", "kill:33", "wait:33:5"]
+    assert events == ["terminate:33", "wait:33:2.0", "kill:33", "wait:33:5.0"]
 
 
 def test_invalid_shadow_artifact_still_starts_scanner(monkeypatch, tmp_path):

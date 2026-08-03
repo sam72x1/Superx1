@@ -334,17 +334,33 @@ def start_kronos(
         return None
 
 
-def terminate_process(process: ChildProcess | None, name: str, timeout: float) -> None:
+def terminate_process(
+    process: ChildProcess | None,
+    name: str,
+    timeout: float,
+    *,
+    kill_timeout: float = 5.0,
+    deadline: float | None = None,
+) -> None:
     if process is None or process.poll() is not None:
         return
+
+    def remaining(requested: float) -> float:
+        if deadline is None:
+            return requested
+        return max(0.05, min(requested, deadline - monotonic()))
+
     logger.info("إرسال SIGTERM إلى %s (pid=%d)", name, process.pid)
     process.terminate()
     try:
-        process.wait(timeout=timeout)
+        process.wait(timeout=remaining(timeout))
     except subprocess.TimeoutExpired:
         logger.error("%s لم يتوقف خلال %.1fث؛ إرسال SIGKILL", name, timeout)
         process.kill()
-        process.wait(timeout=5)
+        try:
+            process.wait(timeout=remaining(kill_timeout))
+        except subprocess.TimeoutExpired:
+            logger.critical("%s لم يُحصد قبل انتهاء ميزانية الإيقاف", name)
 
 
 def shutdown_children(
@@ -353,9 +369,61 @@ def shutdown_children(
     *,
     scanner_timeout: float,
 ) -> None:
-    # أبقِ Kronos حيًا أثناء تفريغ طابور Shadow في scanner.shutdown().
-    terminate_process(scanner, "runner-scanner", scanner_timeout)
-    terminate_process(kronos, "kronos-inference", 10.0)
+    # أبقِ Kronos حيًا أولًا حتى يفرغ scanner.shutdown() طابور Shadow. خدمات
+    # Render ذات القرص تستخدم نافذة إيقاف ثابتة مدتها 30ث ولا تقبل تمديدها في
+    # Blueprint؛ إذا استنفد الماسح مهلته نوقف Kronos لفك أي طلب HTTP عالق، ثم
+    # نمنح الماسح فرصة أخيرة لحفظ النتيجة وإغلاق SQLite قبل SIGKILL.
+    deadline = monotonic() + 25.0
+
+    def remaining(requested: float) -> float:
+        return max(0.05, min(requested, deadline - monotonic()))
+
+    if scanner is None or scanner.poll() is not None:
+        terminate_process(
+            kronos,
+            "kronos-inference",
+            2.0,
+            kill_timeout=1.0,
+            deadline=deadline,
+        )
+        return
+
+    logger.info("إرسال SIGTERM إلى runner-scanner (pid=%d)", scanner.pid)
+    scanner.terminate()
+    try:
+        scanner.wait(timeout=remaining(scanner_timeout))
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "runner-scanner لم يتوقف خلال %.1fث؛ إيقاف Kronos لفك الطلب الجاري",
+            scanner_timeout,
+        )
+        terminate_process(
+            kronos,
+            "kronos-inference",
+            2.0,
+            kill_timeout=1.0,
+            deadline=deadline,
+        )
+        kronos = None
+        try:
+            scanner.wait(timeout=remaining(5.0))
+        except subprocess.TimeoutExpired:
+            logger.error("runner-scanner لم يغلق SQLite؛ إرسال SIGKILL")
+            scanner.kill()
+            try:
+                scanner.wait(timeout=remaining(1.0))
+            except subprocess.TimeoutExpired:
+                logger.critical(
+                    "runner-scanner لم يُحصد قبل انتهاء ميزانية الإيقاف"
+                )
+        return
+    terminate_process(
+        kronos,
+        "kronos-inference",
+        2.0,
+        kill_timeout=1.0,
+        deadline=deadline,
+    )
 
 
 def run(
@@ -385,7 +453,7 @@ def run(
         environment, "KRONOS_HEALTH_FAILURE_LIMIT", 3, 1, 10
     )
     scanner_timeout = _bounded_float(
-        environment, "KRONOS_SCANNER_SHUTDOWN_TIMEOUT_SEC", 130.0, 1.0, 280.0
+        environment, "KRONOS_SCANNER_SHUTDOWN_TIMEOUT_SEC", 15.0, 1.0, 20.0
     )
     layout = runtime_layout()
     scanner_env, service_env, endpoint = child_environments(environment, layout)
