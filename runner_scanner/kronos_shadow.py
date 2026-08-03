@@ -675,17 +675,25 @@ class KronosShadowWorker:
             observation_grace_min=self.observation_grace_min,
             selection_revision=str(selection_revision or "unspecified"),
         )
-        self._queue: Queue[_ShadowTask] = Queue(maxsize=max(1, int(queue_size)))
+        queue_capacity = max(1, int(queue_size))
+        self._queue: Queue[_ShadowTask] = Queue(maxsize=queue_capacity)
+        # سجلات ضغط الطابور تُحفَظ خارج submit حتى لا ينتظر خيط الماسح
+        # SQLite. الطابور الثاني محدود أيضًا كي تبقى الذاكرة مضبوطة عند
+        # استمرار بطء التخزين؛ أي فقد فيه يظهر صراحةً في runtime_stats.
+        self._audit_queue: Queue[_ShadowTask] = Queue(maxsize=queue_capacity)
         self._now_fn = now_fn
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self._last_submitted: dict[str, int] = {}
+        self._last_audited: dict[str, int] = {}
         self._last_forecast_close: dict[str, int] = {}
         self._runtime_counts = {
             "enqueued": 0,
             "duplicate": 0,
             "queue_full": 0,
+            "audit_duplicate": 0,
+            "audit_dropped": 0,
             "rejected_stopped": 0,
             "invalid_ticker": 0,
             "stale_before_fetch": 0,
@@ -721,6 +729,8 @@ class KronosShadowWorker:
                 **self._runtime_counts,
                 "queue_depth": self._queue.qsize(),
                 "queue_capacity": self._queue.maxsize,
+                "audit_queue_depth": self._audit_queue.qsize(),
+                "audit_queue_capacity": self._audit_queue.maxsize,
                 "worker_alive": (
                     self._thread is not None and self._thread.is_alive()
                 ),
@@ -755,7 +765,6 @@ class KronosShadowWorker:
             str(session or "").strip(),
             session_end,
         )
-        queue_was_full = False
         with self._lock:
             if self._stop.is_set():
                 self._runtime_counts["rejected_stopped"] += 1
@@ -767,29 +776,24 @@ class KronosShadowWorker:
                 self._queue.put_nowait(task)
             except Full:
                 self._runtime_counts["queue_full"] += 1
-                queue_was_full = True
+                if self._last_audited.get(clean_ticker, -1) >= close_ms:
+                    self._runtime_counts["audit_duplicate"] += 1
+                else:
+                    try:
+                        self._audit_queue.put_nowait(task)
+                    except Full:
+                        self._runtime_counts["audit_dropped"] += 1
+                        self._runtime_counts["save_failed"] += 1
+                    else:
+                        # dedupe مستقل عن _last_submitted كي تبقى إعادة محاولة
+                        # inference لنفس الإغلاق ممكنة إذا انخفض الضغط لاحقًا.
+                        self._last_audited[clean_ticker] = close_ms
             else:
                 self._last_submitted[clean_ticker] = close_ms
                 self._runtime_counts["enqueued"] += 1
                 return True
 
-        # الحفظ خارج قفل العامل: يسجّل فقدان الـcohort عبر restart، ولا يحبس
-        # الخيط الذي يفرغ الطابور. فشل SQLite يبقى best-effort ولا يعطل core.
-        assert queue_was_full
         logger.debug("طابور Kronos ممتلئ؛ تخطّي %s", clean_ticker)
-        self._save(
-            task,
-            KronosShadowResult(
-                status="skipped",
-                error="queue_full: طابور Kronos ممتلئ؛ لم يُرسل المرشح إلى الاستدلال",
-            ),
-            lookback=self.lookback,
-            pred_len=self.pred_len,
-            asof_at=datetime.fromtimestamp(
-                task.close_ms / 1000.0, tz=timezone.utc
-            ),
-            received_at=requested_at,
-        )
         return False
 
     def stop(self, timeout: Optional[float] = None) -> None:
@@ -813,16 +817,28 @@ class KronosShadowWorker:
         if thread is not None and thread is not threading.current_thread():
             safe_timeout = None if timeout is None else max(0.0, float(timeout))
             thread.join(safe_timeout)
+        # عند عدم تشغيل الخيط (شائع في الاختبارات/الإقلاع الفاشل) أو بعد
+        # توقفه، لا نترك سجلات التدقيق معلقة. الحجب هنا مقبول لأنه مسار إيقاف.
+        if thread is None or not thread.is_alive():
+            while self._drain_one_audit():
+                pass
 
     def _run(self) -> None:
         massive_client: Any = None
         while True:
-            if self._stop.is_set() and self._queue.empty():
-                return
             try:
-                task = self._queue.get(timeout=0.1)
+                # المهمة المقبولة أولى من telemetry؛ بطء SQLite في سجل امتلاء
+                # لا يجوز أن يجعل استدلالًا موجودًا في الطابور يتقادم.
+                task = self._queue.get_nowait()
             except Empty:
-                continue
+                if self._drain_one_audit():
+                    continue
+                if self._stop.is_set():
+                    return
+                try:
+                    task = self._queue.get(timeout=0.1)
+                except Empty:
+                    continue
             if self._stop.is_set():
                 self._bump_runtime("discarded_on_stop")
                 self._save_stopped_task(task)
@@ -845,6 +861,38 @@ class KronosShadowWorker:
             finally:
                 self._bump_runtime("handled")
                 self._queue.task_done()
+
+    def _drain_one_audit(self) -> bool:
+        """حفظ سجل queue_full واحد من خيط الخلفية، إن وجد."""
+        try:
+            task = self._audit_queue.get_nowait()
+        except Empty:
+            return False
+        try:
+            self._save_queue_full_task(task)
+        finally:
+            self._audit_queue.task_done()
+        return True
+
+    def _save_queue_full_task(self, task: _ShadowTask) -> None:
+        saved = self._save(
+            task,
+            KronosShadowResult(
+                status="skipped",
+                error="queue_full: طابور Kronos ممتلئ؛ لم يُرسل المرشح إلى الاستدلال",
+            ),
+            lookback=self.lookback,
+            pred_len=self.pred_len,
+            asof_at=datetime.fromtimestamp(
+                task.close_ms / 1000.0, tz=timezone.utc
+            ),
+            received_at=task.requested_at,
+        )
+        if not saved:
+            # اسمح بمحاولة تدقيق لاحقة لنفس الفرصة عند تعافي التخزين.
+            with self._lock:
+                if self._last_audited.get(task.ticker) == task.close_ms:
+                    self._last_audited.pop(task.ticker, None)
 
     def _save_stopped_task(self, task: _ShadowTask) -> None:
         try:

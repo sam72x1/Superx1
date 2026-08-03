@@ -420,10 +420,11 @@ def test_worker_fetches_independent_context_dedupes_and_saves():
 
 
 def test_worker_queue_is_bounded_before_start():
+    store = _Store()
     worker = KronosShadowWorker(
         client=KronosShadowClient(""),
         massive_client_factory=lambda: _Massive([]),
-        store=_Store(),
+        store=store,
         pred_len=1,
         horizons=(1,),
         queue_size=1,
@@ -436,12 +437,127 @@ def test_worker_queue_is_bounded_before_start():
     assert worker.runtime_stats["duplicate"] == 1
     assert worker.runtime_stats["queue_full"] == 1
     assert worker.runtime_stats["queue_depth"] == 1
-    assert len(worker.store.calls) == 1
-    ticker, asof_at, saved = worker.store.calls[0]
+    assert worker.runtime_stats["audit_queue_depth"] == 1
+    assert store.calls == []
+
+    worker.start()
+    try:
+        assert store.saved.wait(2.0)
+    finally:
+        worker.stop()
+
+    queue_full_calls = [call for call in store.calls if call[0] == "B"]
+    assert len(queue_full_calls) == 1
+    ticker, asof_at, saved = queue_full_calls[0]
     assert ticker == "B"
     assert asof_at == datetime(2026, 6, 26, 14, 20, tzinfo=timezone.utc)
     assert saved["status"] == "skipped"
     assert "ممتلئ" in saved["error"]
+
+
+def test_queue_full_submit_never_waits_for_audit_store():
+    entered = threading.Event()
+    main_fetched = threading.Event()
+    release = threading.Event()
+    returned = threading.Event()
+
+    class _BlockingStore:
+        def save_kronos_forecast(self, *_args, **_kwargs):
+            entered.set()
+            release.wait(2.0)
+
+    class _TrackingMassive(_Massive):
+        def bars_5min(self, ticker, start, end):
+            main_fetched.set()
+            return super().bars_5min(ticker, start, end)
+
+    massive = _TrackingMassive([])
+
+    worker = KronosShadowWorker(
+        client=KronosShadowClient(""),
+        massive_client_factory=lambda: massive,
+        store=_BlockingStore(),
+        pred_len=1,
+        horizons=(1,),
+        queue_size=1,
+        now_fn=lambda: now,
+    )
+    now = datetime(2026, 6, 26, 14, 20, tzinfo=timezone.utc)
+    assert worker.submit("A", now=now)
+
+    submitter = threading.Thread(
+        target=lambda: (worker.submit("B", now=now), returned.set())
+    )
+    submitter.start()
+    try:
+        assert returned.wait(0.5)
+        assert not entered.is_set()
+        assert worker.runtime_stats["audit_queue_depth"] == 1
+
+        worker.start()
+        assert main_fetched.wait(1.0)
+        assert entered.wait(1.0)
+    finally:
+        release.set()
+        submitter.join(1.0)
+        worker.stop(2.0)
+
+
+def test_queue_full_audit_queue_is_bounded_and_exposes_loss():
+    store = _Store()
+    worker = KronosShadowWorker(
+        client=KronosShadowClient(""),
+        massive_client_factory=lambda: _Massive([]),
+        store=store,
+        pred_len=1,
+        horizons=(1,),
+        queue_size=1,
+    )
+    now = datetime(2026, 6, 26, 14, 20, tzinfo=timezone.utc)
+    assert worker.submit("A", now=now)
+    assert not worker.submit("B", now=now)
+    assert not worker.submit("C", now=now)
+
+    stats = worker.runtime_stats
+    assert stats["queue_full"] == 2
+    assert stats["audit_queue_depth"] == 1
+    assert stats["audit_queue_capacity"] == 1
+    assert stats["audit_dropped"] == 1
+    assert stats["save_failed"] == 1
+
+    worker.stop()
+    assert {call[0] for call in store.calls} == {"A", "B"}
+
+
+def test_queue_full_audit_dedupes_without_blocking_inference_retry():
+    store = _Store()
+    worker = KronosShadowWorker(
+        client=KronosShadowClient(""),
+        massive_client_factory=lambda: _Massive([]),
+        store=store,
+        pred_len=1,
+        horizons=(1,),
+        queue_size=2,
+    )
+    now = datetime(2026, 6, 26, 14, 20, tzinfo=timezone.utc)
+    assert worker.submit("A", now=now)
+    assert worker.submit("D", now=now)
+    assert not worker.submit("B", now=now)
+    assert not worker.submit("B", now=now)
+    assert not worker.submit("C", now=now)
+
+    stats = worker.runtime_stats
+    assert stats["queue_full"] == 3
+    assert stats["audit_duplicate"] == 1
+    assert stats["audit_queue_depth"] == 2
+    assert stats["audit_dropped"] == 0
+
+    worker.stop()
+    audited = {
+        call[0] for call in store.calls
+        if str(call[2]["error"]).startswith("queue_full:")
+    }
+    assert audited == {"B", "C"}
 
 
 def test_queue_full_audit_survives_later_failure_for_same_close():
@@ -457,6 +573,7 @@ def test_queue_full_audit_survives_later_failure_for_same_close():
     now = datetime(2026, 6, 26, 14, 20, tzinfo=timezone.utc)
     assert worker.submit("A", now=now)
     assert not worker.submit("B", now=now)
+    assert worker._drain_one_audit()  # noqa: SLF001 — ثبّت سجل الامتلاء أولًا
     task = SimpleNamespace(
         ticker="B",
         requested_at=now,
