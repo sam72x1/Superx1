@@ -179,7 +179,8 @@ def _build_snapshot(ticker: str, prev_close: float,
         day_low=min(b.l for b in bars), day_volume=tv,
         day_vwap=(pv / tv if tv > 0 else 0.0),
         change_pct=(last - prev_close) / prev_close * 100.0,
-        updated_ns=bars[-1].t_ms * 1_000_000)
+        updated_ns=bars[-1].t_ms * 1_000_000,
+        price_observed_ns=bars[-1].t_ms * 1_000_000)
 
 
 # ── محاكاة النتيجة من شموع ما بعد الدخول ──────────────────────────

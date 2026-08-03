@@ -18,6 +18,10 @@ import re
 
 import pytest
 
+# المطوّر قد يملك .env حقيقيًا بجانب المشروع؛ لا نسمح له بتغيير افتراضات
+# المجموعة وقت جمع الوحدات. اختبارات dotenv وحدها تعيد تفعيل التحميل صراحة.
+os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+
 from runner_scanner import config as _cfg
 
 

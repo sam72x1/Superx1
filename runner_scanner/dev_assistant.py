@@ -24,10 +24,12 @@ import os
 import shutil
 import sys
 import tempfile
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 
 from . import calibration
 from .config import Config
+from .kronos_metrics import iter_flatten_kronos_rows
 from .textutil import esc   # هروب HTML مشترك (يُعاد تصديره للتوافق)
 
 __all__ = ["esc", "build_dev_report", "export_csvs", "send_report_and_files"]
@@ -360,20 +362,31 @@ def top_action(store, cfg: Config) -> str:
 
 
 # ── تصدير CSV (ملفات الصفقات والفرص الفائتة) ─────────────────────
-def _write_csv(rows: list, path: str) -> str | None:
-    """يكتب صفوف sqlite3.Row إلى CSV ويرجّع المسار (أو None لو فاضي)."""
-    if not rows:
+def _write_csv(rows: Iterable, path: str) -> str | None:
+    """يكتب iterable إلى CSV تدريجيًا ويرجع المسار (أو None لو فاضي)."""
+    iterator = iter(rows)
+    try:
+        first = next(iterator)
+    except StopIteration:
         return None
-    cols = list(rows[0].keys())
+    cols = list(first.keys())
     try:
         with open(path, "w", newline="", encoding="utf-8-sig") as fh:
             w = csv.writer(fh)
             w.writerow(cols)
-            for r in rows:
+            w.writerow([first[c] for c in cols])
+            for r in iterator:
                 w.writerow([r[c] for c in cols])
         return path
     except OSError:
         return None
+    finally:
+        close = getattr(iterator, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:  # التصدير best-effort؛ لا يحجب التقرير الأساسي
+                pass
 
 
 def export_csvs(store, cfg: Config, now: datetime | None = None
@@ -391,6 +404,20 @@ def export_csvs(store, cfg: Config, now: datetime | None = None
                     os.path.join(tmp, f"missed_{day}.csv"))
     if p2:
         out.append((p2, f"📎 الفرص الفائتة (مرفوض صعد) — {day}"))
+    fetch_kronos = getattr(store, "fetch_kronos_forecasts", None)
+    if callable(fetch_kronos):
+        fetch_window = getattr(store, "fetch_kronos_evaluation_window", None)
+        kronos_rows = (
+            fetch_window(trading_days=30)
+            if callable(fetch_window)
+            else fetch_kronos(limit=10_000)
+        )
+        p3 = _write_csv(
+            iter_flatten_kronos_rows(kronos_rows),
+            os.path.join(tmp, f"kronos_shadow_{day}.csv"),
+        )
+        if p3:
+            out.append((p3, f"🧪 توقعات Kronos Shadow ونتائجها — {day}"))
     if not out:            # لم يُكتب أي ملف → لا تترك مجلدًا مؤقّتًا فارغًا
         shutil.rmtree(tmp, ignore_errors=True)
     return out

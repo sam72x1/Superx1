@@ -20,3 +20,5 @@ jobs:
         run: pip install -r requirements.txt -r requirements-dev.txt
       - name: تشغيل الاختبارات
         run: python3 -m pytest runner_scanner/tests/ -q
+      - name: اختبار عقد خدمة Kronos المعزولة
+        run: python3 -m unittest discover -s services/kronos_inference/tests -v

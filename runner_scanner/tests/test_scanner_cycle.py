@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from runner_scanner.config import Config
-from runner_scanner.main import Scanner
+import runner_scanner.main as main_module
+from runner_scanner.main import Scanner, _kronos_session_end
+from runner_scanner.models import Session
 from runner_scanner.tests.fixtures import FakeClient, make_snapshot
 
 ET = ZoneInfo("America/New_York")
@@ -18,8 +21,12 @@ ET_NOW = datetime(2026, 6, 25, 10, 30, tzinfo=ET)   # جلسة رسمية
 class CycleClient(FakeClient):
     """FakeClient + full_snapshot يرجّع سهم قوي + ضوضاء تُفلتر."""
 
+    def __init__(self, *args, snapshot_price_ns=0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.snapshot_price_ns = snapshot_price_ns
+
     def full_snapshot(self):
-        return [
+        entries = [
             make_snapshot(ticker="STRONG", last=2.5, prev=2.0, vol=1_500_000,
                           change_pct=25.0),     # سهم قوي يُقبل
             make_snapshot(ticker="WEAK", last=5.0, prev=4.9, vol=40_000,
@@ -29,6 +36,9 @@ class CycleClient(FakeClient):
             make_snapshot(ticker="CHAMP", last=3.0, prev=2.7, vol=1_200_000,
                           change_pct=8.0),       # تحت العتبة (لكنه بطل موروث)
         ]
+        for entry in entries:
+            entry.price_observed_ns = self.snapshot_price_ns
+        return entries
 
 
 def _scanner():
@@ -38,7 +48,46 @@ def _scanner():
     sc = Scanner(cfg)
     sc.client = CycleClient()    # حقن عميل وهمي
     sc.short = None              # لا جلب شورت شبكي في الاختبارات
+    sc._kronos_now_fn = lambda: ET_NOW
     return sc
+
+
+def test_kronos_session_end_respects_premarket_and_early_close():
+    cfg = Config(massive_api_key="x")
+    early_day = datetime(2026, 11, 27, 7, 0, tzinfo=ET)
+
+    assert _kronos_session_end(cfg, Session.PREMARKET, early_day) == datetime(
+        2026, 11, 27, 9, 30, tzinfo=ET)
+    assert _kronos_session_end(cfg, Session.REGULAR, early_day) == datetime(
+        2026, 11, 27, 13, 0, tzinfo=ET)
+
+
+def test_scanner_never_starts_kronos_worker_when_shadow_store_is_unavailable(
+    tmp_path, monkeypatch,
+):
+    path = tmp_path / "broken-shadow.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE VIEW kronos_forecasts AS SELECT 1 AS x")
+    conn.commit()
+    conn.close()
+
+    def unexpected_client(*args, **kwargs):
+        raise AssertionError("Kronos client must not start without its store")
+
+    monkeypatch.setattr(main_module, "KronosShadowClient", unexpected_client)
+    cfg = Config(
+        dry_run=True,
+        db_path=str(path),
+        massive_api_key="x",
+        halts_enabled=False,
+        kronos_shadow_enabled=True,
+        kronos_service_url="https://kronos.example",
+    )
+
+    scanner = Scanner(cfg)
+    assert scanner.store.kronos_available is False
+    assert scanner.kronos is None
+    scanner.shutdown()
 
 
 def test_full_cycle_sends_one_alert():
@@ -48,6 +97,108 @@ def test_full_cycle_sends_one_alert():
     assert sc.store.already_alerted("STRONG") is True
     # المرفوضة لم تُنبَّه
     assert sc.store.already_alerted("PENNY") is False
+    sc.shutdown()
+
+
+def test_accepted_candidate_is_submitted_to_kronos_shadow_and_worker_stops():
+    class _Kronos:
+        def __init__(self):
+            self.submitted = []
+            self.stop_timeouts = []
+            self.is_alive = False
+
+        def submit(self, ticker, *, session="", session_end_at=None, now=None):
+            self.submitted.append((ticker, session, session_end_at, now))
+            return True
+
+        def stop(self, timeout=None):
+            self.stop_timeouts.append(timeout)
+
+    sc = _scanner()
+    worker = _Kronos()
+    sc.kronos = worker
+
+    assert sc.run_cycle(et_now=ET_NOW) == 1
+    assert worker.submitted == [(
+        "STRONG", "رسمي",
+        datetime(2026, 6, 25, 16, 0, tzinfo=ET), None,
+    )]
+    sc.shutdown()
+    assert len(worker.stop_timeouts) == 1
+
+
+def test_kronos_shadow_is_not_started_when_full_horizon_crosses_session_end():
+    class _Kronos:
+        is_alive = False
+
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, ticker, **kwargs):
+            self.submitted.append((ticker, kwargs))
+
+        def stop(self, timeout=None):
+            return None
+
+    sc = _scanner()
+    sc.cfg.kronos_pred_len = 66  # آخر هدف = 16:00؛ لا توجد دورة قياس بعده.
+    worker = _Kronos()
+    sc.kronos = worker
+
+    assert sc.run_cycle(et_now=ET_NOW) == 1
+
+    assert worker.submitted == []
+    sc.shutdown()
+
+
+def test_cycle_closes_kronos_forecast_against_snapshot_price():
+    sc = _scanner()
+    sc.client = CycleClient(
+        snapshot_price_ns=int(ET_NOW.timestamp() * 1_000_000_000))
+    asof = datetime(2026, 6, 25, 10, 0, tzinfo=ET)
+    sc.store.save_kronos_forecast(
+        "STRONG", asof, status="ok", model_revision="rev-1",
+        returns={6: 5.0}, base_close=2.0)
+
+    sc.run_cycle(et_now=ET_NOW)
+
+    row = sc.store.fetch_kronos_forecasts()[0]
+    assert row["actuals"] == {6: 25.0}
+    assert row["completed_at"] is not None
+    sc.shutdown()
+
+
+def test_kronos_actual_capture_failure_never_stops_core_alert_cycle():
+    sc = _scanner()
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("corrupt optional shadow row")
+
+    sc.store.update_kronos_actuals = _fail
+
+    assert sc.run_cycle(et_now=ET_NOW) == 1
+    assert sc.store.already_alerted("STRONG") is True
+    sc.shutdown()
+
+
+def test_kronos_measurement_uses_time_after_snapshot_not_cycle_start():
+    cycle_start = datetime(2026, 6, 25, 10, 29, 30, tzinfo=ET)
+    observed_at = datetime(2026, 6, 25, 10, 30, 10, tzinfo=ET)
+    measurement_now = datetime(2026, 6, 25, 10, 30, 20, tzinfo=ET)
+    sc = _scanner()
+    sc.client = CycleClient(
+        snapshot_price_ns=int(observed_at.timestamp() * 1_000_000_000)
+    )
+    sc._kronos_now_fn = lambda: measurement_now
+    sc.store.save_kronos_forecast(
+        "STRONG", datetime(2026, 6, 25, 10, 0, tzinfo=ET),
+        status="ok", model_revision="rev-1", returns={6: 5.0},
+        base_close=2.0,
+    )
+
+    sc.run_cycle(et_now=cycle_start)
+
+    assert sc.store.fetch_kronos_forecasts()[0]["actuals"] == {6: 25.0}
     sc.shutdown()
 
 

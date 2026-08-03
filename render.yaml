@@ -10,7 +10,7 @@ services:
     # انهيار وقت التشغيل إلى فشل بناء لا يُبدّل الـworker (نتيجة تدقيق DX-02).
     buildCommand: pip install -r requirements.txt && python -c "import runner_scanner.main"
     startCommand: python -m runner_scanner.main
-    autoDeploy: false
+    autoDeployTrigger: off
     disk:
       name: runner-data
       mountPath: /var/data   # لازم يطابق DB_PATH
@@ -36,3 +36,60 @@ services:
       # pandas/numpy (تبعية yfinance) فيفشل البناء من المصدر (تأمين رخيص).
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # Kronos يعمل كـShadow فقط: لا يدخل في البوابات أو الدرجات أو التنبيه.
+      # Render ينسخ عنوان HTTPS والسر المولّد من خدمة الاستدلال بلا كشفهما في Git.
+      - key: KRONOS_SHADOW_ENABLED
+        value: "true"
+      - key: KRONOS_SERVICE_URL
+        fromService:
+          type: web
+          name: superx1-kronos
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: KRONOS_SERVICE_TOKEN
+        fromService:
+          type: web
+          name: superx1-kronos
+          envVarKey: KRONOS_API_TOKEN
+      - key: KRONOS_TIMEOUT_SEC
+        value: "120"
+      - key: KRONOS_CONTEXT_DAYS
+        value: "14"
+      - key: KRONOS_LOOKBACK
+        value: "512"
+      - key: KRONOS_PRED_LEN
+        value: "18"
+      - key: KRONOS_HORIZONS
+        value: "6,12,18"
+      - key: KRONOS_QUEUE_SIZE
+        value: "32"
+      - key: KRONOS_OBSERVATION_GRACE_MIN
+        value: "3"
+      - key: KRONOS_MAX_CONTEXT_LAG_SEC
+        value: "360"
+
+  # خدمة مستقلة حتى لا تشارك PyTorch/الأوزان ذاكرة عامل التنبيهات.
+  # القياس الفعلي لـ512 شمعة بلغ 445.81MiB؛ Standard (2GB) تترك هامشًا آمنًا.
+  - type: web
+    name: superx1-kronos
+    runtime: docker
+    branch: main
+    plan: standard
+    dockerfilePath: ./services/kronos_inference/Dockerfile
+    dockerContext: .
+    autoDeployTrigger: off
+    healthCheckPath: /health
+    envVars:
+      - key: KRONOS_API_TOKEN
+        generateValue: true
+      - key: KRONOS_HOST
+        value: 0.0.0.0
+      - key: KRONOS_PORT
+        value: "10000"
+      - key: KRONOS_DEVICE
+        value: cpu
+      - key: KRONOS_SOURCE_REVISION
+        value: 67b630e67f6a18c9e9be918d9b4337c960db1e9a
+      - key: KRONOS_MODEL_REVISION
+        value: 901c26c1332695a2a8f243eb2f37243a37bea320
+      - key: KRONOS_TOKENIZER_REVISION
+        value: 0e0117387f39004a9016484a186a908917e22426

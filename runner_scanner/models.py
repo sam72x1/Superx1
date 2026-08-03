@@ -51,6 +51,8 @@ class SnapshotEntry:
     day_vwap: float          # vw من شمعة اليوم (تقريب، مو session-anchored)
     change_pct: float        # todays_change_perc عن إغلاق أمس
     updated_ns: int = 0      # طابع زمني بالنانوثانية إن وُجد
+    # طابع السعر نفسه، لا آخر تحديث لأي جزء من snapshot. صفر عند fallback يومي.
+    price_observed_ns: int = 0
 
     @property
     def is_valid(self) -> bool:
