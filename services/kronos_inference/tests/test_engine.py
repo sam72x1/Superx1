@@ -6,7 +6,11 @@ from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 from services.kronos_inference.config import DEFAULT_KRONOS_SOURCE_REVISION, ServiceConfig
-from services.kronos_inference.engine import EngineUnavailable, KronosEngine
+from services.kronos_inference.engine import (
+    EngineUnavailable,
+    KronosEngine,
+    _runtime_version_matches,
+)
 
 
 class EngineReadinessTests(unittest.TestCase):
@@ -38,7 +42,7 @@ class EngineReadinessTests(unittest.TestCase):
                     side_effect={
                         "numpy": "1.26.4",
                         "pandas": "2.2.2",
-                        "torch": "2.13.0",
+                        "torch": "2.13.0+cpu",
                         "einops": "0.8.1",
                         "huggingface_hub": "0.33.1",
                         "safetensors": "0.6.2",
@@ -72,6 +76,18 @@ class EngineReadinessTests(unittest.TestCase):
                     "services.kronos_inference.engine.package_version",
                     return_value="wrong-version"):
                 self.assertFalse(engine.is_ready())
+
+    def test_runtime_pin_accepts_only_the_official_cpu_local_build(self) -> None:
+        self.assertTrue(_runtime_version_matches("torch", "2.13.0", "2.13.0"))
+        self.assertTrue(
+            _runtime_version_matches("torch", "2.13.0+cpu", "2.13.0")
+        )
+        self.assertFalse(
+            _runtime_version_matches("torch", "2.13.0+cu130", "2.13.0")
+        )
+        self.assertFalse(
+            _runtime_version_matches("numpy", "1.26.4+cpu", "1.26.4")
+        )
 
     def test_ready_rejects_wrong_or_modified_git_checkout(self) -> None:
         config = ServiceConfig(
