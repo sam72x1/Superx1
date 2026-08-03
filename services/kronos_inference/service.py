@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from time import monotonic
 from typing import Any, Mapping, Protocol
 
 from .auth import HeadersWithDuplicates, is_authorized
@@ -33,12 +34,21 @@ class ForecastApplication:
         self.engine = engine
         # المحرّك متسلسل أصلًا؛ لا نترك handlerات تنتظر خلف inference بطيء.
         self._forecast_slot = threading.BoundedSemaphore(1)
+        self._activity_lock = threading.Lock()
+        self._forecast_started_at: float | None = None
 
     def authorized(self, headers: Mapping[str, str] | HeadersWithDuplicates) -> bool:
         return is_authorized(headers, self.config.api_token)
 
     def handle_health(self) -> tuple[int, dict[str, Any]]:
-        return 200, self.engine.health()
+        with self._activity_lock:
+            started_at = self._forecast_started_at
+        age = None if started_at is None else max(0.0, monotonic() - started_at)
+        return 200, {
+            **self.engine.health(),
+            "forecast_in_progress": started_at is not None,
+            "forecast_age_seconds": None if age is None else round(age, 3),
+        }
 
     def handle_ready(
         self,
@@ -81,6 +91,8 @@ class ForecastApplication:
 
         if not self._forecast_slot.acquire(blocking=False):
             return 429, _error("busy", "خدمة Kronos تنفّذ توقعًا آخر؛ أعد المحاولة")
+        with self._activity_lock:
+            self._forecast_started_at = monotonic()
         try:
             try:
                 return 200, self.engine.forecast(request)
@@ -94,4 +106,6 @@ class ForecastApplication:
                 logger.exception("خطأ غير متوقع في خدمة Kronos")
                 return 500, _error("internal_error", "حدث خطأ داخلي")
         finally:
+            with self._activity_lock:
+                self._forecast_started_at = None
             self._forecast_slot.release()

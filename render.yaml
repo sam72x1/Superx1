@@ -1,15 +1,21 @@
-# Render Background Worker + قرص دائم (القرار 5).
-# القرص الدائم غير قابل للتفاوض (منع تكرار التنبيه — درس CCXI).
+# Render Background Worker واحد + قرص دائم (القرار 5).
+# يحتفظ باسم الخدمة والقرص الحاليين، ويشغّل الماسح وKronos محليًا داخل نفس
+# Standard instance حتى لا تُحاسب خدمة استدلال ثانية.
 services:
   - type: worker
     name: runner-scanner
     runtime: python
     branch: main                         # النشر من الفرع المستقر (main)
-    plan: starter            # worker مدفوع يبقى حيًّا (لا يموت بصمت وسط الجلسة)
-    # فحص استيراد بثانيتين بعد التثبيت: يحوّل «تبعية ناقصة/خطأ استيراد» من
-    # انهيار وقت التشغيل إلى فشل بناء لا يُبدّل الـworker (نتيجة تدقيق DX-02).
-    buildCommand: pip install -r requirements.txt && python -c "import runner_scanner.main"
-    startCommand: python -m runner_scanner.main
+    # Kronos وحده بلغ 445.81MiB RSS فعليًا؛ نجمعه مع الماسح على Standard (2GB)
+    # بدل Starter + خدمة Standard منفصلة.
+    plan: standard
+    # يُخبز checkout والأوزان ذات المراجعات المثبتة داخل build artifact. runtime
+    # يعمل offline ولا يكتب النموذج على قرص SQLite الدائم.
+    buildCommand: python -m pip install -r requirements.txt -r services/kronos_inference/requirements.txt && python -m services.kronos_inference.build_runtime && python -c "import runner_scanner.main"
+    # supervisor هو PID الرئيسي: يبقي عطل Shadow معزولًا، ويمرر SIGTERM للماسح
+    # أولًا لتفريغ طابوره ثم يوقف خدمة loopback.
+    startCommand: python -m runner_scanner.render_supervisor
+    maxShutdownDelaySeconds: 180
     autoDeployTrigger: off
     disk:
       name: runner-data
@@ -37,19 +43,47 @@ services:
       - key: PYTHON_VERSION
         value: "3.11.9"
       # Kronos يعمل كـShadow فقط: لا يدخل في البوابات أو الدرجات أو التنبيه.
-      # Render ينسخ عنوان HTTPS والسر المولّد من خدمة الاستدلال بلا كشفهما في Git.
+      # HTTP محلي داخل نفس instance؛ لا عنوان عام ولا خدمة Render ثانية.
       - key: KRONOS_SHADOW_ENABLED
         value: "true"
       - key: KRONOS_SERVICE_URL
-        fromService:
-          type: web
-          name: superx1-kronos
-          envVarKey: RENDER_EXTERNAL_URL
+        value: http://127.0.0.1:18080
+      # يستبدل أي fromService قديم تحتفظ به مزامنة Blueprint. الـsupervisor
+      # يحذفه من بيئة الطفل لأن loopback لا يحتاج Bearer.
       - key: KRONOS_SERVICE_TOKEN
-        fromService:
-          type: web
-          name: superx1-kronos
-          envVarKey: KRONOS_API_TOKEN
+        value: loopback-only
+      - key: KRONOS_LOCAL_PORT
+        value: "18080"
+      - key: KRONOS_STARTUP_TIMEOUT_SEC
+        value: "60"
+      - key: KRONOS_RESTART_DELAY_SEC
+        value: "5"
+      - key: KRONOS_HEALTH_INTERVAL_SEC
+        value: "10"
+      - key: KRONOS_HEALTH_FAILURE_LIMIT
+        value: "3"
+      # مهلة العميل 120ث؛ بعد 150ث يعدّ المشرف الاستدلال عالقًا ويعيد العملية.
+      - key: KRONOS_HANG_TIMEOUT_SEC
+        value: "150"
+      - key: KRONOS_SCANNER_SHUTDOWN_TIMEOUT_SEC
+        value: "130"
+      - key: KRONOS_DEVICE
+        value: cpu
+      - key: KRONOS_SOURCE_REVISION
+        value: 67b630e67f6a18c9e9be918d9b4337c960db1e9a
+      - key: KRONOS_MODEL_REVISION
+        value: 901c26c1332695a2a8f243eb2f37243a37bea320
+      - key: KRONOS_TOKENIZER_REVISION
+        value: 0e0117387f39004a9016484a186a908917e22426
+      # لا يستهلك الاستدلال كل CPU العامل على حساب دورة الماسح.
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: NUMEXPR_NUM_THREADS
+        value: "1"
       - key: KRONOS_TIMEOUT_SEC
         value: "120"
       - key: KRONOS_CONTEXT_DAYS
@@ -66,30 +100,3 @@ services:
         value: "3"
       - key: KRONOS_MAX_CONTEXT_LAG_SEC
         value: "360"
-
-  # خدمة مستقلة حتى لا تشارك PyTorch/الأوزان ذاكرة عامل التنبيهات.
-  # القياس الفعلي لـ512 شمعة بلغ 445.81MiB؛ Standard (2GB) تترك هامشًا آمنًا.
-  - type: web
-    name: superx1-kronos
-    runtime: docker
-    branch: main
-    plan: standard
-    dockerfilePath: ./services/kronos_inference/Dockerfile
-    dockerContext: .
-    autoDeployTrigger: off
-    healthCheckPath: /health
-    envVars:
-      - key: KRONOS_API_TOKEN
-        generateValue: true
-      - key: KRONOS_HOST
-        value: 0.0.0.0
-      - key: KRONOS_PORT
-        value: "10000"
-      - key: KRONOS_DEVICE
-        value: cpu
-      - key: KRONOS_SOURCE_REVISION
-        value: 67b630e67f6a18c9e9be918d9b4337c960db1e9a
-      - key: KRONOS_MODEL_REVISION
-        value: 901c26c1332695a2a8f243eb2f37243a37bea320
-      - key: KRONOS_TOKENIZER_REVISION
-        value: 0e0117387f39004a9016484a186a908917e22426

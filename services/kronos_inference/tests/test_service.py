@@ -158,6 +158,11 @@ class ApplicationTests(unittest.TestCase):
         first_thread.start()
         self.assertTrue(engine.entered.wait(timeout=1.0))
 
+        health_status, health_body = application.handle_health()
+        self.assertEqual(health_status, 200)
+        self.assertIs(health_body["forecast_in_progress"], True)
+        self.assertGreaterEqual(health_body["forecast_age_seconds"], 0.0)
+
         second_status, second_body = application.handle_forecast(self._body(), {})
         self.assertEqual(second_status, 429)
         self.assertEqual(second_body["error"]["code"], "busy")
@@ -167,6 +172,9 @@ class ApplicationTests(unittest.TestCase):
         self.assertFalse(first_thread.is_alive())
         self.assertEqual(first_result[0][0], 200)
         self.assertEqual(engine.calls, 1)
+        _, idle_health = application.handle_health()
+        self.assertIs(idle_health["forecast_in_progress"], False)
+        self.assertIsNone(idle_health["forecast_age_seconds"])
 
     def test_internal_loading_detail_is_not_returned(self) -> None:
         application = ForecastApplication(ServiceConfig(), UnavailableEngine())

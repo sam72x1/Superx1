@@ -64,7 +64,8 @@ class ForecastRequestHandler(BaseHTTPRequestHandler):
         self.connection.settimeout(self.application.config.request_timeout_seconds)
 
     def log_message(self, format: str, *args: Any) -> None:
-        logger.info("%s - %s", self.client_address[0], format % args)
+        log = logger.debug if self.path in {"/health", "/ready"} else logger.info
+        log("%s - %s", self.client_address[0], format % args)
 
     def _send_json(
         self,

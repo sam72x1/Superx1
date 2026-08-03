@@ -51,17 +51,30 @@ DRY_RUN=true python -m runner_scanner.main
 
 ## الخطوة 4 — انشر على Render
 
-1. ادفع الكود (تم) ثم في [Render](https://render.com): **New → Blueprint**.
-2. اربط مستودع `Superx1` → Render يقرأ `render.yaml` تلقائيًا.
+1. في [Render](https://render.com)، افتح Blueprint الحالي إن كانت خدمة
+   `runner-scanner` موجودة؛ لا تنشئ Blueprint أو worker ثانيًا.
+2. اربط Blueprint بفرع `main` → Render يقرأ `render.yaml` تلقائيًا.
 3. في إعدادات الخدمة، أدخل الأسرار الثلاثة (Environment):
    - `MASSIVE_API_KEY`
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_CHAT_ID`
 4. تأكّد أن **القرص الدائم** مفعّل على `/var/data` (موجود في `render.yaml`).
-5. **Deploy**.
+5. راجع ترقية **الخدمة نفسها** من Starter إلى Standard (2GB)، مع بقاء الاسم
+   والقرص، ثم وافق على مزامنة Blueprint و**Deploy**. البناء الأول يحمّل أوزان
+   Kronos المثبتة وقد يستغرق عدة دقائق؛ الإقلاع نفسه يعمل offline.
 
 أول ما يشتغل، بيرسل لك على تيليجرام: **«🚀 الماسح الشامل اشتغل»** —
 كذا تتأكد إنه نُشر وموصول.
+
+في سجلات Render ابحث أيضًا عن `KRONOS_LOCAL_READY`: هذا يثبت أن checkout
+والاعتمادات المثبتة جاهزة على `127.0.0.1` داخل العامل. لا توجد خدمة
+`superx1-kronos` ثانية في Blueprint.
+
+إذا كانت خدمة `superx1-kronos` موجودة في لوحة Render لأي سبب (سواء أنشأها
+Blueprint سابق أو أُنشئت يدويًا)، احذف **تلك الخدمة فقط** بعد نجاح العامل
+الموحّد لإيقاف فوترتها. حذفها من `render.yaml` وحده لا يحذف المورد الموجود.
+لا تحذف `runner-scanner` ولا قرص `runner-data` لأنهما يحملان سجل SQLite ومنع
+التكرار.
 
 ---
 
