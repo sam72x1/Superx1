@@ -10,6 +10,7 @@ __pycache__/
 venv/
 env/
 .pytest_cache/
+.render/
 
 # قواعد بيانات محلية
 *.sqlite3
