@@ -199,7 +199,12 @@ class TelegramAssistant:
             kronos_status = (
                 "Shadow يعمل 🧪 · طابور "
                 f"{stats['queue_depth']}/{stats['queue_capacity']} · "
+                "تدقيق "
+                f"{stats.get('audit_queue_depth', 0)}/"
+                f"{stats.get('audit_queue_capacity', 0)} · "
                 f"فائت بالامتلاء {stats['queue_full']} · "
+                f"تدقيق مكرر {stats.get('audit_duplicate', 0)} · "
+                f"تدقيق فائت {stats.get('audit_dropped', 0)} · "
                 f"فشل حفظ {stats.get('save_failed', 0)}"
             )
         else:

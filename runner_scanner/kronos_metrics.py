@@ -380,9 +380,12 @@ def _runtime_stats_line(runtime_stats: Mapping | None) -> str:
     return (
         "عامل هذه العملية: أُدرج "
         f"{count('enqueued')} · امتلاء الطابور {count('queue_full')} · "
+        f"تدقيق مكرر {count('audit_duplicate')} · "
+        f"تدقيق فائت {count('audit_dropped')} · "
         f"قديم قبل الجلب {count('stale_before_fetch')} · "
         f"فشل حفظ {count('save_failed')} · "
-        f"العمق {count('queue_depth')}/{count('queue_capacity')}"
+        f"العمق {count('queue_depth')}/{count('queue_capacity')} · "
+        f"تدقيق {count('audit_queue_depth')}/{count('audit_queue_capacity')}"
     )
 
 

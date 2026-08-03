@@ -221,18 +221,25 @@ def test_report_exposes_queue_pressure_and_sampling_warning():
         runtime_stats={
             "enqueued": 8,
             "queue_full": 2,
+            "audit_duplicate": 3,
+            "audit_dropped": 1,
             "stale_before_fetch": 1,
             "save_failed": 4,
             "queue_depth": 3,
             "queue_capacity": 16,
+            "audit_queue_depth": 1,
+            "audit_queue_capacity": 16,
         },
     )
 
     assert "أُدرج 8" in text
     assert "امتلاء الطابور 2" in text
+    assert "تدقيق مكرر 3" in text
+    assert "تدقيق فائت 1" in text
     assert "قديم قبل الجلب 1" in text
     assert "فشل حفظ 4" in text
     assert "3/16" in text
+    assert "تدقيق 1/16" in text
 
 
 def test_report_shows_active_revision_sessions_and_escapes_dynamic_html():
