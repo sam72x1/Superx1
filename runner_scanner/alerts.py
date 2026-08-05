@@ -203,7 +203,7 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
         dv = _dollar_volume(c)
         if dv:
             safe = dv * cfg.liquidity_safe_share_pct / 100.0
-            warn = " ⚠️ رقيق" if dv < 400_000 else ""
+            warn = " ⚠️ رقيق" if dv < cfg.liquidity_thin_usd else ""
             lines.append(
                 f"💧 تداوُل اليوم: {_money(dv)}{warn} — مركز آمن ≤ "
                 f"{_money(safe)} ({cfg.liquidity_safe_share_pct:g}%)")

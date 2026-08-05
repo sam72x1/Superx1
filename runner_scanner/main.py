@@ -231,10 +231,17 @@ class Scanner:
                 # open→closed، §7). فبدل الضياع الصامت نصدر عطلًا مرئيًّا:
                 # «أُعلمك أنني عجزت عن إعلامك». إرشاد لا تصرّف — هوية البوت.
                 if ev.get("type") == "stop":
+                    key = f"stop_alert_lost:{ev.get('ticker')}"
                     self.monitor.raise_fault(
-                        f"stop_alert_lost:{ev.get('ticker')}",
+                        key,
                         f"⚠️ تعذّر إرسال تنبيه كسر الوقف لـ{ev.get('ticker')} "
                         "— راجع صفقتك يدويًّا الآن.")
+                    # هذا **حدث لحظي** لا حالة قائمة: الصفّ يُغلق فلا يُعاد
+                    # إرساله، ولا مسار تعافٍ يمسح المفتاح. تركُه يراكم مفتاحًا
+                    # لكل رمز فيظهر البوت «معطلًا» في /status وفي البريفنغ إلى
+                    # الأبد. نمسحه فورًا: أُبلغناك مرّة، وأي فشل لاحق لرمز آخر
+                    # (أو للرمز نفسه في يوم آخر) يستحقّ إبلاغًا جديدًا.
+                    self.monitor.clear_fault(key)
             # 🔍 تشريح لحظي عند كسر الوقف: لماذا فشل السهم؟
             if ev.get("type") == "stop" and self.cfg.postmortem_on_stop:
                 row = self.store.fetch_row(ev["ticker"], et_date)

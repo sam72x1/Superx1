@@ -110,3 +110,49 @@ def test_outcome_window_anchors_on_alert_time_not_first_seen():
         assert row["outcome"] == "closed"
     finally:
         os.unlink(path)
+
+
+def test_alert_reopens_row_that_timed_out_before_the_alert():
+    """BUG-42 (النصف الثاني من BUG-39): الاختبار أعلاه لا يستدعي update_outcomes
+    بين أوّل رصد والتنبيه — والحلقة الحيّة تستدعيها كل دورة. فالصفّ المرفوض
+    يُغلق `timeout` عند أوّل رصد+النافذة **قبل** أن يقع التنبيه، وmark_alerted
+    لا يعيد فتحه، وupdate_outcomes تقرأ `outcome='open'` فقط ⇒ التنبيه يخرج ثم
+    **لا تصلك ولا رسالة متابعة واحدة**. والمسح يبدأ 4:00ص بينما الرسمي 9:30 ⇒
+    أي سهم رُصد بريماركت وأُنبِّه بعد الافتتاح فجوته > النافذة بالضرورة."""
+    import tempfile, os
+    from runner_scanner.state import Store
+
+    cfg = Config(massive_api_key="x", outcome_window_min=90.0,
+                 stop_fixed_pct=7.0)
+    fd, path = tempfile.mkstemp(suffix=".sqlite3")
+    os.close(fd)
+    try:
+        st = Store(path)
+        t0 = datetime(2026, 7, 29, 13, 35, tzinfo=timezone.utc)
+        c = _cand(cfg, price=10.0)
+        c.reject("RVol منخفض")
+        st.log_candidate(c, t0)
+        # الحلقة الحيّة: دورات متتابعة بين الرصد والتنبيه (هنا كل 5د لساعتين)
+        for k in range(1, 25):
+            st.update_outcomes({"TST": 10.0}, t0 + timedelta(minutes=5 * k))
+        day = t0.date().isoformat()
+        assert st.fetch_row("TST", day)["outcome"] == "closed", \
+            "تمهيد الاختبار: يُفترض أن النافذة أغلقته قبل التنبيه"
+
+        t_alert = t0 + timedelta(hours=2)
+        st.mark_alerted("TST", 80, t_alert, entry_price=10.0,
+                        stop_price=9.3, targets=[11.0])
+        row = st.fetch_row("TST", day)
+        assert row["outcome"] == "open", \
+            "التنبيه خرج والصفّ ما زال مغلقًا ⇒ لا متابعة إطلاقًا"
+        assert not row["result"], "نتيجة ما قبل التنبيه تسرّبت إلى الصفقة الجديدة"
+        assert (row["notified_targets"] or 0) == 0, \
+            "أهداف ما قبل التنبيه محسوبة مُبلَّغة ⇒ يُبتلع 🎯 هدف البطاقة"
+
+        # والدليل الحاسم: رسالة الهدف تصل فعلًا بعد التنبيه
+        events = st.update_outcomes({"TST": 11.5},
+                                    t_alert + timedelta(minutes=10))
+        assert any(e["type"] == "target" for e in events), \
+            "بلغ الهدف ولم تصل رسالة"
+    finally:
+        os.unlink(path)

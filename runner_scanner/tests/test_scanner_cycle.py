@@ -366,3 +366,21 @@ def test_detector_excludes_pennies_and_overrange_before_topn():
     cfg = Config(massive_api_key="x")
     out = detector.detect_runners(cfg, snaps)
     assert [e.ticker for e in out] == ["REAL"]   # السنت لم يأخذ مقعد REAL
+
+
+def test_lost_stop_alert_fault_is_not_permanent():
+    """أثر جانبي لـBUG-40: مفتاح العطل `stop_alert_lost:TICKER` لم يكن يُمسح
+    أبدًا (clear_fault تُستدعى لـ'api' و'scan_stall' فقط) ⇒ يتراكم مفتاح لكل
+    رمز فشل إرساله ويظهر البوت «معطلًا» في /status وفي بريفنغ المستشار إلى
+    الأبد بلا مسار تعافٍ. الإبلاغ حدث لحظي لا حالة قائمة."""
+    sc = _scanner()
+    sc.cfg.postmortem_on_stop = False          # نعزل مسار العطل وحده
+    sc.telegram.send = lambda *a, **k: False   # القناة فاشلة
+    sc.store.update_outcomes = lambda *a, **k: [
+        {"ticker": "STRONG", "type": "stop", "price": 2.0, "gain_pct": -7.0}]
+
+    sc.run_cycle(ET_NOW)
+
+    lingering = [k for k in sc.monitor.active_faults()
+                 if k.startswith("stop_alert_lost:")]
+    assert lingering == [], f"عطل دائم بلا تعافٍ: {lingering}"
