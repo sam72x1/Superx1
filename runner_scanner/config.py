@@ -115,6 +115,9 @@ class Config:
     kronos_service_url: str = ""
     kronos_service_token: str = ""
     kronos_timeout_sec: float = 120.0     # أول تحميل للأوزان أبطأ؛ العامل معزول
+    # ميزانية إيقاف الماسح — **نفس** المتغيّر الذي يقرؤه render_supervisor كي
+    # لا ينجرف الطرفان. لازم يبقى داخل نافذة Render (30ث للخدمات ذات القرص).
+    kronos_stop_timeout_sec: float = 15.0
     kronos_context_days: int = 14
     kronos_lookback: int = 512           # شمعة 5د ماضية يرسلها عامل الظل
     kronos_pred_len: int = 18            # 18 × 5د = 90 دقيقة مستقبلية
@@ -434,6 +437,8 @@ class Config:
             kronos_service_url=_s("KRONOS_SERVICE_URL", ""),
             kronos_service_token=_s("KRONOS_SERVICE_TOKEN", ""),
             kronos_timeout_sec=_f("KRONOS_TIMEOUT_SEC", 120.0),
+            kronos_stop_timeout_sec=_f(
+                "KRONOS_SCANNER_SHUTDOWN_TIMEOUT_SEC", 15.0),
             kronos_context_days=_i("KRONOS_CONTEXT_DAYS", 14),
             kronos_lookback=_i("KRONOS_LOOKBACK", 512),
             kronos_pred_len=_i("KRONOS_PRED_LEN", 18),

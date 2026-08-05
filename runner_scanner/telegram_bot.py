@@ -343,7 +343,7 @@ class TelegramAssistant:
             self._reply("عدد الأسهم والسعر لازم أكبر من صفر.")
             return
         tkr = parts[0].upper().lstrip("$")
-        self.store.open_trade(tkr, shares, entry)
+        self.sc.store.open_trade(tkr, shares, entry)
         cost = shares * entry
         self._reply(f"📒 سُجّل دخولك: <b>${esc(tkr)}</b> — "
                     f"{shares:g} سهم @ ${entry:.2f} (${cost:,.0f})\n"
@@ -360,21 +360,21 @@ class TelegramAssistant:
             self._reply("سعر الخروج لازم رقم. مثال: <code>/خرجت RMZ 11.2</code>")
             return
         tkr = parts[0].upper().lstrip("$")
-        row = self.store.close_trade(tkr, px)
+        row = self.sc.store.close_trade(tkr, px)
         if row is None:
             self._reply(f"ما لقيت صفقة مفتوحة على <b>${esc(tkr)}</b>.")
             return
         pnl = (px - row["entry"]) * row["shares"]
         pct = (px - row["entry"]) / row["entry"] * 100.0
-        icon = "✅" if pnl >= 0 else "🛑"
+        icon = "✅" if pnl > 0 else ("🛑" if pnl < 0 else "⚖️")
         self._reply(f"{icon} أُغلقت: <b>${esc(tkr)}</b> — "
                     f"{row['shares']:g} سهم @ ${row['entry']:.2f} → ${px:.2f}\n"
                     f"النتيجة: <b>{pnl:+,.0f}$</b> ({pct:+.1f}%)")
 
     def _my_trades_text(self) -> str:
         """المفتوحة + ملخّص أدائك **الفعلي** (لا أداء الاقتراحات)."""
-        opens = self.store.my_open_trades()
-        closed = self.store.my_closed_trades()
+        opens = self.sc.store.my_open_trades()
+        closed = self.sc.store.my_closed_trades()
         out = ["📒 <b>صفقاتك الفعلية</b>"]
         if opens:
             out.append("\n<b>مفتوحة الآن:</b>")
@@ -390,16 +390,23 @@ class TelegramAssistant:
         pnls = [(r["exit_price"] - r["entry"]) * r["shares"] for r in closed]
         pcts = [(r["exit_price"] - r["entry"]) / r["entry"] * 100.0
                 for r in closed]
+        # تصنيف ثلاثي: التعادل ليس خسارة. وهو ليس حالة نادرة هنا — الباكتيست
+        # يقيس 72 من 123 صفقة (59%) تُغلق على تعادل تامّ بقاعدة ترقية الوقف
+        # التي تنصح بها البطاقة، فحشرها في الخسائر يشوّه سجلّك تشويهًا كبيرًا.
         wins = [x for x in pnls if x > 0]
+        losses = [x for x in pnls if x < 0]
+        evens = [x for x in pnls if x == 0]
         net = sum(pnls)
         out.append(f"\n<b>المغلقة: {len(closed)}</b>")
         out.append(f"   • صافي الربح/الخسارة: <b>{net:+,.0f}$</b>")
+        tally = f"{len(wins)}✅/{len(losses)}🛑"
+        if evens:
+            tally += f"/{len(evens)}⚖️ تعادل"
         out.append(f"   • نسبة الفوز: {100 * len(wins) / len(closed):.0f}% "
-                   f"({len(wins)}✅/{len(closed) - len(wins)}🛑)")
+                   f"({tally})")
         out.append(f"   • متوسط الصفقة: {sum(pcts) / len(pcts):+.1f}%")
-        if wins:
-            losses = [x for x in pnls if x <= 0]
-            aw = sum(wins) / len(wins)
+        if wins or losses:
+            aw = (sum(wins) / len(wins)) if wins else 0.0
             al = (sum(losses) / len(losses)) if losses else 0.0
             out.append(f"   • متوسط الفوز {aw:+,.0f}$ · "
                        f"متوسط الخسارة {al:+,.0f}$")

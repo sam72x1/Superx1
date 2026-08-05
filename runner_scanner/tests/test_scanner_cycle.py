@@ -384,3 +384,31 @@ def test_lost_stop_alert_fault_is_not_permanent():
     lingering = [k for k in sc.monitor.active_faults()
                  if k.startswith("stop_alert_lost:")]
     assert lingering == [], f"عطل دائم بلا تعافٍ: {lingering}"
+
+
+def test_shutdown_closes_db_within_render_budget_even_if_kronos_hangs():
+    """كان الماسح ينتظر خيط Kronos حتى max(http_timeout, kronos_timeout)+1
+    = 121ث، بينما المشرف يمنحه 15ث ثم SIGKILL ونافذة Render للخدمات ذات
+    القرص 30ث ثابتة ⇒ SIGKILL يسبق store.close() فتُترك قاعدة القرص الدائم
+    بلا إغلاق نظيف. الآن نلتزم بالميزانية ونغلق القاعدة في كل الأحوال."""
+    import time as _time
+
+    sc = _scanner()
+    waited = []
+    closed = []
+
+    class _HungKronos:
+        is_alive = True
+
+        def stop(self, timeout=None):
+            waited.append(timeout)
+            _time.sleep(0.01)          # يتجاهل الطلب ويبقى حيًّا
+
+    sc.kronos = _HungKronos()
+    sc.store.close = lambda: closed.append(True)
+    sc.shutdown()
+
+    assert closed, "القاعدة لم تُغلق رغم تعلّق Kronos"
+    assert waited and waited[0] <= sc.cfg.kronos_stop_timeout_sec, \
+        f"انتظار {waited[0]}ث يتجاوز ميزانية {sc.cfg.kronos_stop_timeout_sec}ث"
+    assert waited[0] < 30.0, "الانتظار يتجاوز نافذة Render الثابتة"
