@@ -141,6 +141,7 @@ def compute_momentum(
         vwap_distance_pct=round(vwap_dist, 2),
         above_vwap=above_vwap,
         volume_rising=volume_rising,
+        session_volume=float(cum_vol or 0.0),
         vwap_reliable=vwap_reliable,
         rvol_reliable=rvol_ok,
         notes=notes,

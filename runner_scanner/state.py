@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS tracking (
     -- first_price (سعر أول رصد قد يسبق التنبيه بساعات وبطبعة رقيقة، فوقفٌ فوقه
     -- يُطلق hit_stop زائفًا). NULL للمرفوضين وصفوف ما قبل الإصلاح.
     entry_price     REAL,
+    -- لحظة أوّل تنبيه (BUG-39): نافذة النتيجة تُقاس منها لا من first_seen_at.
+    -- سهم يُرصد 9:35 مرفوضًا ثم يُنبَّه 11:15 كانت نافذته منتهية سلفًا فيُغلق
+    -- timeout فورًا ⇒ لا تصلك «بلغ الهدف» ولا «كسر الوقف» وأنت ممسك بالصفقة.
+    alerted_at      TEXT,
     first_volume    REAL,                 -- حجم وقت أول رصد (لقياس المشاركة)
     stop_price      REAL,
     target1         REAL,
@@ -189,6 +193,7 @@ _MIGRATIONS = (
     ("target2", "REAL"), ("target3", "REAL"),
     ("notified_targets", "INTEGER DEFAULT 0"),
     ("notified_stop", "INTEGER DEFAULT 0"),
+    ("alerted_at", "TEXT"),   # BUG-39: مرساة نافذة النتيجة
     ("notified_high", "REAL"), ("result", "TEXT DEFAULT ''"),
     ("reason_code", "TEXT"),   # DEBT-13: كود الرفض الثابت
     ("entry_price", "REAL"),   # BUG-32: سعر دخول البطاقة (أساس قياس النتيجة الصادق)
@@ -643,6 +648,7 @@ class Store:
                 self._conn.execute(
                     """
                     UPDATE tracking SET is_alert=1,
+                        alerted_at=COALESCE(alerted_at, ?),
                         entry_price=COALESCE(entry_price, ?),
                         stop_price=CASE WHEN entry_price IS NULL
                             THEN ? ELSE stop_price END,
@@ -664,12 +670,14 @@ class Store:
                             THEN NULL ELSE stop_dist_at END
                     WHERE ticker=? AND trade_date=?
                     """,
-                    (entry_price, stop_price, t1, t2, t3,
+                    (_iso(now), entry_price, stop_price, t1, t2, t3,
                      entry_price, entry_price, entry_price, ticker, day))
             else:
                 self._conn.execute(
-                    "UPDATE tracking SET is_alert=1 WHERE ticker=? AND trade_date=?",
-                    (ticker, day))
+                    "UPDATE tracking SET is_alert=1,"
+                    " alerted_at=COALESCE(alerted_at, ?)"
+                    " WHERE ticker=? AND trade_date=?",
+                    (_iso(now), ticker, day))
             self._conn.commit()
 
     # ── توقعات Kronos التجريبية (Shadow) ──────────────────────────
@@ -1295,8 +1303,14 @@ class Store:
                 elif targets and notified_t >= len(targets):
                     outcome = "closed"
                 else:
+                    # BUG-39: للمُنبَّه عنه تُرسى النافذة على **لحظة التنبيه**
+                    # لا أوّل رصد. سهم رُصد 9:35 مرفوضًا ثم نُبِّه 11:15 كانت
+                    # نافذته منتهية سلفًا ⇒ يُغلق timeout فورًا ولا تصلك رسالة
+                    # «بلغ الهدف» ولا «كسر الوقف» وأنت ممسك بالصفقة.
+                    anchor = (r["alerted_at"] if is_alert else None) \
+                        or r["first_seen_at"]
                     try:
-                        seen = datetime.fromisoformat(r["first_seen_at"])
+                        seen = datetime.fromisoformat(anchor)
                         elapsed = (now - seen).total_seconds() / 60.0
                     except (TypeError, ValueError):
                         elapsed = 0.0
