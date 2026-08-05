@@ -1507,7 +1507,14 @@ def format_report(res: BacktestResult) -> str:
         if not tcp:
             return [], 0.0
         lo_a, hi_a = min(tcp), max(tcp)
-        have = [x for x in recs if x.get("change_pct") is not None]
+        # MEAS-38 (العيب الخامس): استبعد مقطوعي النافذة **هنا** كي يعمل كل من
+        # بعده على المجموعة نفسها. كان `_sh_stats` يستبعدهم بينما `_boot_ci`
+        # يشملهم ⇒ التقرير يعرض رقمًا ويحكم بآخر: نفس المدخل (+4.0% مقابل
+        # +2.0%) يعطي «قد يفوّت» بلا مقطوعة و«مثبَّتة» مع 60 منها. هو تحيّز
+        # MEAS-34 نفسه عائدًا من نافذة فاصل الثقة (timeout قسريّ = صفر محشوّ).
+        have = [x for x in recs if x.get("change_pct") is not None
+                and (x.get("window_min") is None
+                     or x["window_min"] >= cfg_window)]
         if not have:
             return [], 0.0
         inside = [x for x in have if lo_a <= x["change_pct"] <= hi_a]
