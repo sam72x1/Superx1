@@ -684,7 +684,27 @@ class Store:
                         peak_at=CASE WHEN entry_price IS NULL
                             THEN NULL ELSE peak_at END,
                         stop_dist_at=CASE WHEN entry_price IS NULL
-                            THEN NULL ELSE stop_dist_at END
+                            THEN NULL ELSE stop_dist_at END,
+                        -- BUG-42 (النصف الثاني من BUG-39): الصفّ المرفوض قد
+                        -- تكون نافذته انتهت فأُغلق `timeout` **قبل** التنبيه،
+                        -- وupdate_outcomes تقرأ `outcome='open'` فقط ⇒ لا تصل
+                        -- ولا رسالة متابعة. بما أننا نعيد إرساء الصفّ على لقطة
+                        -- البطاقة هنا، تُعاد معه دورة حياته وقياساتُ ما قبل
+                        -- التنبيه (أهداف/وقف من لقطة أوّل رصد لا من البطاقة).
+                        outcome=CASE WHEN entry_price IS NULL
+                            THEN 'open' ELSE outcome END,
+                        result=CASE WHEN entry_price IS NULL
+                            THEN NULL ELSE result END,
+                        closed_at=CASE WHEN entry_price IS NULL
+                            THEN NULL ELSE closed_at END,
+                        notified_targets=CASE WHEN entry_price IS NULL
+                            THEN 0 ELSE notified_targets END,
+                        hit_target=CASE WHEN entry_price IS NULL
+                            THEN 0 ELSE hit_target END,
+                        hit_stop=CASE WHEN entry_price IS NULL
+                            THEN 0 ELSE hit_stop END,
+                        notified_stop=CASE WHEN entry_price IS NULL
+                            THEN 0 ELSE notified_stop END
                     WHERE ticker=? AND trade_date=?
                     """,
                     (_iso(now), entry_price, stop_price, t1, t2, t3,

@@ -11,7 +11,11 @@ import math
 import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:      # §3: تعذّر ≠ سقوط. الحزمة راحة تطوير محلّية فقط —
+    def load_dotenv(*_a, **_k):   # وبيئة Render تمرّر المتغيّرات مباشرة.
+        return False              # غيابها كان يُسقط استيراد config ⇒ البوت كلّه.
 
 
 def _f(name: str, default: float) -> float:
@@ -96,6 +100,9 @@ class Config:
     # حصّة آمنة من قيمة تداول السهم حتى الآن — فوقها تصير أنت السوق. بيانات
     # المستخدم الحيّة: 8 من 20 تنبيهًا تحت 400 ألف دولار، وأرقّها 61 ألفًا فقط.
     liquidity_safe_share_pct: float = 3.0
+    # تحت هذي القيمة يوسَم التداول «⚠️ رقيق» على البطاقة (عرض فقط — لا يرفض
+    # سهمًا ولا يغيّر درجة). كانت رقمًا سحريًّا في alerts.py خلافًا للقسم 6.
+    liquidity_thin_usd: float = 400_000.0
 
     # ── التخزين ────────────────────────────────────────────────────
     # لازم يكون على قرص دائم في Render (منع تكرار التنبيه عبر إعادة النشر).
@@ -418,6 +425,7 @@ class Config:
             account_size_usd=_f("ACCOUNT_SIZE_USD", 0.0),
             risk_per_trade_pct=_f("RISK_PER_TRADE_PCT", 2.0),
             liquidity_safe_share_pct=_f("LIQUIDITY_SAFE_SHARE_PCT", 3.0),
+            liquidity_thin_usd=_f("LIQUIDITY_THIN_USD", 400_000.0),
             telegram_extra_chat_ids=tuple(
                 c.strip() for c in _s("TELEGRAM_EXTRA_CHAT_IDS", "").split(",")
                 if c.strip()),
