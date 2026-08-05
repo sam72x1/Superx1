@@ -226,6 +226,15 @@ class Scanner:
                                       to_all=True):
                 logger.warning("فشل إرسال حدث متابعة محسوم في DB (قد يُفقد): %s %s",
                                ev.get("ticker"), ev.get("type"))
+                # BUG-40: حدث الوقف أهمّ رسالة يرسلها البوت — أنت داخل صفقة
+                # خاسرة. والصفّ يُغلق في القاعدة فلا يُعاد إرساله (دورة
+                # open→closed، §7). فبدل الضياع الصامت نصدر عطلًا مرئيًّا:
+                # «أُعلمك أنني عجزت عن إعلامك». إرشاد لا تصرّف — هوية البوت.
+                if ev.get("type") == "stop":
+                    self.monitor.raise_fault(
+                        f"stop_alert_lost:{ev.get('ticker')}",
+                        f"⚠️ تعذّر إرسال تنبيه كسر الوقف لـ{ev.get('ticker')} "
+                        "— راجع صفقتك يدويًّا الآن.")
             # 🔍 تشريح لحظي عند كسر الوقف: لماذا فشل السهم؟
             if ev.get("type") == "stop" and self.cfg.postmortem_on_stop:
                 row = self.store.fetch_row(ev["ticker"], et_date)

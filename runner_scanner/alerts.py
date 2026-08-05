@@ -75,6 +75,22 @@ def _local_time(cfg: Config, now: datetime | None) -> str:
     return now.astimezone(tz).strftime("%H:%M")
 
 
+def _dollar_volume(c: Candidate) -> float:
+    """قيمة التداول بالدولار حتى الآن = حجم **الجلسة الفعلي** × السعر.
+
+    §4: لا نستخدم `snap.day_volume` مباشرةً — فهو جزئي/صفري في البريماركت
+    والأفترهاوس، فيعطي «سيولة صفر» على سهم نشط أو العكس. نأخذ
+    `momentum.session_volume` (محسوب من شموع الجلسة) ونرتدّ لليومي في الجلسة
+    الرسمية فقط حيث يكون موثوقًا. صفر = لا نعرف ⇒ لا نعرض سطرًا (لا نخمّن)."""
+    px = c.snapshot.last_price
+    if px <= 0:
+        return 0.0
+    vol = (c.momentum.session_volume if c.momentum else 0.0) or 0.0
+    if vol <= 0 and c.session is Session.REGULAR:
+        vol = c.snapshot.day_volume or 0.0
+    return vol * px
+
+
 def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
     """يبني بطاقة تيليجرام بصيغة موحّدة + ملخص الخبر (HTML)."""
     s = c.snapshot
@@ -161,7 +177,36 @@ def build_card(cfg: Config, c: Candidate, now: datetime | None = None) -> str:
             for i in range(2, len(rp.targets) + 1):
                 steps.append(f"هدف{i}→{_money(rp.targets[i - 2])}")
             lines.append("🪜 رقِّ الوقف مع كل هدف: " + " · ".join(steps))
+            # 📏 صدق الأرقام: باكتيست ٦ أشهر يقيس **القاعدتين** على نفس الـ123
+            # صفقة — بيع كامل عند الهدف1 يعطي +2.43%/صفقة (0/6 أشهر سالبة)،
+            # وترقية الوقف تعطي +0.73% (2/6 سالبة) لأن 59% منها تُغلق على
+            # التعادل بالضبط بينما الخسارة تبقى −7% كاملة. لا نُخفي أن الرقم
+            # المعلَن يخصّ القاعدة الأولى — القرار قرارك، لكن بعلم.
+            lines.append(
+                "📏 الرقم المقيس (+2.4%/صفقة) يخصّ <b>البيع الكامل عند "
+                "الهدف1</b>؛ قاعدة الترقية أعلاه تقيس +0.7% فقط")
         lines.append("↑ الوقف والأهداف من الشارت (دعوم/مقاومات حقيقية)")
+        # ⚖️ تحجيم المركز — الرقم الوحيد الذي يقرّر البقاء، وكان غائبًا تمامًا.
+        # إرشاد لا تنفيذ (هوية البوت): نحسب عدد الأسهم الذي يجعل خسارة الوقف
+        # مساوية لنسبة المخاطرة المختارة من الحساب.
+        if cfg.account_size_usd > 0 and rp.stop_pct > 0 and entry > 0:
+            risk_usd = cfg.account_size_usd * cfg.risk_per_trade_pct / 100.0
+            shares = int(risk_usd / (entry * rp.stop_pct / 100.0))
+            if shares > 0:
+                lines.append(
+                    f"⚖️ مخاطرة {cfg.risk_per_trade_pct:g}% = "
+                    f"<b>{shares:,} سهم</b> (~{_money(shares * entry)}) — "
+                    f"خسارتك عند الوقف {_money(risk_usd)}")
+        # 💧 السيولة: قيمة التداول حتى الآن. بيانات المستخدم الحيّة أظهرت 8 من
+        # 20 تنبيهًا تحت 400 ألف دولار وأرقّها 61 ألفًا — بمركز صغير تصير أنت
+        # نسبة معتبرة من السهم، فيتّسع السبريد ويُملأ وقفك أسوأ مما تراه.
+        dv = _dollar_volume(c)
+        if dv:
+            safe = dv * cfg.liquidity_safe_share_pct / 100.0
+            warn = " ⚠️ رقيق" if dv < 400_000 else ""
+            lines.append(
+                f"💧 تداوُل اليوم: {_money(dv)}{warn} — مركز آمن ≤ "
+                f"{_money(safe)} ({cfg.liquidity_safe_share_pct:g}%)")
         # ⚖️ عائد/مخاطرة الهدف1 (معلومة لتقرّر الإمساك يدويًا — لا يغيّر الفرز):
         # الباكتيست (6 أشهر) بيّن أن «الهدف القريب» يُصاب كثيرًا لكن ربحه ضئيل،
         # بينما الأهداف الأبعد مجالها أوسع. تُعلِمك لتختار متى تمسك بعد الهدف1.

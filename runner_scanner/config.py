@@ -85,6 +85,18 @@ class Config:
     # الباكتيست ولا ردود أوامرك — البطاقات والمتابعة والتشريح فقط.
     telegram_extra_chat_ids: tuple[str, ...] = ()
 
+    # ── إدارة المخاطر: تحجيم المركز (إرشاد على البطاقة، لا تنفيذ) ──
+    # لم يكن في المشروع سطر واحد عن حجم المركز رغم أنه الرقم الوحيد الذي يقرّر
+    # البقاء: البوت قد يخطئ في السهم مئة مرة ويبقى مربحًا، وخطأ واحد في الحجم
+    # ينهي الحساب. بوقف 7% ومعدّل خسارة ~33%، أربع خسائر متتالية شبه مؤكّدة
+    # خلال 100 صفقة — بتحجيم 50% تعني −25%، وبمخاطرة 2% تعني −5.6%.
+    # 0 = تعطيل السطر (لا يُعرض شيء).
+    account_size_usd: float = 0.0
+    risk_per_trade_pct: float = 2.0       # نسبة الحساب المخاطَر بها لكل صفقة
+    # حصّة آمنة من قيمة تداول السهم حتى الآن — فوقها تصير أنت السوق. بيانات
+    # المستخدم الحيّة: 8 من 20 تنبيهًا تحت 400 ألف دولار، وأرقّها 61 ألفًا فقط.
+    liquidity_safe_share_pct: float = 3.0
+
     # ── التخزين ────────────────────────────────────────────────────
     # لازم يكون على قرص دائم في Render (منع تكرار التنبيه عبر إعادة النشر).
     db_path: str = "/var/data/runner_scanner.sqlite3"
@@ -403,6 +415,9 @@ class Config:
             http_max_retries=_i("HTTP_MAX_RETRIES", 3),
             telegram_bot_token=_s("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=_s("TELEGRAM_CHAT_ID", ""),
+            account_size_usd=_f("ACCOUNT_SIZE_USD", 0.0),
+            risk_per_trade_pct=_f("RISK_PER_TRADE_PCT", 2.0),
+            liquidity_safe_share_pct=_f("LIQUIDITY_SAFE_SHARE_PCT", 3.0),
             telegram_extra_chat_ids=tuple(
                 c.strip() for c in _s("TELEGRAM_EXTRA_CHAT_IDS", "").split(",")
                 if c.strip()),
