@@ -48,6 +48,10 @@ _HELP = (
     "/why RMZ — لماذا فشل/نجح سهم؟ (تشريح)\n"
     "/diag RMZ — بيانات السهم الخام (تشخيص الفيد)\n"
     "/sha — إصدار الكود المنشور (للتأكّد من آخر تحديث)\n"
+    "\n📒 <b>صفقاتك الفعلية</b> (تُغلق الحلقة: أداؤك أنت لا أداء الاقتراحات)\n"
+    "/دخلت RMZ 300 10.4 — سجّل دخولك (رمز · أسهم · سعر)\n"
+    "/خرجت RMZ 11.2 — سجّل خروجك\n"
+    "/صفقاتي — المفتوحة + ملخّص أدائك الحقيقي\n"
     "/restart — إعادة تشغيل الخدمة (يتطلّب تأكيد)"
 )
 
@@ -178,6 +182,12 @@ class TelegramAssistant:
             self._handle_diag(arg)
         elif cmd in ("sha", "version"):
             self._reply(self._version_text())
+        elif cmd in ("دخلت", "in", "buy"):
+            self._handle_trade_open(arg)
+        elif cmd in ("خرجت", "out", "sell"):
+            self._handle_trade_close(arg)
+        elif cmd in ("صفقاتي", "trades"):
+            self._reply(self._my_trades_text())
         elif cmd == "restart":
             self._handle_restart(arg)
         else:
@@ -312,6 +322,90 @@ class TelegramAssistant:
             return
         self._reply(postmortem.build_why_message(
             self.cfg, row, client=self.sc.claude))
+
+    # ── صفقاتك الفعلية: الحلقة المغلقة ────────────────────────────
+    # كل تحليلات البوت حتى الآن عن أداء **اقتراحاته**، لا عن أدائك: هل دخلت؟
+    # بكم سهمًا؟ متى خرجت؟ هذه الأوامر تسدّ الفجوة. تسجيل فقط — لا تنفيذ ولا
+    # تغيير أي فرز (هوية البوت: يُعلم ويقترح).
+    def _handle_trade_open(self, arg: str) -> None:
+        parts = arg.split()
+        if len(parts) < 3:
+            self._reply("الصيغة: <code>/دخلت RMZ 300 10.4</code> "
+                        "(رمز · عدد الأسهم · سعر الدخول)")
+            return
+        try:
+            shares, entry = float(parts[1]), float(parts[2])
+        except ValueError:
+            self._reply("عدد الأسهم والسعر لازم أرقام. مثال: "
+                        "<code>/دخلت RMZ 300 10.4</code>")
+            return
+        if shares <= 0 or entry <= 0:
+            self._reply("عدد الأسهم والسعر لازم أكبر من صفر.")
+            return
+        tkr = parts[0].upper().lstrip("$")
+        self.store.open_trade(tkr, shares, entry)
+        cost = shares * entry
+        self._reply(f"📒 سُجّل دخولك: <b>${esc(tkr)}</b> — "
+                    f"{shares:g} سهم @ ${entry:.2f} (${cost:,.0f})\n"
+                    f"<i>لمّا تخرج: /خرجت {esc(tkr)} &lt;السعر&gt;</i>")
+
+    def _handle_trade_close(self, arg: str) -> None:
+        parts = arg.split()
+        if len(parts) < 2:
+            self._reply("الصيغة: <code>/خرجت RMZ 11.2</code> (رمز · سعر الخروج)")
+            return
+        try:
+            px = float(parts[1])
+        except ValueError:
+            self._reply("سعر الخروج لازم رقم. مثال: <code>/خرجت RMZ 11.2</code>")
+            return
+        tkr = parts[0].upper().lstrip("$")
+        row = self.store.close_trade(tkr, px)
+        if row is None:
+            self._reply(f"ما لقيت صفقة مفتوحة على <b>${esc(tkr)}</b>.")
+            return
+        pnl = (px - row["entry"]) * row["shares"]
+        pct = (px - row["entry"]) / row["entry"] * 100.0
+        icon = "✅" if pnl >= 0 else "🛑"
+        self._reply(f"{icon} أُغلقت: <b>${esc(tkr)}</b> — "
+                    f"{row['shares']:g} سهم @ ${row['entry']:.2f} → ${px:.2f}\n"
+                    f"النتيجة: <b>{pnl:+,.0f}$</b> ({pct:+.1f}%)")
+
+    def _my_trades_text(self) -> str:
+        """المفتوحة + ملخّص أدائك **الفعلي** (لا أداء الاقتراحات)."""
+        opens = self.store.my_open_trades()
+        closed = self.store.my_closed_trades()
+        out = ["📒 <b>صفقاتك الفعلية</b>"]
+        if opens:
+            out.append("\n<b>مفتوحة الآن:</b>")
+            for r in opens:
+                out.append(f"   • ${esc(r['ticker'])} — {r['shares']:g} سهم "
+                           f"@ ${r['entry']:.2f} (${r['shares'] * r['entry']:,.0f})")
+        else:
+            out.append("\nلا صفقات مفتوحة.")
+        if not closed:
+            out.append("\n<i>لا صفقات مغلقة بعد — سجّل صفقاتك ليقيس البوت "
+                       "أداءك أنت لا أداء اقتراحاته.</i>")
+            return "\n".join(out)
+        pnls = [(r["exit_price"] - r["entry"]) * r["shares"] for r in closed]
+        pcts = [(r["exit_price"] - r["entry"]) / r["entry"] * 100.0
+                for r in closed]
+        wins = [x for x in pnls if x > 0]
+        net = sum(pnls)
+        out.append(f"\n<b>المغلقة: {len(closed)}</b>")
+        out.append(f"   • صافي الربح/الخسارة: <b>{net:+,.0f}$</b>")
+        out.append(f"   • نسبة الفوز: {100 * len(wins) / len(closed):.0f}% "
+                   f"({len(wins)}✅/{len(closed) - len(wins)}🛑)")
+        out.append(f"   • متوسط الصفقة: {sum(pcts) / len(pcts):+.1f}%")
+        if wins:
+            losses = [x for x in pnls if x <= 0]
+            aw = sum(wins) / len(wins)
+            al = (sum(losses) / len(losses)) if losses else 0.0
+            out.append(f"   • متوسط الفوز {aw:+,.0f}$ · "
+                       f"متوسط الخسارة {al:+,.0f}$")
+        out.append("\n<i>هذي أرقامك الحقيقية — تشمل توقيت دخولك وخروجك "
+                   "وانزلاقك، لا اقتراحات البوت وحدها.</i>")
+        return "\n".join(out)
 
     def _handle_restart(self, arg: str) -> None:
         if arg.lower() != "confirm":
