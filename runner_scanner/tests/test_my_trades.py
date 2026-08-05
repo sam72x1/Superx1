@@ -92,3 +92,53 @@ def test_missed_alert_backward_compatible_without_context():
         "ticker": "OLD", "type": "missed", "price": 5.0, "gain_pct": 33.0,
         "reason": "فلوت"})
     assert "+33%" in msg and "قاعه" not in msg
+
+
+# ── المسار الحيّ: عبر معالِجات المساعد لا Store مباشرة ─────────────
+def _assistant(store):
+    """مساعد تيليجرام بأدنى ماسح وهمي + التقاط الردود."""
+    from runner_scanner.telegram_bot import TelegramAssistant
+
+    class _Sc:
+        cfg = Config(massive_api_key="x", telegram_bot_token="x",
+                     telegram_chat_id="1")
+    sc = _Sc()
+    sc.store = store
+    a = TelegramAssistant(sc)
+    a.sent = []
+    a._reply = lambda t, **k: a.sent.append(t)
+    return a
+
+
+def test_trade_commands_run_through_the_assistant(store):
+    """BUG-43: كل معالِجات الصفقات كانت تنادي self.store — وهو **غير موجود**
+    (بقية المعالِجات تستخدم self.sc.store) ⇒ الأوامر الثلاثة تنهار بـ
+    AttributeError. اختباراتي السابقة نادت Store مباشرة فما لمست المسار
+    الحيّ ولا مرّة — نفس نمط الفشل الذي تكرّر ثلاث مرّات هنا."""
+    a = _assistant(store)
+    a._handle_trade_open("RMZ 300 10.40")
+    assert "سُجّل دخولك" in a.sent[-1]
+    a._handle_trade_close("RMZ 11.20")
+    assert "أُغلقت" in a.sent[-1]
+    txt = a._my_trades_text()
+    assert "صفقاتك الفعلية" in txt and "المغلقة: 1" in txt
+
+
+def test_breakeven_trade_is_not_counted_as_a_loss(store):
+    """صفقة على تعادل تامّ كانت تُعرض ✅ عند إغلاقها وتُحسب 🛑 في الملخّص —
+    تناقض داخلي. وهو ليس هامشيًّا هنا: الباكتيست يقيس 72 من 123 صفقة (59%)
+    تُغلق على تعادل تامّ بقاعدة ترقية الوقف التي تنصح بها البطاقة، فحشرها
+    في الخسائر يشوّه سجلّ المستخدم تشويهًا كبيرًا."""
+    a = _assistant(store)
+    store.open_trade("WIN", 100, 10.0, T0)
+    store.close_trade("WIN", 11.0, T0)
+    store.open_trade("EVEN", 100, 10.0, T0)
+    store.close_trade("EVEN", 10.0, T0)      # تعادل تامّ
+    store.open_trade("LOSS", 100, 10.0, T0)
+    store.close_trade("LOSS", 9.0, T0)
+
+    txt = a._my_trades_text()
+    assert "1✅" in txt and "1🛑" in txt, "التعادل حُشر مع الخسائر"
+    assert "تعادل" in txt, "التعادل غير معروض رغم أنه الحالة الأشيع"
+    # متوسط الخسارة يخصّ الخسائر وحدها لا مخفَّفًا بصفر التعادل
+    assert "-100$" in txt.replace(",", "")
