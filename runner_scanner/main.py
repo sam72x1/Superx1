@@ -533,12 +533,22 @@ class Scanner:
         self._stop.set()
         self.halts.stop()
         self.assistant.stop()
-        if self.kronos is not None:
-            self.kronos.stop(timeout=max(
-                self.cfg.http_timeout, self.cfg.kronos_timeout_sec) + 1.0)
-            if self.kronos.is_alive:
-                logger.warning("خيط Kronos لم يتوقف قبل إغلاق قاعدة البيانات")
-        self.store.close()
+        try:
+            if self.kronos is not None:
+                # كان الانتظار max(http_timeout, kronos_timeout)+1 = **121ث**،
+                # بينما المشرف يمنح الماسح 15ث (بسقف 20) ثم SIGKILL، ونافذة
+                # Render للخدمات ذات القرص 30ث ثابتة. أي أن SIGKILL كان يسبق
+                # store.close() فتُترك قاعدة القرص الدائم بلا إغلاق نظيف.
+                # نلتزم بالميزانية الفعلية (نفس المتغيّر الذي يقرؤه المشرف،
+                # فلا ينجرف الطرفان) ونترك هامشًا للإغلاق.
+                self.kronos.stop(timeout=max(
+                    1.0, self.cfg.kronos_stop_timeout_sec - 2.0))
+                if self.kronos.is_alive:
+                    logger.warning(
+                        "خيط Kronos لم يتوقف داخل الميزانية — نغلق القاعدة الآن")
+        finally:
+            # مهما حدث لـShadow: إغلاق القاعدة أهمّ (قرص دائم).
+            self.store.close()
 
 
 def main() -> int:
