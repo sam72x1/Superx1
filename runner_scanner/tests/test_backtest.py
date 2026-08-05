@@ -2026,3 +2026,31 @@ def test_shadow_verdict_uses_confidence_interval_not_fixed_edge():
     assert "فاصل ثقة 95%" in rep
     assert "يعبر الصفر" in rep and "غير حاسم" in rep
     assert "مثبَّتة" not in rep      # العتبة الثابتة كانت ستحكم «مثبَّتة»
+
+
+def test_truncated_records_cannot_flip_verdict():
+    """MEAS-38 (العيب الخامس): سجلات مقطوعة النافذة كانت تُستبعد من العرض
+    (_sh_stats) وتُشمل في فاصل الثقة (_boot_ci) ⇒ التقرير يعرض رقمًا ويحكم
+    بآخر. نفس المدخل (+4.0% مقابل +2.0%) كان يعطي «قد يفوّت» بلا مقطوعة
+    و«مثبَّتة» مع 60 منها — تحيّز MEAS-34 عائدًا من نافذة فاصل الثقة."""
+    def _verdict(n_trunc):
+        res = backtest.BacktestResult(start="x", end="y", days=1)
+        res.trades = [{"result": "win", "realized_pct": 2.0, "max_gain_pct": 5,
+                       "change_pct": 22.0}] * 40
+        res.funnel = backtest.new_funnel()
+        res.run_config = {"outcome_window_min": 90.0,
+                          "backtest_shadow_min_decided": 8,
+                          "backtest_shadow_match_min_overlap": 0.5}
+        res.funnel["shadow"] = (
+            [{"kind": "vwap", "max_rvol": 9.0, "result": "win",
+              "window_min": 90, "realized_pct": 4.0, "change_pct": 22.0}] * 30
+            + [{"kind": "vwap", "max_rvol": 9.0, "result": "timeout",
+                "window_min": 5, "realized_pct": 0.0,
+                "change_pct": 22.0}] * n_trunc)
+        rep = backtest.format_report(res)
+        return [ln for ln in rep.splitlines() if "فاصل ثقة" in ln][0]
+    base = _verdict(0)
+    assert "قد يفوّت" in base            # الظلّ أعلى فعلًا من أساسه
+    # حشو المقطوعة لا يغيّر الحكم — وإلا فالتقرير يحكم بما لا يعرض
+    assert _verdict(60) == base
+    assert _verdict(200) == base
