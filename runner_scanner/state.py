@@ -129,6 +129,23 @@ CREATE TABLE IF NOT EXISTS tracking (
     stop_dist_at    TEXT,                  -- أول طابع لُمست فيه مسافة الوقف من الدخول
     PRIMARY KEY (ticker, trade_date)
 );
+-- صفقاتك **الفعلية** (الحلقة المغلقة): البوت كان يعرف ما اقترحه ولا يعرف ما
+-- فعلتَه أنت — فكل تحليلاته عن أداء الاقتراحات لا عن أدائك. هذا الجدول يغلق
+-- الفجوة: كم دخلت، بأي سعر، ومتى خرجت. يُملأ يدويًّا بأمر تيليجرام؛ فارغ =
+-- لا شيء يتغيّر (كل التحليلات القائمة تبقى كما هي).
+CREATE TABLE IF NOT EXISTS my_trades (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker      TEXT NOT NULL,
+    trade_date  TEXT NOT NULL,
+    opened_at   TEXT NOT NULL,
+    shares      REAL NOT NULL,
+    entry       REAL NOT NULL,
+    exit_price  REAL,                  -- NULL = الصفقة ما زالت مفتوحة
+    closed_at   TEXT,
+    note        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_my_trades_open
+    ON my_trades(ticker, exit_price);
 """
 
 _KRONOS_SCHEMA = """
@@ -1291,9 +1308,20 @@ class Store:
                 if ((r["rejected"] or 0) and not is_alert and not notified_missed
                         and max_gain >= missed_rise_pct):
                     notified_missed = 1
+                    # BUG-41: كانت الرسالة تحمل القمة وحدها — وهي FOMO خالص.
+                    # بيانات المستخدم: 412 مرفوض RVol وسيط قمتهم +1.92% ووسيط
+                    # قاعهم −7.31%، و52% لمسوا مسافة الوقف. القمة بلا القاع
+                    # تدفع لقرار سيّئ، والتقرير نفسه يحذّر «القمة لا تكفي».
                     events.append({
                         "ticker": r["ticker"], "type": "missed",
                         "price": high, "gain_pct": max_gain,
+                        "draw_pct": max_draw, "hit_stop": bool(hit_stop),
+                        # هل لُمس الوقف **قبل** القمة؟ (ترتيب زمني مؤكّد؛
+                        # None = لا طوابع مسجّلة لهذا الصفّ)
+                        "stop_first": (
+                            bool(r["stop_dist_at"] and r["peak_at"]
+                                 and r["stop_dist_at"] < r["peak_at"])
+                            if r["peak_at"] else None),
                         "reason": r["reject_reason"] or "",
                     })
 
@@ -1356,6 +1384,52 @@ class Store:
             return len(rows)
 
     # ── استعلامات أداة التطوير ────────────────────────────────────
+    # ── صفقاتك الفعلية (الحلقة المغلقة) ───────────────────────────
+    # البوت كان يعرف ما **اقترحه** ولا يعرف ما **فعلتَه**، فكل تحليلاته عن أداء
+    # الاقتراحات لا عن أدائك: كم دخلت · بأي سعر · متى خرجت. لا يمسّ أي منطق
+    # قائم — جدول منفصل يُملأ يدويًّا، وفارغه يعني «لا شيء يتغيّر».
+    def open_trade(self, ticker: str, shares: float, entry: float,
+                   now: datetime | None = None, note: str = "") -> int:
+        """يسجّل دخولك صفقةً. يرجّع معرّفها."""
+        now = now or datetime.now(timezone.utc)
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO my_trades(ticker, trade_date, opened_at, shares,"
+                " entry, note) VALUES(?,?,?,?,?,?)",
+                (ticker.upper(), trade_date_str(now), _iso(now),
+                 float(shares), float(entry), note or ""))
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def close_trade(self, ticker: str, exit_price: float,
+                    now: datetime | None = None) -> sqlite3.Row | None:
+        """يغلق **أقدم** صفقة مفتوحة لهذا الرمز. None لو لا شيء مفتوح."""
+        now = now or datetime.now(timezone.utc)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM my_trades WHERE ticker=? AND exit_price IS NULL"
+                " ORDER BY id LIMIT 1", (ticker.upper(),)).fetchone()
+            if row is None:
+                return None
+            self._conn.execute(
+                "UPDATE my_trades SET exit_price=?, closed_at=? WHERE id=?",
+                (float(exit_price), _iso(now), row["id"]))
+            self._conn.commit()
+            return self._conn.execute(
+                "SELECT * FROM my_trades WHERE id=?", (row["id"],)).fetchone()
+
+    def my_open_trades(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM my_trades WHERE exit_price IS NULL"
+                " ORDER BY id").fetchall()
+
+    def my_closed_trades(self) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM my_trades WHERE exit_price IS NOT NULL"
+                " ORDER BY id").fetchall()
+
     def fetch_resolved(self, only_alerts: bool = False) -> list[sqlite3.Row]:
         """التتبّعات المحسومة نتيجتها (result غير فارغ)."""
         q = "SELECT * FROM tracking WHERE result != ''"

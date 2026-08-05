@@ -317,9 +317,22 @@ def build_followup(cfg: Config, event: dict, now: datetime | None = None) -> str
                 f"{_money(price)} (+{gain:.0f}% من الدخول){part_line}\n{when}")
     if etype == "missed":
         reason = esc(event.get("reason", "") or "غير مسجّل")
-        return (f"👻 <b>${tkr}</b> فرصة فائتة — صعد +{gain:.0f}%!  {_money(price)}\n"
+        # BUG-41: القمة وحدها تخدع. نعرض معها القاع وهل لُمس الوقف — فكثير من
+        # «الفائتة» كانت ستُوقِفك قبل أن تربح. بلا هذا السياق تدفع الرسالة
+        # لفتح بوّابة على وهم (وسيط قاع مرفوضي RVol الحيّين: −7.31%).
+        draw = event.get("draw_pct")
+        ctx = ""
+        if draw is not None:
+            ctx = f" · لكن قاعه {draw:+.0f}%"
+            if event.get("stop_first") is True:
+                ctx += " ⛔ <b>ووقفه لُمس قبل قمته</b> — كانت خسارة لا فرصة"
+            elif event.get("hit_stop"):
+                ctx += " ⚠️ ولمس مسافة الوقف"
+        return (f"👻 <b>${tkr}</b> فرصة فائتة — صعد +{gain:.0f}%!  "
+                f"{_money(price)}{ctx}\n"
                 f"كان مرفوضًا بسبب: {reason}\n"
-                f"<i>راجِع هذي البوّابة لو تكرّرت.</i>\n{when}")
+                f"<i>راجِع هذي البوّابة لو تكرّرت — والقمة وحدها لا تكفي.</i>"
+                f"\n{when}")
     return f"ℹ️ <b>${tkr}</b> تحديث: {_money(price)}\n{when}"
 
 
